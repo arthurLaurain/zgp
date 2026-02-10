@@ -11,31 +11,52 @@ const c = zgp.c;
 
 const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
+const SurfaceMeshStdData = @import("../models/surface/SurfaceMeshStdDatas.zig").SurfaceMeshStdData;
+const ProceduralTexturing = @import("../rendering/shaders/procedural_texturing/ProceduralTexturing.zig");
 
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
+const mat = @import("../geometry/mat.zig");
+const Mat4f = mat.Mat4f;
+const VBO = @import("../rendering/VBO.zig");
 
 const TnBData = struct {
     surface_mesh: *SurfaceMesh,
     vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
+    vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
+    path_exemplar_texture: ?[]const u8,
+    procedural_texturing: ProceduralTexturing.Parameters,
+    draw_texture: bool = false,
     initialized: bool = false,
 
-    pub fn init(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
-        tbd.vertex_position = vertex_position;
-        if (!tbd.initialized) {
-            tbd.vertex_ref_edge = try tbd.surface_mesh.addData(.vertex, SurfaceMesh.Cell, "__vertex_ref_edge");
-        }
-        tbd.initialized = true;
-
-        try tbd.computeVertexRefEdges();
+    pub fn init(sm: *SurfaceMesh) TnBData {
+        return .{
+            .surface_mesh = sm,
+            .path_exemplar_texture = "test",
+            .procedural_texturing = ProceduralTexturing.Parameters.init(),
+        };
     }
 
     pub fn deinit(tbd: *TnBData) void {
         if (tbd.initialized) {
             tbd.surface_mesh.removeData(.vertex, tbd.vertex_ref_edge.?.gen());
+            tbd.surface_mesh.removeData(.vertex, tbd.vertex_ref_edge_vec.?.gen());
             tbd.initialized = false;
         }
+    }
+
+    pub fn initialize(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
+        tbd.vertex_position = vertex_position;
+        if (!tbd.initialized) {
+            tbd.vertex_ref_edge = try tbd.surface_mesh.addData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
+            tbd.vertex_ref_edge_vec = try tbd.surface_mesh.addData(.vertex, Vec3f, "vertex_ref_edge_vec");
+        }
+
+        tbd.initialized = true;
+
+        try tbd.computeVertexRefEdges();
+        try tbd.computeVertexRefEdgesVec();
     }
 
     fn computeVertexRefEdges(tbd: *TnBData) !void {
@@ -46,6 +67,18 @@ const TnBData = struct {
             tbd.vertex_ref_edge.?.valuePtr(v).* = .{ .edge = v.dart() };
         }
     }
+
+    fn computeVertexRefEdgesVec(tbd: *TnBData) !void {
+        assert(tbd.initialized);
+        var v_it = try SurfaceMesh.CellIterator(.vertex).init(tbd.surface_mesh);
+        defer v_it.deinit();
+        while (v_it.next()) |v| {
+            tbd.vertex_ref_edge_vec.?.valuePtr(v).* = vec.normalized3f(vec.sub3f(
+                tbd.vertex_position.?.value(.{ .vertex = tbd.surface_mesh.phi1(tbd.vertex_ref_edge.?.value(v).dart()) }),
+                tbd.vertex_position.?.value(v),
+            ));
+        }
+    }
 };
 
 module: Module = .{
@@ -53,8 +86,10 @@ module: Module = .{
     .vtable = &.{
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
+        .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
         .sdlEvent = sdlEvent,
         .uiPanel = uiPanel,
+        .draw = draw,
     },
 },
 
@@ -69,16 +104,41 @@ pub fn init(allocator: std.mem.Allocator) SurfaceMeshProceduralTexturing {
 }
 
 pub fn deinit(smpt: *SurfaceMeshProceduralTexturing) void {
+    var data_it = smpt.surface_meshes_data.iterator();
+    while (data_it.next()) |entry| {
+        var d = entry.value_ptr.*;
+        d.deinit();
+    }
     smpt.surface_meshes_data.deinit();
+}
+
+/// Part of the Module interface.
+/// Update the SurfaceMeshRendererParameters when a standard data of the SurfaceMesh changes.
+pub fn surfaceMeshStdDataChanged(
+    m: *Module,
+    surface_mesh: *SurfaceMesh,
+    std_data: SurfaceMeshStdData,
+) void {
+    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
+    const p = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
+    switch (std_data) {
+        .vertex_position => |maybe_vertex_position| {
+            if (maybe_vertex_position) |vertex_position| {
+                const position_vbo: VBO = zgp.surface_mesh_store.dataVBO(.vertex, Vec3f, vertex_position);
+                p.procedural_texturing.setVertexAttribArray(.position, position_vbo, 0, 0);
+            } else {
+                p.procedural_texturing.unsetVertexAttribArray(.position);
+            }
+        },
+        else => return, // Ignore other standard data changes
+    }
 }
 
 /// Part of the Module interface.
 /// Create and store a TnBData for the created SurfaceMesh.
 pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
-    smpt.surface_meshes_data.put(surface_mesh, .{
-        .surface_mesh = surface_mesh,
-    }) catch |err| {
+    smpt.surface_meshes_data.put(surface_mesh, .init(surface_mesh)) catch |err| {
         std.debug.print("Failed to store TnBData for new SurfaceMesh: {}\n", .{err});
         return;
     };
@@ -141,7 +201,7 @@ pub fn uiPanel(m: *Module) void {
             c.ImGui_BeginDisabled(true);
         }
         if (c.ImGui_ButtonEx(if (tnb_data.initialized) "Reinitialize data" else "Initialize data", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            _ = tnb_data.init(info.std_data.vertex_position.?) catch |err| {
+            tnb_data.initialize(info.std_data.vertex_position.?) catch |err| {
                 std.debug.print("Failed to initialize Procedural Texturing data for SurfaceMesh: {}\n", .{err});
             };
         }
@@ -149,9 +209,25 @@ pub fn uiPanel(m: *Module) void {
             c.ImGui_EndDisabled();
         }
         if (tnb_data.initialized) {
-            // parameters & buttons here
+            if (c.ImGui_Checkbox("Draw texture", &tnb_data.draw_texture))
+                zgp.requestRedraw();
         }
     } else {
         c.ImGui_Text("No SurfaceMesh selected");
+    }
+}
+
+pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
+    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
+    var sm_it = zgp.surface_mesh_store.surface_meshes.iterator();
+    while (sm_it.next()) |entry| {
+        const sm = entry.value_ptr.*;
+        const info = zgp.surface_mesh_store.surfaceMeshInfo(sm);
+        const p = smpt.surface_meshes_data.getPtr(sm).?;
+        if (p.draw_texture) {
+            p.procedural_texturing.model_view_matrix = @bitCast(view_matrix);
+            p.procedural_texturing.projection_matrix = @bitCast(projection_matrix);
+            p.procedural_texturing.draw(info.triangles_ibo);
+        }
     }
 }

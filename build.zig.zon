@@ -14,7 +14,7 @@
         },
         .cimgui_zig = .{
             .url = "https://github.com/tiawl/cimgui.zig/archive/refs/heads/docking.zip",
-            .hash = "cimgui_zig-1.0.0-2XubksicYgDNxauHM4llUyo1U_r2qB_h47okccSpZVgO",
+            .hash = "cimgui_zig-1.0.0-2Xubkv6iYgBVW-kLof31hmO2M0KQ4CzFZP08RT44mLLS",
         },
         .ceigen = .{
             // .path = "../ceigen",
