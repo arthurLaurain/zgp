@@ -1,12 +1,14 @@
 const ProceduralTexturing = @This();
 
+const zstbi = @import("zstbi");
 const std = @import("std");
-const gl = @import("gl");
+const gl = @import("zgl");
 
 const Shader = @import("../../Shader.zig");
 const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
+const TEXTURE2D = @import("../../Texture2D.zig");
 
 var global_instance: ProceduralTexturing = undefined;
 var init_global_once = std.once(init_global);
@@ -24,6 +26,7 @@ model_view_matrix_uniform: c_int = undefined,
 projection_matrix_uniform: c_int = undefined,
 ambiant_color_uniform: c_int = undefined,
 light_position_uniform: c_int = undefined,
+id_exemplar_texture: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 
@@ -47,6 +50,7 @@ fn init() !ProceduralTexturing {
     pt.projection_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_projection_matrix");
     pt.ambiant_color_uniform = gl.GetUniformLocation(pt.program.index, "u_ambiant_color");
     pt.light_position_uniform = gl.GetUniformLocation(pt.program.index, "u_light_position");
+    pt.id_exemplar_texture = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -64,9 +68,10 @@ pub fn deinit(tf: *ProceduralTexturing) void {
 pub const Parameters = struct {
     shader: *const ProceduralTexturing,
     vao: VAO,
-
+    exemplar_texture: TEXTURE2D,
     model_view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
+    path_exemplar_texture: [:0]const u8 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
     light_position: [3]f32 = .{ 10, 0, 100 },
 
@@ -74,6 +79,12 @@ pub const Parameters = struct {
         return .{
             .shader = instance(),
             .vao = VAO.init(),
+            .exemplar_texture = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
+                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
+                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
+            }),
         };
     }
 
@@ -88,6 +99,18 @@ pub const Parameters = struct {
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
 
+    pub fn initTexture(p: *Parameters) !void {
+        var tex_image = zstbi.Image.loadFromFile(p.path_exemplar_texture, 3) catch |err|
+            {
+                std.debug.print("Failed to load texture: {s}\n", .{p.path_exemplar_texture});
+                return err;
+            };
+        defer tex_image.deinit();
+
+        gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, @intCast(tex_image.width), @intCast(tex_image.height), 0, gl.RGB, gl.UNSIGNED_BYTE, @ptrCast(tex_image.data));
+        gl.GenerateMipmap(gl.TEXTURE_2D);
+    }
+
     pub fn unsetVertexAttribArray(p: *Parameters, attrib: VertexAttrib) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
@@ -98,6 +121,9 @@ pub const Parameters = struct {
     pub fn draw(p: *Parameters, ibo: IBO) void {
         gl.UseProgram(p.shader.program.index);
         defer gl.UseProgram(0);
+        gl.ActiveTexture(gl.TEXTURE0);
+        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
+        gl.Uniform1ui(p.shader.id_exemplar_texture, 0);
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
         gl.UniformMatrix4fv(p.shader.model_view_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.model_view_matrix));

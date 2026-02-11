@@ -13,6 +13,7 @@ const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfaceMeshStdData = @import("../models/surface/SurfaceMeshStdDatas.zig").SurfaceMeshStdData;
 const ProceduralTexturing = @import("../rendering/shaders/procedural_texturing/ProceduralTexturing.zig");
+const Texture2D = @import("../rendering/Texture2D");
 
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
@@ -25,16 +26,20 @@ const TnBData = struct {
     vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
-    path_exemplar_texture: ?[]const u8,
     procedural_texturing: ProceduralTexturing.Parameters,
+
     draw_texture: bool = false,
     initialized: bool = false,
 
     pub fn init(sm: *SurfaceMesh) TnBData {
+        var pt = ProceduralTexturing.Parameters.init();
+        pt.path_exemplar_texture = "/home/arthur_laurain/zgp/src/utils/texture.png";
+
+        // TODO error handle
+        pt.initTexture() catch unreachable;
         return .{
             .surface_mesh = sm,
-            .path_exemplar_texture = "test",
-            .procedural_texturing = ProceduralTexturing.Parameters.init(),
+            .procedural_texturing = pt,
         };
     }
 
