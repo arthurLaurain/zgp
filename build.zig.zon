@@ -26,6 +26,10 @@
             .url = "git+https://github.com/pierrekraemer/clibacc.git#17c50be8cd2620cc5abe1ea8d2366d7df519c045",
             .hash = "clibacc-0.0.0-HMOW8SewAAAtaRzDzYQbvj2FGkzxlZEK9PGRrASum_Rt",
         },
+        .zstbi = .{
+            .url = "git+https://github.com/zig-gamedev/zstbi#664305dd52640be15cbebd7cd73d1199679933e1",
+            .hash = "zstbi-0.11.0-dev-L0Ea_2yVBwA4uh-tHfgdhZcQaWRoZVYlNGs4Dl_WTeuR",
+        },
     },
     .paths = .{
         "build.zig",

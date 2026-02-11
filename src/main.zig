@@ -1,5 +1,7 @@
 const std = @import("std");
 const gl = @import("gl");
+const zstbi = @import("zstbi");
+
 pub const c = @cImport({
     @cDefine("SDL_DISABLE_OLD_NAMES", {});
     @cInclude("SDL3/SDL.h");
@@ -521,6 +523,7 @@ pub fn main() !u8 {
 
     rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
 
+    zstbi.init(allocator);
     try thread_pool.init(.{ .allocator = allocator });
     defer thread_pool.deinit();
 

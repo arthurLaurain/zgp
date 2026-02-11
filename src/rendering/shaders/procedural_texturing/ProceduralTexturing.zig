@@ -2,7 +2,7 @@ const ProceduralTexturing = @This();
 
 const zstbi = @import("zstbi");
 const std = @import("std");
-const gl = @import("zgl");
+const gl = @import("gl");
 
 const Shader = @import("../../Shader.zig");
 const VAO = @import("../../VAO.zig");
@@ -71,7 +71,6 @@ pub const Parameters = struct {
     exemplar_texture: TEXTURE2D,
     model_view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
-    path_exemplar_texture: [:0]const u8 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
     light_position: [3]f32 = .{ 10, 0, 100 },
 
@@ -98,19 +97,6 @@ pub const Parameters = struct {
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
-
-    pub fn initTexture(p: *Parameters) !void {
-        var tex_image = zstbi.Image.loadFromFile(p.path_exemplar_texture, 3) catch |err|
-            {
-                std.debug.print("Failed to load texture: {s}\n", .{p.path_exemplar_texture});
-                return err;
-            };
-        defer tex_image.deinit();
-
-        gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, @intCast(tex_image.width), @intCast(tex_image.height), 0, gl.RGB, gl.UNSIGNED_BYTE, @ptrCast(tex_image.data));
-        gl.GenerateMipmap(gl.TEXTURE_2D);
-    }
-
     pub fn unsetVertexAttribArray(p: *Parameters, attrib: VertexAttrib) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,

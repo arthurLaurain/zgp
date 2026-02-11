@@ -33,10 +33,10 @@ const TnBData = struct {
 
     pub fn init(sm: *SurfaceMesh) TnBData {
         var pt = ProceduralTexturing.Parameters.init();
-        pt.path_exemplar_texture = "/home/arthur_laurain/zgp/src/utils/texture.png";
 
-        // TODO error handle
-        pt.initTexture() catch unreachable;
+        //TODO handle error
+        pt.exemplar_texture.loadFromFile("/home/arthur_laurain/zgp/src/utils/texture.png") catch unreachable;
+
         return .{
             .surface_mesh = sm,
             .procedural_texturing = pt,
@@ -216,6 +216,7 @@ pub fn uiPanel(m: *Module) void {
         if (tnb_data.initialized) {
             if (c.ImGui_Checkbox("Draw texture", &tnb_data.draw_texture))
                 zgp.requestRedraw();
+            //_ = c.ImGui_Image(tnb_data.procedural_texturing.exemplar_texture.index, .{ 1920, 960 });
         }
     } else {
         c.ImGui_Text("No SurfaceMesh selected");

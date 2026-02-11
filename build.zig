@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
 
     const gl_bindings = zigglgen.generateBindingsModule(b, .{
         .api = .gl,
-        .version = .@"4.1",
+        .version = .@"4.6",
         .profile = .core,
         // .extensions = &.{ .ARB_clip_control, .NV_scissor_exclusive },
     });
@@ -83,6 +83,11 @@ pub fn build(b: *std.Build) void {
     });
     // exe.lto = lto;
     exe.addIncludePath(b.path("src"));
+
+    // ZSTBI
+    const zstbi = b.dependency("zstbi", .{});
+    exe.root_module.addImport("zstbi", zstbi.module("root"));
+
     b.installArtifact(exe);
 
     // RUN CMD

@@ -1,6 +1,6 @@
 const SSBO = @This();
 const std = @import("std");
-const gl = @import("zgl");
+const gl = @import("gl");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 
 const Data = @import("../utils/Data.zig").Data;
