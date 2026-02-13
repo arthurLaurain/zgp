@@ -6,6 +6,7 @@ const gl = @import("gl");
 const Data = @import("../utils/Data.zig").Data;
 
 index: c_uint = 0,
+size: isize = 0,
 
 pub fn init() VBO {
     var v: VBO = .{};
@@ -23,9 +24,10 @@ pub fn deinit(v: *VBO) void {
 pub fn fillFrom(v: *VBO, comptime T: type, data: *const Data(T)) void {
     gl.BindBuffer(gl.ARRAY_BUFFER, v.index);
     defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+    v.size = @intCast(data.rawSize());
     gl.BufferData(
         gl.ARRAY_BUFFER,
-        @intCast(data.rawSize()),
+        v.size,
         data.data.items.ptr,
         gl.STATIC_DRAW,
     );

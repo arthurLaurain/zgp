@@ -9,7 +9,7 @@ const gl_log = std.log.scoped(.gl);
 
 const shader_version = switch (gl.info.api) {
     .gl => (
-        \\#version 410 core
+        \\#version 430 core
         \\
     ),
     .gles, .glsc => (

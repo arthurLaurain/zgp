@@ -9,6 +9,7 @@ const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 const TEXTURE2D = @import("../../Texture2D.zig");
+const SSBO = @import("../../SSBO.zig");
 
 var global_instance: ProceduralTexturing = undefined;
 var init_global_once = std.once(init_global);
@@ -50,7 +51,6 @@ fn init() !ProceduralTexturing {
     pt.projection_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_projection_matrix");
     pt.ambiant_color_uniform = gl.GetUniformLocation(pt.program.index, "u_ambiant_color");
     pt.light_position_uniform = gl.GetUniformLocation(pt.program.index, "u_light_position");
-    pt.id_exemplar_texture = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -66,19 +66,22 @@ pub fn deinit(tf: *ProceduralTexturing) void {
 }
 
 pub const Parameters = struct {
-    shader: *const ProceduralTexturing,
+    shader: *ProceduralTexturing,
     vao: VAO,
     exemplar_texture: TEXTURE2D,
     model_view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
     light_position: [3]f32 = .{ 10, 0, 100 },
+    ssbo_info_triangles: SSBO = undefined,
+    ssbo_info_vertices: SSBO = undefined,
+    vertices_position_vbo: VBO = undefined,
 
     pub fn init() Parameters {
         return .{
             .shader = instance(),
             .vao = VAO.init(),
-            .exemplar_texture = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
+            .exemplar_texture = TEXTURE2D.init(false, 1, &[_]TEXTURE2D.Parameter{
                 .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
                 .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
                 .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
@@ -89,6 +92,9 @@ pub const Parameters = struct {
 
     pub fn deinit(p: *Parameters) void {
         p.vao.deinit();
+        p.ssbo_info_triangles.deinit();
+        p.ssbo_info_vertices.deinit();
+        // p.vertices_position_vbo.deinit();
     }
 
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
@@ -109,6 +115,8 @@ pub const Parameters = struct {
         defer gl.UseProgram(0);
         gl.ActiveTexture(gl.TEXTURE0);
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
+        //p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
+        //p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.index);
         gl.Uniform1ui(p.shader.id_exemplar_texture, 0);
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));

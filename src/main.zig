@@ -157,7 +157,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
 
     const shader_version = switch (gl.info.api) {
         .gl => (
-            \\#version 410 core
+            \\#version 430 core
             \\
         ),
         .gles, .glsc => (
@@ -180,6 +180,9 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     errdefer point_cloud_store.deinit();
     surface_mesh_store = try .init(allocator);
     errdefer surface_mesh_store.deinit();
+
+    std.debug.print("GL version: {s}\n", .{gl.GetString(gl.VERSION).?});
+    std.debug.print("GLSL: {s}\n", .{gl.GetString(gl.SHADING_LANGUAGE_VERSION).?});
 
     // Modules initialization
     // **********************
@@ -507,7 +510,14 @@ pub fn main() !u8 {
     defer _ = da.deinit();
     defer _ = da.detectLeaks();
     allocator = da.allocator();
-    // allocator = std.heap.smp_allocator;
+
+    // var gpa = std.heap.GeneralPurposeAllocator(.{
+    //     .safety = true,
+    //     .retain_metadata = true,
+    //     .verbose_log = true,
+    // }){};
+    // allocator = gpa.allocator();
+    allocator = std.heap.smp_allocator;
 
     const argv = std.process.argsAlloc(allocator) catch {
         zgp_log.err("Failed to get command line arguments", .{});

@@ -1,8 +1,3 @@
-in vec3 frag_position;
-
-precision highp float;
-precision highp int;
-
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
 uniform sampler2D u_exemplar_texture;
@@ -10,15 +5,15 @@ uniform sampler2D u_exemplar_texture;
 in vec3 frag_position;
 out vec4 f_color;
 
-layout(std430, binding = 1) buffer ssbo_triangles
+layout(std430, binding = 0) buffer ssbo_triangles
 {
-  int info_triangles[];
-}
+  ivec3 info_triangles[];
+};
 
 layout(std430, binding = 1) buffer ssbo_vertices
 {
-  int info_vertices[];
-}
+  vec3 info_vertices[];
+};
 
 vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
 {
@@ -26,10 +21,17 @@ vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
   vec3 T = normalize(A - B);
   vec3 BT = cross(N,T);
 
-  vec3 AP = P - A
+  vec3 AP = P - A;
 
   return vec2(dot(AP,T), dot(AP,BT));
   
+}
+
+vec2 hash12(int n) {
+    float x = float(n);
+    x = fract(sin(x * 12.9898) * 43758.5453);
+    float y = fract(sin((x + float(n)) * 78.233) * 43758.5453);
+    return vec2(x, y);
 }
 
 vec3 getBarycentric(vec3 P, vec3 A, vec3 B, vec3 C)
@@ -60,11 +62,11 @@ void main() {
 
   int id_triangle = gl_PrimitiveID;
 
-  vec3 id_vertices = info_triangle[id_triangle];
+  ivec3 id_vertices = info_triangles[id_triangle];
 
-  vec2 r1 = rand(id_vertices.x);
-  vec2 r2 = rand(id_vertices.y);
-  vec2 r3 = rand(id_vertices.z);
+  vec2 r1 = hash12(int(id_vertices.x));
+  vec2 r2 = hash12(int(id_vertices.y));
+  vec2 r3 = hash12(int(id_vertices.z));
 
   vec3 p1 = info_vertices[id_vertices.x];
   vec3 p2 = info_vertices[id_vertices.y];
@@ -79,12 +81,14 @@ void main() {
   float w2 = barycentric.y;
   float w3 = barycentric.z;
 
-  vec3 c1 = texture(u_exemplar_texture, h1 + r1);
-  vec3 c2 = texture(u_exemplar_texture, h2 + r2);
-  vec3 c3 = texture(u_exemplar_texture, h3 + r3);
+  vec3 c1 = texture(u_exemplar_texture, h1 + r1).xyz;
+  vec3 c2 = texture(u_exemplar_texture, h2 + r2).xyz;
+  vec3 c3 = texture(u_exemplar_texture, h3 + r3).xyz;
 
-  vec4 albedo = (w1 * c1 + w2 * c2 + w3 * c3) * vec4(lambert_term);
-  vec4 result = albedo + vec4(u_ambiant_color.rgb, 0.0);
+  vec3 albedo = (w1 * c1 + w2 * c2 + w3 * c3) * lambert_term;
+  vec4 result = vec4(albedo + u_ambiant_color.rgb,1.);
   f_color = result;
+
+  f_color = vec4(1.);
 
 }

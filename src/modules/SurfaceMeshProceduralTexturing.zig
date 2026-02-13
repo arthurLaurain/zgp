@@ -1,6 +1,7 @@
 const SurfaceMeshProceduralTexturing = @This();
 
 const std = @import("std");
+const gl = @import("gl");
 const assert = std.debug.assert;
 
 // const imgui_utils = @import("../utils/imgui.zig");
@@ -20,15 +21,16 @@ const Vec3f = vec.Vec3f;
 const mat = @import("../geometry/mat.zig");
 const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
+const SSBO = @import("../rendering/SSBO.zig");
 
 const TnBData = struct {
     surface_mesh: *SurfaceMesh,
     vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
-    procedural_texturing: ProceduralTexturing.Parameters,
+    procedural_texturing_parameters: ProceduralTexturing.Parameters,
 
-    draw_texture: bool = false,
+    draw_texture: bool = true,
     initialized: bool = false,
 
     pub fn init(sm: *SurfaceMesh) TnBData {
@@ -36,10 +38,15 @@ const TnBData = struct {
 
         //TODO handle error
         pt.exemplar_texture.loadFromFile("/home/arthur_laurain/zgp/src/utils/texture.png") catch unreachable;
+        const ssbo_info_triangles = SSBO.init();
+        const ssbo_info_vertices = SSBO.init();
+
+        pt.ssbo_info_triangles = ssbo_info_triangles;
+        pt.ssbo_info_vertices = ssbo_info_vertices;
 
         return .{
             .surface_mesh = sm,
-            .procedural_texturing = pt,
+            .procedural_texturing_parameters = pt,
         };
     }
 
@@ -48,6 +55,7 @@ const TnBData = struct {
             tbd.surface_mesh.removeData(.vertex, tbd.vertex_ref_edge.?.gen());
             tbd.surface_mesh.removeData(.vertex, tbd.vertex_ref_edge_vec.?.gen());
             tbd.initialized = false;
+            tbd.procedural_texturing_parameters.deinit();
         }
     }
 
@@ -130,9 +138,10 @@ pub fn surfaceMeshStdDataChanged(
         .vertex_position => |maybe_vertex_position| {
             if (maybe_vertex_position) |vertex_position| {
                 const position_vbo: VBO = zgp.surface_mesh_store.dataVBO(.vertex, Vec3f, vertex_position);
-                p.procedural_texturing.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.procedural_texturing_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.procedural_texturing_parameters.vertices_position_vbo = position_vbo;
             } else {
-                p.procedural_texturing.unsetVertexAttribArray(.position);
+                p.procedural_texturing_parameters.unsetVertexAttribArray(.position);
             }
         },
         else => return, // Ignore other standard data changes
@@ -186,6 +195,13 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) void {
     }
 }
 
+fn loadShaderSource(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    return try file.readToEndAlloc(allocator, 1024 * 1024);
+}
+
 /// Part of the Module interface.
 /// Describe the right-click menu interface.
 pub fn uiPanel(m: *Module) void {
@@ -216,7 +232,25 @@ pub fn uiPanel(m: *Module) void {
         if (tnb_data.initialized) {
             if (c.ImGui_Checkbox("Draw texture", &tnb_data.draw_texture))
                 zgp.requestRedraw();
-            //_ = c.ImGui_Image(tnb_data.procedural_texturing.exemplar_texture.index, .{ 1920, 960 });
+            //_ = c.ImGui_Image(tnb_data.procedural_texturing_parameters.exemplar_texture.index, .{ 1920, 960 });
+
+            if (c.ImGui_ButtonEx("Reload shader", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                gl.DeleteProgram(tnb_data.procedural_texturing_parameters.shader.program.index);
+
+                tnb_data.procedural_texturing_parameters.shader.program.index = gl.CreateProgram();
+
+                const vs_source = loadShaderSource(smpt.allocator, "src/rendering/shaders/procedural_texturing/vs.glsl") catch unreachable;
+                defer smpt.allocator.free(vs_source);
+
+                const fs_source = loadShaderSource(smpt.allocator, "src/rendering/shaders/procedural_texturing/fs.glsl") catch unreachable;
+                defer smpt.allocator.free(fs_source);
+
+                tnb_data.procedural_texturing_parameters.shader.program.setShader(.vertex, vs_source) catch unreachable;
+                tnb_data.procedural_texturing_parameters.shader.program.setShader(.fragment, fs_source) catch unreachable;
+                tnb_data.procedural_texturing_parameters.shader.program.linkProgram() catch unreachable;
+
+                zgp.requestRedraw();
+            }
         }
     } else {
         c.ImGui_Text("No SurfaceMesh selected");
@@ -231,9 +265,9 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
         const info = zgp.surface_mesh_store.surfaceMeshInfo(sm);
         const p = smpt.surface_meshes_data.getPtr(sm).?;
         if (p.draw_texture) {
-            p.procedural_texturing.model_view_matrix = @bitCast(view_matrix);
-            p.procedural_texturing.projection_matrix = @bitCast(projection_matrix);
-            p.procedural_texturing.draw(info.triangles_ibo);
+            p.procedural_texturing_parameters.model_view_matrix = @bitCast(view_matrix);
+            p.procedural_texturing_parameters.projection_matrix = @bitCast(projection_matrix);
+            p.procedural_texturing_parameters.draw(info.triangles_ibo);
         }
     }
 }
