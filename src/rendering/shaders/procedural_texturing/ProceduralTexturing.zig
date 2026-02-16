@@ -28,6 +28,8 @@ projection_matrix_uniform: c_int = undefined,
 ambiant_color_uniform: c_int = undefined,
 light_position_uniform: c_int = undefined,
 id_exemplar_texture: c_int = undefined,
+exemplar_texture_uniform: c_int = undefined,
+scale_tex_coords_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 
@@ -51,6 +53,8 @@ fn init() !ProceduralTexturing {
     pt.projection_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_projection_matrix");
     pt.ambiant_color_uniform = gl.GetUniformLocation(pt.program.index, "u_ambiant_color");
     pt.light_position_uniform = gl.GetUniformLocation(pt.program.index, "u_light_position");
+    pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture");
+    pt.scale_tex_coords_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_tex_coords");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -76,6 +80,7 @@ pub const Parameters = struct {
     ssbo_info_triangles: SSBO = undefined,
     ssbo_info_vertices: SSBO = undefined,
     vertices_position_vbo: VBO = undefined,
+    scale_tex_coords: f32 = 1,
 
     pub fn init() Parameters {
         return .{
@@ -115,13 +120,15 @@ pub const Parameters = struct {
         defer gl.UseProgram(0);
         gl.ActiveTexture(gl.TEXTURE0);
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
-        //p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
-        //p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.index);
-        gl.Uniform1ui(p.shader.id_exemplar_texture, 0);
+        p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
+        p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.index);
+        gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
+        defer gl.BindTexture(gl.TEXTURE_2D, 0);
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
         gl.UniformMatrix4fv(p.shader.model_view_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.model_view_matrix));
         gl.UniformMatrix4fv(p.shader.projection_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.projection_matrix));
+        gl.Uniform1f(p.shader.scale_tex_coords_uniform, p.scale_tex_coords);
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);

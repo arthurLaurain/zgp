@@ -251,6 +251,8 @@ pub fn uiPanel(m: *Module) void {
 
                 zgp.requestRedraw();
             }
+            if (c.ImGui_SliderFloat("Scale length texture coordinates", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 1))
+                zgp.requestRedraw();
         }
     } else {
         c.ImGui_Text("No SurfaceMesh selected");
