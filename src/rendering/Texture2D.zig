@@ -7,6 +7,8 @@ const gl = @import("gl");
 index: c_uint = 0,
 multisample: bool = false,
 samples: c_int = 0,
+width: u32 = 0,
+height: u32 = 0,
 
 pub const Parameter = struct {
     name: c_uint,
@@ -43,6 +45,8 @@ pub fn loadFromFile(t: *Texture2D, filename: [:0]const u8) !void {
     gl.BindTexture(gl.TEXTURE_2D, t.index);
     defer gl.BindTexture(gl.TEXTURE_2D, 0);
 
+    t.width = tex_image.width;
+    t.height = tex_image.height;
     gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, @intCast(tex_image.width), @intCast(tex_image.height), 0, gl.RGB, gl.UNSIGNED_BYTE, @ptrCast(tex_image.data));
     gl.GenerateMipmap(gl.TEXTURE_2D);
 }

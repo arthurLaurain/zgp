@@ -37,7 +37,7 @@ const TnBData = struct {
         var pt = ProceduralTexturing.Parameters.init();
 
         //TODO handle error
-        pt.exemplar_texture.loadFromFile("/home/arthur_laurain/zgp/src/utils/texture.png") catch unreachable;
+        pt.exemplar_texture.loadFromFile("src/utils/texture.png") catch unreachable;
         const ssbo_info_triangles = SSBO.init();
         const ssbo_info_vertices = SSBO.init();
 
@@ -253,6 +253,10 @@ pub fn uiPanel(m: *Module) void {
             }
             if (c.ImGui_SliderFloat("Scale length texture coordinates", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 1))
                 zgp.requestRedraw();
+
+            c.ImGui_Text("Exemplar texture: ");
+            const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
+            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
         }
     } else {
         c.ImGui_Text("No SurfaceMesh selected");
