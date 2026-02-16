@@ -18,6 +18,7 @@ pub fn init(multisample: bool, samples: c_int, parameters: []const Parameter) Te
         .multisample = multisample,
         .samples = samples,
     };
+
     gl.GenTextures(1, (&t.index)[0..1]);
     gl.BindTexture(if (multisample) gl.TEXTURE_2D_MULTISAMPLE else gl.TEXTURE_2D, t.index);
     defer gl.BindTexture(if (multisample) gl.TEXTURE_2D_MULTISAMPLE else gl.TEXTURE_2D, 0);
@@ -31,7 +32,7 @@ pub fn init(multisample: bool, samples: c_int, parameters: []const Parameter) Te
     return t;
 }
 
-pub fn loadFromFile(_: *Texture2D, filename: [:0]const u8) !void {
+pub fn loadFromFile(t: *Texture2D, filename: [:0]const u8) !void {
     var tex_image = zstbi.Image.loadFromFile(filename, 3) catch |err|
         {
             std.debug.print("Failed to load texture: {s}\n", .{filename});
@@ -39,7 +40,10 @@ pub fn loadFromFile(_: *Texture2D, filename: [:0]const u8) !void {
         };
     defer tex_image.deinit();
 
-    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, @intCast(tex_image.width), @intCast(tex_image.height), 0, gl.RGB, gl.UNSIGNED_BYTE, @ptrCast(tex_image.data));
+    gl.BindTexture(gl.TEXTURE_2D, t.index);
+    defer gl.BindTexture(gl.TEXTURE_2D, 0);
+
+    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, @intCast(tex_image.width), @intCast(tex_image.height), 0, gl.RGB, gl.UNSIGNED_BYTE, @ptrCast(tex_image.data));
     gl.GenerateMipmap(gl.TEXTURE_2D);
 }
 
