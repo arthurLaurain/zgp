@@ -1,18 +1,20 @@
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
 uniform sampler2D u_exemplar_texture;
+uniform float u_scale_tex_coords;
 
 in vec3 frag_position;
 out vec4 f_color;
 
-layout(std430, binding = 0) buffer ssbo_triangles
+// using raw buffer to avoid vec3/ivec3 in SSBO because they need to be aligned to a 16 byte boundary while IBO/VBO uses 12 floats vec3
+layout(std430, binding = 0) readonly buffer ssbo_triangles
 {
-  ivec3 info_triangles[];
+  int info_triangles[];
 };
 
-layout(std430, binding = 1) buffer ssbo_vertices
+layout(std430, binding = 1) readonly buffer ssbo_vertices
 {
-  vec3 info_vertices[];
+  float info_vertices[];
 };
 
 vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
@@ -27,11 +29,10 @@ vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
   
 }
 
-vec2 hash12(int n) {
-    float x = float(n);
-    x = fract(sin(x * 12.9898) * 43758.5453);
-    float y = fract(sin((x + float(n)) * 78.233) * 43758.5453);
-    return vec2(x, y);
+vec2 hash12(int n){
+    float x = fract(sin(float(n)*12.9898)*43758.5453);
+    float y = fract(sin(float(n)*78.233 )*43758.5453);
+    return vec2(x,y);
 }
 
 vec3 getBarycentric(vec3 P, vec3 A, vec3 B, vec3 C)
@@ -47,6 +48,7 @@ vec3 getBarycentric(vec3 P, vec3 A, vec3 B, vec3 C)
     float d21 = dot(v2, v1);
 
     float denom = d00 * d11 - d01 * d01;
+    denom = max(denom, 1e-8);
 
     float v = (d11 * d20 - d01 * d21) / denom;
     float w = (d00 * d21 - d01 * d20) / denom;
@@ -62,19 +64,19 @@ void main() {
 
   int id_triangle = gl_PrimitiveID;
 
-  ivec3 id_vertices = info_triangles[id_triangle];
+  ivec3 id_vertices = ivec3(info_triangles[3*id_triangle + 0], info_triangles[3*id_triangle + 1], info_triangles[3*id_triangle + 2]);
 
   vec2 r1 = hash12(int(id_vertices.x));
   vec2 r2 = hash12(int(id_vertices.y));
   vec2 r3 = hash12(int(id_vertices.z));
 
-  vec3 p1 = info_vertices[id_vertices.x];
-  vec3 p2 = info_vertices[id_vertices.y];
-  vec3 p3 = info_vertices[id_vertices.z];
+  vec3 p1 = vec3(info_vertices[id_vertices.x * 3 + 0], info_vertices[id_vertices.x * 3 + 1], info_vertices[id_vertices.x * 3 + 2]);
+  vec3 p2 = vec3(info_vertices[id_vertices.y * 3 + 0], info_vertices[id_vertices.y * 3 + 1], info_vertices[id_vertices.y * 3 + 2]);
+  vec3 p3 = vec3(info_vertices[id_vertices.z * 3 + 0], info_vertices[id_vertices.z * 3 + 1], info_vertices[id_vertices.z * 3 + 2]);
 
-  vec2 h1 = getTexCoord(frag_position, p1,p2,p3);
-  vec2 h2 = getTexCoord(frag_position, p2,p3,p1);
-  vec2 h3 = getTexCoord(frag_position, p3,p1,p2);
+  vec2 h1 = getTexCoord(frag_position, p1,p2,p3) * u_scale_tex_coords;
+  vec2 h2 = getTexCoord(frag_position, p2,p3,p1) * u_scale_tex_coords;
+  vec2 h3 = getTexCoord(frag_position, p3,p1,p2) * u_scale_tex_coords;
 
   vec3 barycentric = getBarycentric(frag_position, p1,p2,p3);
   float w1 = barycentric.x;
@@ -88,7 +90,4 @@ void main() {
   vec3 albedo = (w1 * c1 + w2 * c2 + w3 * c3) * lambert_term;
   vec4 result = vec4(albedo + u_ambiant_color.rgb,1.);
   f_color = result;
-
-  f_color = vec4(1.);
-
 }
