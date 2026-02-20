@@ -741,6 +741,62 @@ pub fn loadSurfaceMeshFromFile(sms: *SurfaceMeshStore, filename: []const u8) !*S
             }
             zgp_log.info("read {d} faces", .{import_data.faces_nb_vertices.items.len});
         },
+        .obj => {
+            zgp_log.info("reading OBJ file", .{});
+
+            var vertex_count: u32 = 0;
+            var face_count: u32 = 0;
+
+            while (try file_reader.interface.takeDelimiter('\n')) |line| {
+                if (line.len == 0) continue; // skip empty lines
+                if (std.mem.startsWith(u8, line, "#")) continue; // skip comment lines
+
+                if (std.mem.startsWith(u8, line, "v ")) {
+                    // vertex position
+                    var tokens = std.mem.tokenizeScalar(u8, line[2..], ' ');
+                    var position: Vec3f = undefined;
+                    var i: u32 = 0;
+                    while (tokens.next()) |token| : (i += 1) {
+                        if (i >= 3) {
+                            zgp_log.warn("vertex {d} position has more than 3 coordinates", .{vertex_count});
+                            return error.InvalidFileFormat;
+                        }
+                        const value = try std.fmt.parseFloat(f32, token);
+                        position[i] = value;
+                    }
+                    if (i != 3) {
+                        zgp_log.warn("vertex {d} position has less than 3 coordinates", .{vertex_count});
+                        return error.InvalidFileFormat;
+                    }
+                    try import_data.vertices_position.append(sms.allocator, position);
+                    vertex_count += 1;
+                } else if (std.mem.startsWith(u8, line, "f ")) {
+                    // face
+                    var tokens = std.mem.tokenizeScalar(u8, line[2..], ' ');
+                    var indices_count: u32 = 0;
+                    var j: u32 = 0;
+                    while (tokens.next()) |token| : (j += 1) {
+                        // OBJ indices are 1-based
+                        const slash = std.mem.indexOfScalar(u8, token, '/');
+                        const idx_str = if (slash) |i| token[0..i] else token;
+                        const index = try std.fmt.parseInt(u32, idx_str, 10) - 1;
+                        try import_data.faces_vertex_indices.append(sms.allocator, index);
+                        indices_count += 1;
+                    }
+                    if (indices_count < 3) {
+                        zgp_log.warn("face {d} has less than 3 vertices", .{face_count});
+                        return error.InvalidFileFormat;
+                    }
+                    try import_data.faces_nb_vertices.append(sms.allocator, indices_count);
+                    face_count += 1;
+                } else {
+                    // ignore other lines (like vt, vn, etc.)
+                    continue;
+                }
+            }
+
+            zgp_log.info("read {d} vertices and {d} faces", .{ import_data.vertices_position.items.len, import_data.faces_nb_vertices.items.len });
+        },
         else => return error.InvalidFileExtension,
     }
 
