@@ -1,3 +1,4 @@
+
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
 uniform sampler2D u_exemplar_texture;
@@ -68,26 +69,26 @@ vec2 hash12(int n){
     return vec2(x,y);
 }
 
-vec3 getBarycentric(vec3 P, vec3 A, vec3 B, vec3 C)
+dvec3 getBarycentric(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
 {
-    vec3 v0 = B - A;
-    vec3 v1 = C - A;
-    vec3 v2 = P - A;
+    dvec3 v0 = B - A;
+    dvec3 v1 = C - A;
+    dvec3 v2 = P - A;
 
-    float d00 = dot(v0, v0);
-    float d01 = dot(v0, v1);
-    float d11 = dot(v1, v1);
-    float d20 = dot(v2, v0);
-    float d21 = dot(v2, v1);
+    double d00 = dot(v0, v0);
+    double d01 = dot(v0, v1);
+    double d11 = dot(v1, v1);
+    double d20 = dot(v2, v0);
+    double d21 = dot(v2, v1);
 
-    float denom = d00 * d11 - d01 * d01;
-    denom = max(denom, 1e-8);
+    double denom = d00 * d11 - d01 * d01;
+    denom = max(denom, 1e-16); // plus petit pour double
 
-    float v = (d11 * d20 - d01 * d21) / denom;
-    float w = (d00 * d21 - d01 * d20) / denom;
-    float u = 1.0 - v - w;
+    double v = (d11 * d20 - d01 * d21) / denom;
+    double w = (d00 * d21 - d01 * d20) / denom;
+    double u = 1.0 - v - w;
 
-    return vec3(u, v, w);
+    return dvec3(u, v, w);
 }
 
 void main() {
@@ -119,10 +120,12 @@ void main() {
   vec2 h2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * u_scale_tex_coords;
   vec2 h3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * u_scale_tex_coords;
 
-  vec3 barycentric = getBarycentric(frag_position, p1,p2,p3);
-  float w1 = barycentric.x;
-  float w2 = barycentric.y;
-  float w3 = barycentric.z;
+
+    dvec3 bary = getBarycentric(dvec3(frag_position), p1, p2, p3);
+
+    double w1 = bary.x;
+    double w2 = bary.y;
+    double w3 = bary.z;
 
   vec2 r1 = hash12(int(id_vertices.x));
   vec2 r2 = hash12(int(id_vertices.y));
