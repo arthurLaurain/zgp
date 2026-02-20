@@ -9,6 +9,6 @@ out vec3 frag_position;
 void main()
 {
     vec4 view_pos = u_model_view_matrix * a_position;
-    frag_position = view_pos.xyz;
+    frag_position = a_position.xyz;
     gl_Position = u_projection_matrix * view_pos;
 }

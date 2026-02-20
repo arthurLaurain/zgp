@@ -11,6 +11,9 @@ const IBO = @import("../../IBO.zig");
 const TEXTURE2D = @import("../../Texture2D.zig");
 const SSBO = @import("../../SSBO.zig");
 
+const vec = @import("../../../geometry/vec.zig");
+const Vec3f = vec.Vec3f;
+
 var global_instance: ProceduralTexturing = undefined;
 var init_global_once = std.once(init_global);
 fn init_global() void {
@@ -32,9 +35,11 @@ exemplar_texture_uniform: c_int = undefined,
 scale_tex_coords_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
+vector_attrib: VAO.VertexAttribInfo = undefined,
 
 const VertexAttrib = enum {
     position,
+    vector,
 };
 
 fn init() !ProceduralTexturing {
@@ -61,7 +66,12 @@ fn init() !ProceduralTexturing {
         .type = gl.FLOAT,
         .normalized = false,
     };
-
+    // pt.vector_attrib = .{
+    //     .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_edge_ref")),
+    //     .size = 3,
+    //     .type = gl.FLOAT,
+    //     .normalized = false,
+    // };
     return pt;
 }
 
@@ -79,7 +89,11 @@ pub const Parameters = struct {
     light_position: [3]f32 = .{ 10, 0, 100 },
     ssbo_info_triangles: SSBO = undefined,
     ssbo_info_vertices: SSBO = undefined,
+    ssbo_edge_ref: SSBO = undefined,
+    ssbo_normal_vertices: SSBO = undefined,
+    vertices_normal_vbo: VBO = undefined,
     vertices_position_vbo: VBO = undefined,
+    edge_ref_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
 
     pub fn init() Parameters {
@@ -99,18 +113,22 @@ pub const Parameters = struct {
         p.vao.deinit();
         p.ssbo_info_triangles.deinit();
         p.ssbo_info_vertices.deinit();
+        p.ssbo_edge_ref.deinit();
+        p.ssbo_normal_vertices.deinit();
         // p.vertices_position_vbo.deinit();
     }
 
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
+            .vector => p.shader.vector_attrib,
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
     pub fn unsetVertexAttribArray(p: *Parameters, attrib: VertexAttrib) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
+            .vector => p.shader.vector_attrib,
         };
         p.vao.disableVertexAttribArray(attrib_info);
     }
@@ -122,6 +140,8 @@ pub const Parameters = struct {
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
         p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
         p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.index);
+        p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
+        p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.index);
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
