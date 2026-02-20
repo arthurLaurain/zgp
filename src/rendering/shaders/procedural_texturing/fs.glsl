@@ -132,7 +132,7 @@ void main() {
   vec3 c2 = texture(u_exemplar_texture, h2 + r2).xyz;
   vec3 c3 = texture(u_exemplar_texture, h3 + r3).xyz;
 
-  vec3 albedo = vec3(c3);
+  vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo,1.);
   f_color = result;
 }
