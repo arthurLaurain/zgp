@@ -56,7 +56,7 @@ vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
 {
     vec3 projPoint = P - dot(P - A, N) * N;
 
-    vec3 up = abs(N.z) > 0.99 ? vec3(0,1,0) : vec3(0,0,1);
+    vec3 up = vec3(0,1,0);
     vec3 T = normalize(cross(N, up));
     vec3 BT = cross(N, T);
 

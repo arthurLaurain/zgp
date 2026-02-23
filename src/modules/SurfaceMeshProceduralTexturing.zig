@@ -257,7 +257,6 @@ pub fn uiPanel(m: *Module) void {
         if (tnb_data.initialized) {
             if (c.ImGui_Checkbox("Draw texture", &tnb_data.draw_texture))
                 zgp.requestRedraw();
-            //_ = c.ImGui_Image(tnb_data.procedural_texturing_parameters.exemplar_texture.index, .{ 1920, 960 });
 
             if (c.ImGui_ButtonEx("Reload shader", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
                 const vs_source = loadShaderSource(smpt.allocator, "src/rendering/shaders/procedural_texturing/vs.glsl") catch unreachable;
@@ -269,6 +268,8 @@ pub fn uiPanel(m: *Module) void {
                 tnb_data.procedural_texturing_parameters.shader.program.setShader(.vertex, vs_source) catch unreachable;
                 tnb_data.procedural_texturing_parameters.shader.program.setShader(.fragment, fs_source) catch unreachable;
                 tnb_data.procedural_texturing_parameters.shader.program.linkProgram() catch unreachable;
+
+                gl.UseProgram(tnb_data.procedural_texturing_parameters.shader.program.index);
 
                 zgp.requestRedraw();
             }
