@@ -66,6 +66,7 @@ const TnBData = struct {
 
     pub fn initialize(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
         tbd.vertex_position = vertex_position;
+        std.mem.copyBackwards(u8, tbd.exemplar_texture_path[0.."brick".len], "brick"); // default value to speed up debug
         if (!tbd.initialized) {
             tbd.vertex_ref_edge = try tbd.surface_mesh.addData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
             tbd.vertex_ref_edge_vec = try tbd.surface_mesh.addData(.vertex, Vec3f, "vertex_ref_edge_vec");
@@ -271,14 +272,24 @@ pub fn uiPanel(m: *Module) void {
 
                 zgp.requestRedraw();
             }
-            if (c.ImGui_SliderFloat("Scale length texture coordinates", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
-                zgp.requestRedraw();
 
-            _ = c.ImGui_InputText("Exemplar texture path", &tnb_data.exemplar_texture_path[0], @sizeOf([256]u8), 0);
+            c.ImGui_Text("Scale length texture coordinates");
+            c.ImGui_PushID("Scale length texture coordinates");
+            if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
+                zgp.requestRedraw();
+            c.ImGui_PopID();
+
+            c.ImGui_Text("Exemplar texture path");
+            c.ImGui_PushID("Exemplar texture path");
+            _ = c.ImGui_InputText("", &tnb_data.exemplar_texture_path[0], @sizeOf([128]u8), 0);
+            c.ImGui_PopID();
             if (c.ImGui_Button("Init texture")) {
                 tnb_data.texture_initialized = true;
-                const zpath: [:0]u8 = tnb_data.exemplar_texture_path[0..(tnb_data.exemplar_texture_path.len - 1) :0];
-                tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(zpath) catch unreachable;
+
+                const nul_index = std.mem.indexOfScalar(u8, tnb_data.exemplar_texture_path[0..], 0).?;
+                var path_buffer: [128]u8 = undefined;
+                const path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
+                tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path) catch unreachable;
                 zgp.requestRedraw();
             }
             if (tnb_data.texture_initialized) {
