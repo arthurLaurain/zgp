@@ -6,6 +6,7 @@ uniform mat4 u_model_view_matrix;
 uniform float u_scale_tex_coords;
 
 in vec3 frag_position;
+in vec3 v_frag_position;
 out vec4 f_color;
 
 // using raw buffer to avoid vec3/ivec3 in SSBO because they need to be aligned to a 16 byte boundary while IBO/VBO uses 12 floats vec3
@@ -92,8 +93,9 @@ dvec3 getBarycentric(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
 }
 
 void main() {
-  vec3 N = normalize(cross(dFdx(frag_position), dFdy(frag_position)));
-  vec3 L = normalize(u_light_position - frag_position);
+
+  vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
+  vec3 L = normalize(u_light_position - v_frag_position);
   float lambert_term = dot(N, L);
 
   int id_triangle = gl_PrimitiveID;
@@ -136,6 +138,6 @@ void main() {
   vec3 c3 = texture(u_exemplar_texture, h3 + r3).xyz;
 
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
-  vec4 result = vec4(albedo,1.);
+  vec4 result = vec4(albedo * lambert_term,1.);
   f_color = result;
 }
