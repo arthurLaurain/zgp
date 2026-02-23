@@ -30,6 +30,8 @@ const TnBData = struct {
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     procedural_texturing_parameters: ProceduralTexturing.Parameters,
+    exemplar_texture_path: [128]u8 = std.mem.zeroes([128]u8),
+    texture_initialized: bool = false,
 
     draw_texture: bool = true,
     initialized: bool = false,
@@ -38,7 +40,6 @@ const TnBData = struct {
         var pt = ProceduralTexturing.Parameters.init();
 
         //TODO handle error
-        pt.exemplar_texture.loadFromFile("src/utils/texture.png") catch unreachable;
         const ssbo_info_triangles = SSBO.init();
         const ssbo_info_vertices = SSBO.init();
         const ssbo_edge_ref = SSBO.init();
@@ -273,9 +274,18 @@ pub fn uiPanel(m: *Module) void {
             if (c.ImGui_SliderFloat("Scale length texture coordinates", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
                 zgp.requestRedraw();
 
-            c.ImGui_Text("Exemplar texture: ");
-            const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
-            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+            _ = c.ImGui_InputText("Exemplar texture path", &tnb_data.exemplar_texture_path[0], @sizeOf([256]u8), 0);
+            if (c.ImGui_Button("Init texture")) {
+                tnb_data.texture_initialized = true;
+                const zpath: [:0]u8 = tnb_data.exemplar_texture_path[0..(tnb_data.exemplar_texture_path.len - 1) :0];
+                tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(zpath) catch unreachable;
+                zgp.requestRedraw();
+            }
+            if (tnb_data.texture_initialized) {
+                c.ImGui_Text("Exemplar texture: ");
+                const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+            }
         }
     } else {
         c.ImGui_Text("No SurfaceMesh selected");
@@ -290,7 +300,7 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
         const info = zgp.surface_mesh_store.surfaceMeshInfo(sm);
 
         const p = smpt.surface_meshes_data.getPtr(sm).?;
-        if (p.draw_texture and p.initialized) {
+        if (p.draw_texture and p.initialized and p.texture_initialized) {
             p.procedural_texturing_parameters.model_view_matrix = @bitCast(view_matrix);
             p.procedural_texturing_parameters.projection_matrix = @bitCast(projection_matrix);
             p.procedural_texturing_parameters.draw(info.triangles_ibo);
