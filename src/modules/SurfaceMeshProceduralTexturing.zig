@@ -290,7 +290,7 @@ pub fn uiPanel(m: *Module) void {
                 const nul_index = std.mem.indexOfScalar(u8, tnb_data.exemplar_texture_path[0..], 0).?;
                 var path_buffer: [128]u8 = undefined;
                 const path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
-                tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path) catch unreachable;
+                tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path) catch {};
                 zgp.requestRedraw();
             }
             if (tnb_data.texture_initialized) {
