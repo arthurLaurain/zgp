@@ -4,6 +4,7 @@ uniform vec3 u_light_position;
 uniform sampler2D u_exemplar_texture;
 uniform mat4 u_model_view_matrix;
 uniform float u_scale_tex_coords;
+uniform float u_scale_distorsion;
 
 in vec3 frag_position;
 in vec3 v_frag_position;
@@ -52,7 +53,7 @@ vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
   
 }
 
-vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
+vec3 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
 {
     vec3 projPoint = P - dot(P - A, N) * N;
 
@@ -61,7 +62,7 @@ vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
     vec3 BT = cross(N, T);
 
     vec3 AP = projPoint - A;
-    return vec2(dot(AP, T), dot(AP, BT));
+    return vec3(dot(AP, T), dot(AP, BT), u_scale_distorsion * dot(projPoint - P, A - P));
 }
 
 vec2 hash12(int n){
@@ -118,26 +119,27 @@ void main() {
   // vec2 h2 = getTexCoord(frag_position, p2,p3,p1) * u_scale_tex_coords;
   // vec2 h3 = getTexCoord(frag_position, p3,p1,p2) * u_scale_tex_coords;
 
-  vec2 h1 = getTexCoordFromVertexPlane(frag_position, p1, n1) * u_scale_tex_coords;
-  vec2 h2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * u_scale_tex_coords;
-  vec2 h3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * u_scale_tex_coords;
+  vec3 h1 = getTexCoordFromVertexPlane(frag_position, p1, n1) * u_scale_tex_coords;
+  vec3 h2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * u_scale_tex_coords;
+  vec3 h3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * u_scale_tex_coords;
 
 
-    dvec3 bary = getBarycentric(dvec3(frag_position), p1, p2, p3);
+  dvec3 bary = getBarycentric(dvec3(frag_position), p1, p2, p3);
 
-    double w1 = bary.x;
-    double w2 = bary.y;
-    double w3 = bary.z;
+  double w1 = bary.x;
+  double w2 = bary.y;
+  double w3 = bary.z;
 
   vec2 r1 = hash12(int(id_vertices.x));
   vec2 r2 = hash12(int(id_vertices.y));
   vec2 r3 = hash12(int(id_vertices.z));
 
-  vec3 c1 = texture(u_exemplar_texture, h1 + r1).xyz;
-  vec3 c2 = texture(u_exemplar_texture, h2 + r2).xyz;
-  vec3 c3 = texture(u_exemplar_texture, h3 + r3).xyz;
+  vec3 c1 = texture(u_exemplar_texture, h1.xy + r1).xyz;
+  vec3 c2 = texture(u_exemplar_texture, h2.xy + r2).xyz;
+  vec3 c3 = texture(u_exemplar_texture, h3.xy + r3).xyz;
 
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
   f_color = result;
+  //f_color = vec4(h1.z + h2.z + h3.z,0.,0.,1.);
 }

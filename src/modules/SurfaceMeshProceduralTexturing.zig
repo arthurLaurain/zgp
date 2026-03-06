@@ -280,6 +280,12 @@ pub fn uiPanel(m: *Module) void {
                 zgp.requestRedraw();
             c.ImGui_PopID();
 
+            c.ImGui_Text("Scale distorsions");
+            c.ImGui_PushID("Scale distorsions");
+            if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_distorsion, 0, 1000))
+                zgp.requestRedraw();
+            c.ImGui_PopID();
+
             c.ImGui_Text("Exemplar texture path");
             c.ImGui_PushID("Exemplar texture path");
             _ = c.ImGui_InputText("", &tnb_data.exemplar_texture_path[0], @sizeOf([128]u8), 0);
@@ -290,7 +296,7 @@ pub fn uiPanel(m: *Module) void {
                 const nul_index = std.mem.indexOfScalar(u8, tnb_data.exemplar_texture_path[0..], 0).?;
                 var path_buffer: [128]u8 = undefined;
                 const path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
-                tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path) catch {};
+                tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path) catch {}; // loadFromFile method already print error
                 zgp.requestRedraw();
             }
             if (tnb_data.texture_initialized) {
