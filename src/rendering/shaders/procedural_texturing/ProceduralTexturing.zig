@@ -103,7 +103,7 @@ pub const Parameters = struct {
         return .{
             .shader = instance(),
             .vao = VAO.init(),
-            .exemplar_texture = TEXTURE2D.init(false, 1, &[_]TEXTURE2D.Parameter{
+            .exemplar_texture = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
                 .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
                 .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
                 .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },

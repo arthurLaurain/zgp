@@ -1,7 +1,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const AppContext = @import("../../main.zig").AppContext;
 const SurfaceMesh = @import("SurfaceMesh.zig");
+
 const geometry_utils = @import("../../geometry/utils.zig");
 const vec = @import("../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
@@ -30,19 +32,36 @@ pub fn vertexTangentBasis(
 /// Compute the tangent bases of all vertices of the given SurfaceMesh
 /// and store them in the given vertex_tangent_basis data.
 pub fn computeVertexTangentBases(
+    app_ctx: *AppContext,
     sm: *SurfaceMesh,
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
     vertex_normal: SurfaceMesh.CellData(.vertex, Vec3f),
     vertex_tangent_basis: SurfaceMesh.CellData(.vertex, [2]Vec3f),
 ) !void {
-    var it = try SurfaceMesh.CellIterator(.vertex).init(sm);
-    defer it.deinit();
-    while (it.next()) |vertex| {
-        vertex_tangent_basis.valuePtr(vertex).* = vertexTangentBasis(
-            sm,
-            vertex,
-            vertex_position,
-            vertex_normal,
-        );
-    }
+    const Task = struct {
+        const Task = @This();
+
+        surface_mesh: *const SurfaceMesh,
+        vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
+        vertex_normal: SurfaceMesh.CellData(.vertex, Vec3f),
+        vertex_tangent_basis: SurfaceMesh.CellData(.vertex, [2]Vec3f),
+
+        pub inline fn run(t: *const Task, vertex: SurfaceMesh.Cell) void {
+            t.vertex_tangent_basis.valuePtr(vertex).* = vertexTangentBasis(
+                t.surface_mesh,
+                vertex,
+                t.vertex_position,
+                t.vertex_normal,
+            );
+        }
+    };
+
+    var pctr = try SurfaceMesh.ParallelCellTaskRunner(.vertex).init(sm);
+    defer pctr.deinit();
+    try pctr.run(app_ctx, Task{
+        .surface_mesh = sm,
+        .vertex_position = vertex_position,
+        .vertex_normal = vertex_normal,
+        .vertex_tangent_basis = vertex_tangent_basis,
+    });
 }

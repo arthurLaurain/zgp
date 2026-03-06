@@ -1,20 +1,18 @@
 const VectorPerVertexRenderer = @This();
 
 const std = @import("std");
+const assert = std.debug.assert;
 const gl = @import("gl");
 
-const zgp = @import("../main.zig");
-const c = zgp.c;
+const c = @import("../main.zig").c;
 
-const imgui_utils = @import("../utils/imgui.zig");
+const imgui_utils = @import("../ui/imgui.zig");
 const imgui_log = std.log.scoped(.imgui);
 
-// TODO: this module should also work with PointClouds
-
+const AppContext = @import("../main.zig").AppContext;
 const Module = @import("Module.zig");
-const SurfaceMeshStore = @import("../models/SurfaceMeshStore.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
-const SurfaceMeshStdData = @import("../models/surface/SurfaceMeshStdDatas.zig").SurfaceMeshStdData;
+const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMeshStdData;
 
 const PointVector = @import("../rendering/shaders/point_vector/PointVector.zig");
 const VBO = @import("../rendering/VBO.zig");
@@ -40,21 +38,27 @@ const VectorPerVertexRendererParameters = struct {
     }
 };
 
+app_ctx: *AppContext,
 module: Module = .{
     .name = "Vector Per Vertex Renderer",
+    .supported_models = .{
+        // .point_cloud = true, // TODO: this module should also work with PointClouds
+        .surface_mesh = true,
+    },
     .vtable = &.{
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
         .draw = draw,
-        .uiPanel = uiPanel,
+        .rightPanel = rightPanel,
     },
 },
 parameters: std.AutoHashMap(*SurfaceMesh, VectorPerVertexRendererParameters),
 
-pub fn init(allocator: std.mem.Allocator) VectorPerVertexRenderer {
+pub fn init(app_ctx: *AppContext) VectorPerVertexRenderer {
     return .{
-        .parameters = .init(allocator),
+        .app_ctx = app_ctx,
+        .parameters = .init(app_ctx.allocator),
     };
 }
 
@@ -97,7 +101,7 @@ pub fn surfaceMeshStdDataChanged(
     switch (std_data) {
         .vertex_position => |maybe_vertex_position| {
             if (maybe_vertex_position) |vertex_position| {
-                const position_vbo = zgp.surface_mesh_store.dataVBO(.vertex, Vec3f, vertex_position);
+                const position_vbo = vpvr.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, vertex_position);
                 p.point_vector_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
             } else {
                 p.point_vector_shader_parameters.unsetVertexAttribArray(.position);
@@ -115,72 +119,68 @@ fn setSurfaceMeshVectorData(
     const p = vpvr.parameters.getPtr(surface_mesh) orelse return;
     p.vertex_vector = vertex_vector;
     if (p.vertex_vector) |v| {
-        const vector_vbo = zgp.surface_mesh_store.dataVBO(.vertex, Vec3f, v);
+        const vector_vbo = vpvr.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, v);
         p.point_vector_shader_parameters.setVertexAttribArray(.vector, vector_vbo, 0, 0);
     } else {
         p.point_vector_shader_parameters.unsetVertexAttribArray(.vector);
     }
-    zgp.requestRedraw();
+    vpvr.app_ctx.requestRedraw();
 }
 
 /// Part of the Module interface.
 /// Render all SurfaceMeshes with their VectorPerVertexRendererParameters and the given view and projection matrices.
 pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
     const vpvr: *VectorPerVertexRenderer = @alignCast(@fieldParentPtr("module", m));
-    var sm_it = zgp.surface_mesh_store.surface_meshes.iterator();
+    var sm_it = vpvr.app_ctx.surface_mesh_store.surface_meshes.iterator();
     while (sm_it.next()) |entry| {
-        const surface_mesh = entry.value_ptr.*;
-        const surface_mesh_info = zgp.surface_mesh_store.surfaceMeshInfo(surface_mesh);
-        const vector_per_vertex_renderer_parameters = vpvr.parameters.getPtr(surface_mesh).?;
+        const sm = entry.value_ptr.*;
+        const info = vpvr.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
+        const p = vpvr.parameters.getPtr(sm).?;
 
         gl.Enable(gl.CULL_FACE);
         gl.CullFace(gl.BACK);
-        vector_per_vertex_renderer_parameters.point_vector_shader_parameters.model_view_matrix = @bitCast(view_matrix);
-        vector_per_vertex_renderer_parameters.point_vector_shader_parameters.projection_matrix = @bitCast(projection_matrix);
-        vector_per_vertex_renderer_parameters.point_vector_shader_parameters.draw(surface_mesh_info.points_ibo);
+        p.point_vector_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+        p.point_vector_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+        p.point_vector_shader_parameters.draw(info.points_ibo);
         gl.Disable(gl.CULL_FACE);
     }
 }
 
 /// Part of the Module interface.
 /// Show a UI panel to control the VectorPerVertexRendererParameters of the selected SurfaceMesh.
-pub fn uiPanel(m: *Module) void {
+pub fn rightPanel(m: *Module) void {
     const vpvr: *VectorPerVertexRenderer = @alignCast(@fieldParentPtr("module", m));
+
+    assert(vpvr.app_ctx.selected_model.modelType() == .surface_mesh);
+    const sm = vpvr.app_ctx.selected_model.surface_mesh;
 
     const style = c.ImGui_GetStyle();
 
     c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
     defer c.ImGui_PopItemWidth();
 
-    if (zgp.surface_mesh_store.selected_surface_mesh) |sm| {
-        const p = vpvr.parameters.getPtr(sm).?;
-        c.ImGui_Text("Vector");
-        c.ImGui_PushID("VectorData");
-        if (imgui_utils.surfaceMeshCellDataComboBox(
-            sm,
-            .vertex,
-            Vec3f,
-            p.vertex_vector,
-        )) |data| {
-            vpvr.setSurfaceMeshVectorData(sm, data);
-        }
-        c.ImGui_PopID();
-        c.ImGui_Text("Vector scale");
-        c.ImGui_PushID("VectorScale");
-        if (c.ImGui_SliderFloatEx("", &p.point_vector_shader_parameters.vector_scale, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
-            zgp.requestRedraw();
-        }
-        c.ImGui_PopID();
-        c.ImGui_Text("Vector radius");
-        c.ImGui_PushID("VectorRadius");
-        if (c.ImGui_SliderFloatEx("", &p.point_vector_shader_parameters.cone_radius, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
-            zgp.requestRedraw();
-        }
-        c.ImGui_PopID();
-        if (c.ImGui_ColorEdit3("Vector color", &p.point_vector_shader_parameters.vector_color, c.ImGuiColorEditFlags_NoInputs)) {
-            zgp.requestRedraw();
-        }
-    } else {
-        c.ImGui_Text("No Surface Mesh selected");
+    const p = vpvr.parameters.getPtr(sm).?;
+    c.ImGui_Text("Vector");
+    c.ImGui_PushID("VectorData");
+    switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, Vec3f, p.vertex_vector)) {
+        .unchanged => {},
+        .cleared => vpvr.setSurfaceMeshVectorData(sm, null),
+        .changed => |data| vpvr.setSurfaceMeshVectorData(sm, data),
+    }
+    c.ImGui_PopID();
+    c.ImGui_Text("Vector scale");
+    c.ImGui_PushID("VectorScale");
+    if (c.ImGui_SliderFloatEx("", &p.point_vector_shader_parameters.vector_scale, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
+        vpvr.app_ctx.requestRedraw();
+    }
+    c.ImGui_PopID();
+    c.ImGui_Text("Vector radius");
+    c.ImGui_PushID("VectorRadius");
+    if (c.ImGui_SliderFloatEx("", &p.point_vector_shader_parameters.cone_radius, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
+        vpvr.app_ctx.requestRedraw();
+    }
+    c.ImGui_PopID();
+    if (c.ImGui_ColorEdit3("Vector color", &p.point_vector_shader_parameters.vector_color, c.ImGuiColorEditFlags_NoInputs)) {
+        vpvr.app_ctx.requestRedraw();
     }
 }

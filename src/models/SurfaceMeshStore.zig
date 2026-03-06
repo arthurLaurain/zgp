@@ -3,18 +3,17 @@ const SurfaceMeshStore = @This();
 const std = @import("std");
 const builtin = @import("builtin");
 
-const zgp = @import("../main.zig");
-const c = zgp.c;
+const c = @import("../main.zig").c;
 
-const imgui_utils = @import("../utils/imgui.zig");
 const imgui_log = std.log.scoped(.imgui);
 const zgp_log = std.log.scoped(.zgp);
 
+const imgui_utils = @import("../ui/imgui.zig");
 const types_utils = @import("../utils/types.zig");
 
+const Module = @import("../modules/Module.zig");
+const ModelSelection = @import("../main.zig").ModelSelection;
 const SurfaceMesh = @import("surface/SurfaceMesh.zig");
-const SurfaceMeshStdDatas = @import("surface/SurfaceMeshStdDatas.zig");
-const SurfaceMeshStdData = SurfaceMeshStdDatas.SurfaceMeshStdData;
 
 const Data = @import("../utils/Data.zig").Data;
 const DataGen = @import("../utils/Data.zig").DataGen;
@@ -27,6 +26,24 @@ const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 const bvh = @import("../geometry/bvh.zig");
 
+/// This struct defines the standard datas of a SurfaceMesh
+pub const SurfaceMeshStdDatas = struct {
+    corner_angle: ?SurfaceMesh.CellData(.corner, f32) = null,
+    halfedge_cotan_weight: ?SurfaceMesh.CellData(.halfedge, f32) = null,
+    vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
+    vertex_area: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    vertex_normal: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
+    vertex_tangent_basis: ?SurfaceMesh.CellData(.vertex, [2]Vec3f) = null,
+    edge_length: ?SurfaceMesh.CellData(.edge, f32) = null,
+    edge_dihedral_angle: ?SurfaceMesh.CellData(.edge, f32) = null,
+    face_area: ?SurfaceMesh.CellData(.face, f32) = null,
+    face_normal: ?SurfaceMesh.CellData(.face, Vec3f) = null,
+};
+/// This tagged union is generated from the SurfaceMeshStdDatas struct and allows to
+/// easily provide a single data entry to the setSurfaceMeshStdData function
+pub const SurfaceMeshStdData = types_utils.UnionFromStruct(SurfaceMeshStdDatas);
+pub const SurfaceMeshStdDataTag = std.meta.Tag(SurfaceMeshStdData);
+
 /// This struct holds information related to a SurfaceMesh, including:
 /// - its standard datas,
 /// - its BVH,
@@ -34,7 +51,7 @@ const bvh = @import("../geometry/bvh.zig");
 /// - the IBOs (for rendering).
 /// The SurfaceMeshInfo associated with a SurfaceMesh is accessible via the surfaceMeshInfo function.
 const SurfaceMeshInfo = struct {
-    std_data: SurfaceMeshStdDatas = .{},
+    std_datas: SurfaceMeshStdDatas = .{},
 
     bvh: bvh.TrianglesBVH = .{},
     bvh_last_update: ?std.time.Instant = null,
@@ -55,16 +72,16 @@ const SurfaceMeshInfo = struct {
 
     pub fn init(surface_mesh: *SurfaceMesh) !SurfaceMeshInfo {
         return .{
-            .points_ibo = IBO.init(),
-            .lines_ibo = IBO.init(),
-            .triangles_ibo = IBO.init(),
-            .boundaries_ibo = IBO.init(),
-            .vertex_set = try SurfaceMesh.CellSet(.vertex).init(surface_mesh),
-            .edge_set = try SurfaceMesh.CellSet(.edge).init(surface_mesh),
-            .face_set = try SurfaceMesh.CellSet(.face).init(surface_mesh),
-            .vertex_set_ibo = IBO.init(),
-            .edge_set_ibo = IBO.init(),
-            .face_set_ibo = IBO.init(),
+            .points_ibo = .init(),
+            .lines_ibo = .init(),
+            .triangles_ibo = .init(),
+            .boundaries_ibo = .init(),
+            .vertex_set = try .init(surface_mesh),
+            .edge_set = try .init(surface_mesh),
+            .face_set = try .init(surface_mesh),
+            .vertex_set_ibo = .init(),
+            .edge_set_ibo = .init(),
+            .face_set_ibo = .init(),
         };
     }
     pub fn deinit(self: *SurfaceMeshInfo) void {
@@ -84,9 +101,12 @@ const SurfaceMeshInfo = struct {
 
 allocator: std.mem.Allocator,
 
+// list of Modules that have registered interest in SurfaceMesh events
+listeners: std.ArrayList(*Module),
+
 surface_meshes: std.StringHashMap(*SurfaceMesh),
 surface_meshes_info: std.AutoHashMap(*const SurfaceMesh, SurfaceMeshInfo),
-selected_surface_mesh: ?*SurfaceMesh = null,
+selected_model: *ModelSelection = undefined, // set in AppContext wireUp
 
 data_vbo: std.AutoHashMap(*const DataGen, VBO),
 data_last_update: std.AutoHashMap(*const DataGen, std.time.Instant),
@@ -96,6 +116,7 @@ cell_buffer_pool: BufferPool(SurfaceMesh.Cell),
 pub fn init(allocator: std.mem.Allocator) !SurfaceMeshStore {
     return .{
         .allocator = allocator,
+        .listeners = .empty,
         .surface_meshes = .init(allocator),
         .surface_meshes_info = .init(allocator),
         .data_vbo = .init(allocator),
@@ -131,6 +152,12 @@ pub fn deinit(sms: *SurfaceMeshStore) void {
     sms.data_last_update.deinit();
 
     sms.cell_buffer_pool.deinit();
+
+    sms.listeners.deinit(sms.allocator);
+}
+
+pub fn addListener(sms: *SurfaceMeshStore, module: *Module) !void {
+    try sms.listeners.append(sms.allocator, module);
 }
 
 pub fn createSurfaceMesh(sms: *SurfaceMeshStore, name: []const u8) !*SurfaceMesh {
@@ -151,8 +178,7 @@ pub fn createSurfaceMesh(sms: *SurfaceMeshStore, name: []const u8) !*SurfaceMesh
     try sms.surface_meshes_info.put(sm, info);
     errdefer _ = sms.surface_meshes_info.remove(sm);
 
-    // TODO: find a way to only notify modules that have registered interest in SurfaceMesh
-    for (zgp.modules.items) |module| {
+    for (sms.listeners.items) |module| {
         module.surfaceMeshCreated(sm);
     }
 
@@ -165,13 +191,17 @@ pub fn destroySurfaceMesh(sms: *SurfaceMeshStore, sm: *SurfaceMesh) void {
         return;
     };
 
-    // TODO: find a way to only notify modules that have registered interest in SurfaceMesh
-    for (zgp.modules.items) |module| {
+    for (sms.listeners.items) |module| {
         module.surfaceMeshDestroyed(sm);
     }
 
-    if (sms.selected_surface_mesh == sm) {
-        sms.selected_surface_mesh = null;
+    switch (sms.selected_model.*) {
+        .surface_mesh => |selected_sm| {
+            if (selected_sm == sm) {
+                sms.selected_model.* = .none;
+            }
+        },
+        else => {},
     }
     _ = sms.surface_meshes.remove(name);
     sms.allocator.free(name); // free the name
@@ -204,11 +234,9 @@ pub fn surfaceMeshDataUpdated(
         zgp_log.err("Failed to get current time: {}", .{err});
     }
 
-    // TODO: find a way to only notify modules that have registered interest in SurfaceMesh
-    for (zgp.modules.items) |module| {
+    for (sms.listeners.items) |module| {
         module.surfaceMeshDataUpdated(sm, cell_type, data.gen());
     }
-    zgp.requestRedraw();
 }
 
 pub fn surfaceMeshConnectivityUpdated(sms: *SurfaceMeshStore, sm: *SurfaceMesh) void {
@@ -258,11 +286,9 @@ pub fn surfaceMeshConnectivityUpdated(sms: *SurfaceMeshStore, sm: *SurfaceMesh) 
     };
     sms.surfaceMeshCellSetUpdated(sm, .face);
 
-    // TODO: find a way to only notify modules that have registered interest in SurfaceMesh
-    for (zgp.modules.items) |module| {
+    for (sms.listeners.items) |module| {
         module.surfaceMeshConnectivityUpdated(sm);
     }
-    zgp.requestRedraw();
 }
 
 pub fn surfaceMeshCellSetUpdated(
@@ -293,11 +319,9 @@ pub fn surfaceMeshCellSetUpdated(
         else => unreachable,
     }
 
-    // TODO: find a way to only notify modules that have registered interest in SurfaceMesh
-    for (zgp.modules.items) |module| {
+    for (sms.listeners.items) |module| {
         module.surfaceMeshCellSetUpdated(sm, cell_type);
     }
-    zgp.requestRedraw();
 }
 
 pub fn dataVBO(
@@ -343,20 +367,18 @@ pub fn setSurfaceMeshStdData(
     const info = sms.surface_meshes_info.getPtr(sm).?;
     switch (data) {
         inline else => |val, tag| {
-            @field(info.std_data, @tagName(tag)) = val;
+            @field(info.std_datas, @tagName(tag)) = val;
         },
     }
 
-    // TODO: find a way to only notify modules that have registered interest in SurfaceMesh
-    for (zgp.modules.items) |module| {
+    for (sms.listeners.items) |module| {
         module.surfaceMeshStdDataChanged(sm, data);
     }
-    zgp.requestRedraw();
 }
 
 pub fn menuBar(_: *SurfaceMeshStore) void {}
 
-pub fn uiPanel(sms: *SurfaceMeshStore) void {
+pub fn leftPanel(sms: *SurfaceMeshStore) void {
     const CreateDataTypes = union(enum) { bool: bool, u32: u32, f32: f32, Vec3f: Vec3f };
     const CreateDataTypesTag = std.meta.Tag(CreateDataTypes);
     const UiData = struct {
@@ -380,214 +402,136 @@ pub fn uiPanel(sms: *SurfaceMeshStore) void {
         c.ImGui_PopStyleColorEx(3);
 
         const nb_surface_meshes_f = @as(f32, @floatFromInt(sms.surface_meshes.count() + 1));
-        if (imgui_utils.surfaceMeshListBox(
-            sms.selected_surface_mesh,
+        switch (imgui_utils.surfaceMeshListBox(
+            sms,
             style.*.FontSizeBase * nb_surface_meshes_f + style.*.ItemSpacing.y * nb_surface_meshes_f,
-        )) |sm| {
-            sms.selected_surface_mesh = sm;
+        )) {
+            .unchanged => {},
+            .cleared => sms.selected_model.* = .none,
+            .changed => |new_sm| sms.selected_model.* = .{ .surface_mesh = new_sm },
         }
 
-        const button_width = c.ImGui_CalcTextSize("" ++ c.ICON_FA_DATABASE).x + style.*.ItemSpacing.x;
+        if (sms.selected_model.modelType() != .surface_mesh) return;
+        const sm = sms.selected_model.surface_mesh;
 
-        if (sms.selected_surface_mesh) |sm| {
-            var buf: [64]u8 = undefined; // guess 64 chars is enough for cell name + cell count
-            const info = sms.surface_meshes_info.getPtr(sm).?;
+        var buf: [64]u8 = undefined; // guess 64 chars is enough for cell stat info
+        if (c.ImGui_BeginTable("CellStats", 3, c.ImGuiTableFlags_Borders | c.ImGuiTableFlags_RowBg)) {
+            defer c.ImGui_EndTable();
+
+            c.ImGui_TableSetupColumn("CellType", c.ImGuiTableColumnFlags_WidthStretch);
+            c.ImGui_TableSetupColumn("Count", c.ImGuiTableColumnFlags_WidthFixed);
+            c.ImGui_TableSetupColumn("ContainerDensity", c.ImGuiTableColumnFlags_WidthFixed);
+            c.ImGui_TableHeadersRow();
+
             inline for ([_]SurfaceMesh.CellType{ .halfedge, .corner, .vertex, .edge, .face }) |cell_type| {
-                const cells = std.fmt.bufPrintZ(&buf, @tagName(cell_type) ++ " | {d} | ({d:.1}%)", .{ sm.nbCells(cell_type), sm.dataContainer(cell_type).density() * 100 }) catch "";
-                c.ImGui_SeparatorText(cells.ptr);
-                inline for (@typeInfo(SurfaceMeshStdData).@"union".fields) |*field| {
-                    if (@typeInfo(field.type).optional.child.CellType != cell_type) continue;
-                    c.ImGui_Text(field.name);
-                    c.ImGui_SameLine();
-                    // align 2 buttons to the right of the text
-                    c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + c.ImGui_GetContentRegionAvail().x - 2 * button_width - style.*.ItemSpacing.x);
-                    const data_selected = @field(info.std_data, field.name) != null;
-                    if (!data_selected) {
-                        c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 128, 128, 200));
-                        c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 128, 128, 255));
-                        c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 128, 128, 128));
-                    }
-                    c.ImGui_PushID(field.name);
-                    defer c.ImGui_PopID();
-                    if (c.ImGui_Button("" ++ c.ICON_FA_DATABASE)) {
-                        c.ImGui_OpenPopup("select_data_popup", c.ImGuiPopupFlags_NoReopen);
-                    }
-                    if (!data_selected) {
-                        c.ImGui_PopStyleColorEx(3);
-                    }
-                    if (c.ImGui_BeginPopup("select_data_popup", 0)) {
-                        defer c.ImGui_EndPopup();
-                        c.ImGui_PushID("select_data_combobox");
-                        defer c.ImGui_PopID();
-                        if (imgui_utils.surfaceMeshCellDataComboBox(
-                            sm,
-                            @typeInfo(field.type).optional.child.CellType,
-                            @typeInfo(field.type).optional.child.DataType,
-                            @field(info.std_data, field.name),
-                        )) |data| {
-                            sms.setSurfaceMeshStdData(sm, @unionInit(SurfaceMeshStdData, field.name, data));
-                        }
-                    }
-                    const data_tag = @field(SurfaceMeshStdDatas.SurfaceMeshStdDataTag, field.name);
-                    inline for (SurfaceMeshStdDatas.std_data_computations) |comp| {
-                        if (comp.computes == data_tag) {
-                            c.ImGui_SameLine();
-                            const computable, const upToDate = SurfaceMeshStdDatas.dataComputableAndUpToDate(sm, data_tag);
-                            if (!computable) {
-                                c.ImGui_BeginDisabled(true);
-                            }
-                            if (!upToDate) {
-                                c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(255, 128, 128, 200));
-                                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(255, 128, 128, 255));
-                                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(255, 128, 128, 128));
-                            } else {
-                                c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 200, 128, 200));
-                                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 200, 128, 255));
-                                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 200, 128, 128));
-                            }
-                            if (c.ImGui_Button("" ++ c.ICON_FA_GEARS)) {
-                                if (computable) {
-                                    comp.compute(sm);
-                                } else {
-                                    zgp_log.err("No computation found for {s} data", .{field.name});
-                                }
-                            }
-                            c.ImGui_PopStyleColorEx(3);
-                            if (!computable) {
-                                c.ImGui_EndDisabled();
-                            }
-                            // TODO: generate tooltip from reads & computes
-                            // imgui_utils.tooltip(
-                            //     \\ Read:
-                            //     \\ - vertex_position
-                            //     \\ Write:
-                            //     \\ - corner_angle
-                            // );
-                        }
-                    }
-                }
+                const cells = std.fmt.bufPrintZ(&buf, "{s}", .{@tagName(cell_type)}) catch "";
+                c.ImGui_TableNextRow();
+                _ = c.ImGui_TableNextColumn();
+                c.ImGui_Text(cells.ptr);
+                _ = c.ImGui_TableNextColumn();
+                const count = std.fmt.bufPrintZ(&buf, "{d}", .{sm.nbCells(cell_type)}) catch "";
+                c.ImGui_Text(count.ptr);
+                _ = c.ImGui_TableNextColumn();
+                const density = std.fmt.bufPrintZ(&buf, "{d:.1}%", .{sm.dataContainer(cell_type).density() * 100}) catch "";
+                c.ImGui_Text(density.ptr);
             }
+        }
 
-            c.ImGui_Separator();
-
-            if (c.ImGui_ButtonEx(c.ICON_FA_DATABASE ++ " Create missing std datas", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                inline for (@typeInfo(SurfaceMeshStdData).@"union".fields) |*field| {
-                    if (@field(info.std_data, field.name) == null) {
-                        const maybe_data = sm.addData(@typeInfo(field.type).optional.child.CellType, @typeInfo(field.type).optional.child.DataType, field.name);
-                        if (maybe_data) |data| {
-                            sms.setSurfaceMeshStdData(sm, @unionInit(SurfaceMeshStdData, field.name, data));
-                        } else |err| {
-                            zgp_log.err("Error adding {s} ({s}: {s}) data: {}", .{ field.name, @tagName(@typeInfo(field.type).optional.child.CellType), @typeName(@typeInfo(field.type).optional.child.DataType), err });
+        if (c.ImGui_ButtonEx("Create cell data", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            c.ImGui_OpenPopup("Create Cell Data", c.ImGuiPopupFlags_NoReopen);
+        }
+        if (c.ImGui_BeginPopupModal("Create Cell Data", 0, c.ImGuiWindowFlags_AlwaysAutoResize)) {
+            defer c.ImGui_EndPopup();
+            c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
+            defer c.ImGui_PopItemWidth();
+            c.ImGui_Text("Cell type:");
+            c.ImGui_PushID("cell type");
+            if (imgui_utils.surfaceMeshCellTypeComboBox(UiData.selected_surface_mesh_cell_type)) |cell_type| {
+                UiData.selected_surface_mesh_cell_type = cell_type;
+            }
+            c.ImGui_PopID();
+            c.ImGui_Text("Data type:");
+            c.ImGui_PushID("data type");
+            if (c.ImGui_BeginCombo("", @tagName(UiData.selected_data_type), 0)) {
+                defer c.ImGui_EndCombo();
+                inline for (@typeInfo(CreateDataTypesTag).@"enum".fields) |*data_type| {
+                    const is_selected = @intFromEnum(UiData.selected_data_type) == data_type.value;
+                    if (c.ImGui_SelectableEx(data_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                        if (!is_selected) {
+                            UiData.selected_data_type = @enumFromInt(data_type.value);
                         }
                     }
-                }
-            }
-
-            if (c.ImGui_ButtonEx(c.ICON_FA_GEAR ++ " Update outdated std datas", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                inline for (SurfaceMeshStdDatas.std_data_computations) |comp| {
-                    const computable, const upToDate = SurfaceMeshStdDatas.dataComputableAndUpToDate(sm, comp.computes);
-                    if (computable and !upToDate) {
-                        comp.compute(sm);
+                    if (is_selected) {
+                        c.ImGui_SetItemDefaultFocus();
                     }
                 }
             }
-
-            if (c.ImGui_ButtonEx("Create cell data", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                c.ImGui_OpenPopup("Create Cell Data", c.ImGuiPopupFlags_NoReopen);
+            c.ImGui_PopID();
+            c.ImGui_Text("Name:");
+            _ = c.ImGui_InputText("##Name", &UiData.data_name_buf, UiData.data_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
+            if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = 0.5 * c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                UiData.data_name_buf[0] = 0;
+                c.ImGui_CloseCurrentPopup();
             }
-            if (c.ImGui_BeginPopupModal("Create Cell Data", 0, c.ImGuiWindowFlags_AlwaysAutoResize)) {
-                defer c.ImGui_EndPopup();
-                c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
-                defer c.ImGui_PopItemWidth();
-                c.ImGui_Text("Cell type:");
-                c.ImGui_PushID("cell type");
-                if (imgui_utils.surfaceMeshCellTypeComboBox(UiData.selected_surface_mesh_cell_type)) |cell_type| {
-                    UiData.selected_surface_mesh_cell_type = cell_type;
-                }
-                c.ImGui_PopID();
-                c.ImGui_Text("Data type:");
-                c.ImGui_PushID("data type");
-                if (c.ImGui_BeginCombo("", @tagName(UiData.selected_data_type), 0)) {
-                    defer c.ImGui_EndCombo();
-                    inline for (@typeInfo(CreateDataTypesTag).@"enum".fields) |*data_type| {
-                        const is_selected = @intFromEnum(UiData.selected_data_type) == data_type.value;
-                        if (c.ImGui_SelectableEx(data_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                            if (!is_selected) {
-                                UiData.selected_data_type = @enumFromInt(data_type.value);
-                            }
+            c.ImGui_SameLine();
+            if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                switch (UiData.selected_surface_mesh_cell_type) {
+                    inline else => |cell_type| {
+                        switch (UiData.selected_data_type) {
+                            inline else => |data_type| {
+                                _ = sm.addData(cell_type, @FieldType(CreateDataTypes, @tagName(data_type)), &UiData.data_name_buf) catch |err| {
+                                    zgp_log.err("Error adding {s} ({s}: {s}) data: {}", .{ &UiData.data_name_buf, @tagName(cell_type), @tagName(data_type), err });
+                                };
+                                UiData.data_name_buf[0] = 0;
+                            },
                         }
-                        if (is_selected) {
-                            c.ImGui_SetItemDefaultFocus();
-                        }
-                    }
-                }
-                c.ImGui_PopID();
-                c.ImGui_Text("Name:");
-                _ = c.ImGui_InputText("##Name", &UiData.data_name_buf, UiData.data_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
-                if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = 0.5 * c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                    UiData.data_name_buf[0] = 0;
-                    c.ImGui_CloseCurrentPopup();
-                }
-                c.ImGui_SameLine();
-                if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                    switch (UiData.selected_surface_mesh_cell_type) {
-                        inline else => |cell_type| {
-                            switch (UiData.selected_data_type) {
-                                inline else => |data_type| {
-                                    _ = sm.addData(cell_type, @FieldType(CreateDataTypes, @tagName(data_type)), &UiData.data_name_buf) catch |err| {
-                                        zgp_log.err("Error adding {s} ({s}: {s}) data: {}", .{ &UiData.data_name_buf, @tagName(cell_type), @tagName(data_type), err });
-                                    };
-                                    UiData.data_name_buf[0] = 0;
-                                },
-                            }
-                        },
-                    }
+                    },
                 }
             }
+        }
 
-            {
-                var bvh_computable = true;
-                if (info.std_data.vertex_position == null) {
-                    bvh_computable = false;
-                }
-                var bvh_upToDate = true;
-                if (!bvh_computable or info.bvh_last_update == null or info.bvh_last_update.?.order(sms.dataLastUpdate(info.std_data.vertex_position.?.gen()).?) == .lt) {
-                    bvh_upToDate = false;
-                }
-                if (!bvh_computable) {
-                    c.ImGui_BeginDisabled(true);
-                }
-                if (!bvh_upToDate) {
-                    c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(255, 128, 128, 200));
-                    c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(255, 128, 128, 255));
-                    c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(255, 128, 128, 128));
-                } else {
-                    c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 200, 128, 200));
-                    c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 200, 128, 255));
-                    c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 200, 128, 128));
-                }
-                if (c.ImGui_ButtonEx(c.ICON_FA_SITEMAP ++ " Update BVH", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                    info.bvh.deinit();
-                    info.bvh = bvh.TrianglesBVH.init(sm, info.std_data.vertex_position.?) catch |err| blk: {
-                        zgp_log.err("Failed to build BVH: {}", .{err});
-                        break :blk .{};
-                    };
-                    if (info.bvh.bvh_ptr) |_| {
-                        const now = std.time.Instant.now();
-                        if (now) |t| {
-                            info.bvh_last_update = t;
-                        } else |err| {
-                            zgp_log.err("Failed to get current time: {}", .{err});
-                        }
+        {
+            const info = sms.surface_meshes_info.getPtr(sm).?;
+
+            var bvh_computable = true;
+            if (info.std_datas.vertex_position == null) {
+                bvh_computable = false;
+            }
+            var bvh_upToDate = true;
+            if (!bvh_computable or info.bvh_last_update == null or info.bvh_last_update.?.order(sms.dataLastUpdate(info.std_datas.vertex_position.?.gen()).?) == .lt) {
+                bvh_upToDate = false;
+            }
+            if (!bvh_computable) {
+                c.ImGui_BeginDisabled(true);
+            }
+            if (!bvh_upToDate) {
+                c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(255, 128, 128, 200));
+                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(255, 128, 128, 255));
+                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(255, 128, 128, 128));
+            } else {
+                c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 200, 128, 200));
+                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 200, 128, 255));
+                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 200, 128, 128));
+            }
+            if (c.ImGui_ButtonEx(c.ICON_FA_SITEMAP ++ " Update BVH", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                info.bvh.deinit();
+                info.bvh = bvh.TrianglesBVH.init(sm, info.std_datas.vertex_position.?) catch |err| blk: {
+                    zgp_log.err("Failed to build BVH: {}", .{err});
+                    break :blk .{};
+                };
+                if (info.bvh.bvh_ptr) |_| {
+                    const now = std.time.Instant.now();
+                    if (now) |t| {
+                        info.bvh_last_update = t;
+                    } else |err| {
+                        zgp_log.err("Failed to get current time: {}", .{err});
                     }
                 }
-                c.ImGui_PopStyleColorEx(3);
-                if (!bvh_computable) {
-                    c.ImGui_EndDisabled();
-                }
             }
-        } else {
-            c.ImGui_Text("No Surface Mesh selected");
+            c.ImGui_PopStyleColorEx(3);
+            if (!bvh_computable) {
+                c.ImGui_EndDisabled();
+            }
         }
     } else {
         c.ImGui_PopStyleColorEx(3);

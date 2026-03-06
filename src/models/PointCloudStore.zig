@@ -3,21 +3,21 @@ const PointCloudStore = @This();
 const std = @import("std");
 const builtin = @import("builtin");
 
-const zgp = @import("../main.zig");
-const c = zgp.c;
+const c = @import("../main.zig").c;
 
-const imgui_utils = @import("../utils/imgui.zig");
 const imgui_log = std.log.scoped(.imgui);
 const zgp_log = std.log.scoped(.zgp);
 
+const imgui_utils = @import("../ui/imgui.zig");
 const types_utils = @import("../utils/types.zig");
 
+const Module = @import("../modules/Module.zig");
+const ModelSelection = @import("../main.zig").ModelSelection;
 const PointCloud = @import("point/PointCloud.zig");
-const PointCloudStdDatas = @import("point/PointCloudStdDatas.zig");
-const PointCloudStdData = PointCloudStdDatas.PointCloudStdData;
 
 const Data = @import("../utils/Data.zig").Data;
 const DataGen = @import("../utils/Data.zig").DataGen;
+const BufferPool = @import("../utils/BufferPool.zig").BufferPool;
 
 const VBO = @import("../rendering/VBO.zig");
 const IBO = @import("../rendering/IBO.zig");
@@ -25,17 +25,31 @@ const IBO = @import("../rendering/IBO.zig");
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 
+/// This struct defines the standard datas of a PointCloud
+pub const PointCloudStdDatas = struct {
+    position: ?PointCloud.CellData(Vec3f) = null,
+    normal: ?PointCloud.CellData(Vec3f) = null,
+    radius: ?PointCloud.CellData(f32) = null,
+    // color: ?PointCloud.CellData(Vec3f) = null,
+};
+
+/// This tagged union is generated from the PointCloudStdDatas struct and allows to easily provide a single
+/// data entry to the setPointCloudStdData function (in PointCloudStore)
+pub const PointCloudStdData = types_utils.UnionFromStruct(PointCloudStdDatas);
+pub const PointCloudStdDataTag = std.meta.Tag(PointCloudStdData);
+
 /// This struct holds information related to a PointCloud, including:
 /// - its standard datas
 /// - the IBOs (for rendering).
 /// The PointCloudInfo associated with a PointCloud is accessible via the pointCloudInfo function.
 const PointCloudInfo = struct {
-    std_data: PointCloudStdDatas = .{},
+    std_datas: PointCloudStdDatas = .{},
+
     points_ibo: IBO,
 
     pub fn init() PointCloudInfo {
         return .{
-            .points_ibo = IBO.init(),
+            .points_ibo = .init(),
         };
     }
     pub fn deinit(self: *PointCloudInfo) void {
@@ -45,20 +59,27 @@ const PointCloudInfo = struct {
 
 allocator: std.mem.Allocator,
 
+// list of Modules that have registered interest in PointCloud events
+listeners: std.ArrayList(*Module),
+
 point_clouds: std.StringHashMap(*PointCloud),
 point_clouds_info: std.AutoHashMap(*const PointCloud, PointCloudInfo),
-selected_point_cloud: ?*PointCloud = null,
+selected_model: *ModelSelection = undefined, // set in AppContext wireUp
 
 data_vbo: std.AutoHashMap(*const DataGen, VBO),
 data_last_update: std.AutoHashMap(*const DataGen, std.time.Instant),
 
-pub fn init(allocator: std.mem.Allocator) PointCloudStore {
+point_buffer_pool: BufferPool(PointCloud.Point),
+
+pub fn init(allocator: std.mem.Allocator) !PointCloudStore {
     return .{
         .allocator = allocator,
+        .listeners = .empty,
         .point_clouds = .init(allocator),
         .point_clouds_info = .init(allocator),
         .data_vbo = .init(allocator),
         .data_last_update = .init(allocator),
+        .point_buffer_pool = try .init(allocator, 1024, 64, 32),
     };
 }
 
@@ -87,6 +108,14 @@ pub fn deinit(pcs: *PointCloudStore) void {
     }
     pcs.data_vbo.deinit();
     pcs.data_last_update.deinit();
+
+    pcs.point_buffer_pool.deinit();
+
+    pcs.listeners.deinit(pcs.allocator);
+}
+
+pub fn addListener(pcs: *PointCloudStore, module: *Module) !void {
+    try pcs.listeners.append(pcs.allocator, module);
 }
 
 pub fn createPointCloud(pcs: *PointCloudStore, name: []const u8) !*PointCloud {
@@ -107,8 +136,7 @@ pub fn createPointCloud(pcs: *PointCloudStore, name: []const u8) !*PointCloud {
     try pcs.point_clouds_info.put(pc, info);
     errdefer _ = pcs.point_clouds_info.remove(pc);
 
-    // TODO: find a way to only notify modules that have registered interest in PointCloud
-    for (zgp.modules.items) |module| {
+    for (pcs.listeners.items) |module| {
         module.pointCloudCreated(pc);
     }
 
@@ -121,13 +149,17 @@ pub fn destroyPointCloud(pcs: *PointCloudStore, pc: *PointCloud) void {
         return;
     };
 
-    // TODO: find a way to only notify modules that have registered interest in PointCloud
-    for (zgp.modules.items) |module| {
+    for (pcs.listeners.items) |module| {
         module.pointCloudDestroyed(pc);
     }
 
-    if (pcs.selected_point_cloud == pc) {
-        pcs.selected_point_cloud = null;
+    switch (pcs.selected_model.*) {
+        .point_cloud => |selected_pc| {
+            if (selected_pc == pc) {
+                pcs.selected_model.* = .none;
+            }
+        },
+        else => {},
     }
     _ = pcs.point_clouds.remove(name);
     pcs.allocator.free(name); // free the name
@@ -159,11 +191,9 @@ pub fn pointCloudDataUpdated(
         return;
     };
 
-    // TODO: find a way to only notify modules that have registered interest in PointCloud
-    for (zgp.modules.items) |module| {
+    for (pcs.listeners.items) |module| {
         module.pointCloudDataUpdated(pc, data.gen());
     }
-    zgp.requestRedraw();
 }
 
 pub fn pointCloudConnectivityUpdated(pcs: *PointCloudStore, pc: *PointCloud) void {
@@ -174,14 +204,16 @@ pub fn pointCloudConnectivityUpdated(pcs: *PointCloudStore, pc: *PointCloud) voi
         return;
     };
 
-    // TODO: find a way to only notify modules that have registered interest in PointCloud
-    for (zgp.modules.items) |module| {
+    for (pcs.listeners.items) |module| {
         module.pointCloudConnectivityUpdated(pc);
     }
-    zgp.requestRedraw();
 }
 
-pub fn dataVBO(pcs: *PointCloudStore, comptime T: type, data: PointCloud.CellData(T)) VBO {
+pub fn dataVBO(
+    pcs: *PointCloudStore,
+    comptime T: type,
+    data: PointCloud.CellData(T),
+) VBO {
     const vbo = pcs.data_vbo.getOrPut(data.gen()) catch |err| {
         zgp_log.err("Failed to get or add VBO in the registry: {}", .{err});
         return VBO.init(); // return a dummy VBO
@@ -219,25 +251,23 @@ pub fn setPointCloudStdData(
     const info = pcs.point_clouds_info.getPtr(pc).?;
     switch (data) {
         inline else => |val, tag| {
-            @field(info.std_data, @tagName(tag)) = val;
+            @field(info.std_datas, @tagName(tag)) = val;
         },
     }
 
-    // TODO: find a way to only notify modules that have registered interest in PointCloud
-    for (zgp.modules.items) |module| {
+    for (pcs.listeners.items) |module| {
         module.pointCloudStdDataChanged(pc, data);
     }
-    zgp.requestRedraw();
 }
 
 pub fn menuBar(_: *PointCloudStore) void {}
 
-pub fn uiPanel(pcs: *PointCloudStore) void {
-    const CreateDataTypes = union(enum) { f32: f32, Vec3f: Vec3f };
+pub fn leftPanel(pcs: *PointCloudStore) void {
+    const CreateDataTypes = union(enum) { bool: bool, u32: u32, f32: f32, Vec3f: Vec3f };
     const CreateDataTypesTag = std.meta.Tag(CreateDataTypes);
     const UiData = struct {
         var selected_data_type: CreateDataTypesTag = .f32;
-        var data_name_buf: [32]u8 = undefined;
+        var data_name_buf: [32]u8 = @splat(0);
     };
 
     c.ImGui_PushIDPtr(pcs); // push a unique ID for this panel
@@ -255,113 +285,80 @@ pub fn uiPanel(pcs: *PointCloudStore) void {
         c.ImGui_PopStyleColorEx(3);
 
         const nb_point_clouds_f = @as(f32, @floatFromInt(pcs.point_clouds.count() + 1));
-        if (imgui_utils.pointCloudListBox(
-            pcs.selected_point_cloud,
+        switch (imgui_utils.pointCloudListBox(
+            pcs,
             style.*.FontSizeBase * nb_point_clouds_f + style.*.ItemSpacing.y * nb_point_clouds_f,
-        )) |pc| {
-            pcs.selected_point_cloud = pc;
+        )) {
+            .unchanged => {},
+            .cleared => pcs.selected_model.* = .none,
+            .changed => |new_pc| pcs.selected_model.* = .{ .point_cloud = new_pc },
         }
 
-        const button_width = c.ImGui_CalcTextSize("" ++ c.ICON_FA_DATABASE).x + style.*.ItemSpacing.x;
+        if (pcs.selected_model.modelType() != .point_cloud) return;
+        const pc = pcs.selected_model.point_cloud;
 
-        if (pcs.selected_point_cloud) |pc| {
-            var buf: [64]u8 = undefined; // guess 64 chars is enough for cell counts
-            const info = pcs.point_clouds_info.getPtr(pc).?;
-            const cells = std.fmt.bufPrintZ(&buf, "Points | {d} |", .{pc.nbPoints()}) catch "";
-            c.ImGui_SeparatorText(cells.ptr);
-            inline for (@typeInfo(PointCloudStdData).@"union".fields) |*field| {
-                c.ImGui_Text(field.name);
-                c.ImGui_SameLine();
-                // align 2 buttons to the right of the text
-                c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + c.ImGui_GetContentRegionAvail().x - 2 * button_width - style.*.ItemSpacing.x);
-                const data_selected = @field(info.std_data, field.name) != null;
-                if (!data_selected) {
-                    c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 128, 128, 200));
-                    c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 128, 128, 255));
-                    c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 128, 128, 128));
-                }
-                c.ImGui_PushID(field.name);
-                defer c.ImGui_PopID();
-                if (c.ImGui_Button("" ++ c.ICON_FA_DATABASE)) {
-                    c.ImGui_OpenPopup("select_data_popup", c.ImGuiPopupFlags_NoReopen);
-                }
-                if (!data_selected) {
-                    c.ImGui_PopStyleColorEx(3);
-                }
-                if (c.ImGui_BeginPopup("select_data_popup", 0)) {
-                    defer c.ImGui_EndPopup();
-                    c.ImGui_PushID("select_data_combobox");
-                    defer c.ImGui_PopID();
-                    if (imgui_utils.pointCloudDataComboBox(
-                        pc,
-                        @typeInfo(field.type).optional.child.DataType,
-                        @field(info.std_data, field.name),
-                    )) |data| {
-                        pcs.setPointCloudStdData(pc, @unionInit(PointCloudStdData, field.name, data));
-                    }
-                }
-            }
+        var buf: [64]u8 = undefined; // guess 64 chars is enough for cell counts
+        if (c.ImGui_BeginTable("CellStats", 3, c.ImGuiTableFlags_Borders | c.ImGuiTableFlags_RowBg)) {
+            defer c.ImGui_EndTable();
 
-            c.ImGui_Separator();
+            c.ImGui_TableSetupColumn("CellType", c.ImGuiTableColumnFlags_WidthStretch);
+            c.ImGui_TableSetupColumn("Count", c.ImGuiTableColumnFlags_WidthFixed);
+            c.ImGui_TableSetupColumn("ContainerDensity", c.ImGuiTableColumnFlags_WidthFixed);
+            c.ImGui_TableHeadersRow();
 
-            if (c.ImGui_ButtonEx(c.ICON_FA_DATABASE ++ " Create missing std datas", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                inline for (@typeInfo(PointCloudStdData).@"union".fields) |*field| {
-                    if (@field(info.std_data, field.name) == null) {
-                        const maybe_data = pc.addData(@typeInfo(field.type).optional.child.DataType, field.name);
-                        if (maybe_data) |data| {
-                            pcs.setPointCloudStdData(pc, @unionInit(PointCloudStdData, field.name, data));
-                        } else |err| {
-                            zgp_log.err("Error adding {s} ({s}) data: {}", .{ field.name, @typeName(@typeInfo(field.type).optional.child.DataType), err });
+            c.ImGui_TableNextRow();
+            _ = c.ImGui_TableNextColumn();
+            c.ImGui_Text("Points");
+            _ = c.ImGui_TableNextColumn();
+            const count = std.fmt.bufPrintZ(&buf, "{d}", .{pc.nbPoints()}) catch "";
+            c.ImGui_Text(count.ptr);
+            _ = c.ImGui_TableNextColumn();
+            const density = std.fmt.bufPrintZ(&buf, "{d:.1}%", .{pc.point_data.density() * 100}) catch "";
+            c.ImGui_Text(density.ptr);
+        }
+
+        if (c.ImGui_ButtonEx("Create cell data", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            c.ImGui_OpenPopup("Create Cell Data", c.ImGuiPopupFlags_NoReopen);
+        }
+        if (c.ImGui_BeginPopupModal("Create Cell Data", 0, c.ImGuiWindowFlags_AlwaysAutoResize)) {
+            defer c.ImGui_EndPopup();
+            c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
+            defer c.ImGui_PopItemWidth();
+            c.ImGui_Text("Data type:");
+            c.ImGui_PushID("data type");
+            if (c.ImGui_BeginCombo("", @tagName(UiData.selected_data_type), 0)) {
+                defer c.ImGui_EndCombo();
+                inline for (@typeInfo(CreateDataTypesTag).@"enum".fields) |*data_type| {
+                    const is_selected = @intFromEnum(UiData.selected_data_type) == data_type.value;
+                    if (c.ImGui_SelectableEx(data_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                        if (!is_selected) {
+                            UiData.selected_data_type = @enumFromInt(data_type.value);
                         }
                     }
-                }
-            }
-
-            if (c.ImGui_ButtonEx("Create cell data", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                c.ImGui_OpenPopup("Create Cell Data", c.ImGuiPopupFlags_NoReopen);
-            }
-            if (c.ImGui_BeginPopupModal("Create Cell Data", 0, c.ImGuiWindowFlags_AlwaysAutoResize)) {
-                defer c.ImGui_EndPopup();
-                c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
-                defer c.ImGui_PopItemWidth();
-                c.ImGui_Text("Data type:");
-                c.ImGui_PushID("data type");
-                if (c.ImGui_BeginCombo("", @tagName(UiData.selected_data_type), 0)) {
-                    defer c.ImGui_EndCombo();
-                    inline for (@typeInfo(CreateDataTypesTag).@"enum".fields) |*data_type| {
-                        const is_selected = @intFromEnum(UiData.selected_data_type) == data_type.value;
-                        if (c.ImGui_SelectableEx(data_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                            if (!is_selected) {
-                                UiData.selected_data_type = @enumFromInt(data_type.value);
-                            }
-                        }
-                        if (is_selected) {
-                            c.ImGui_SetItemDefaultFocus();
-                        }
+                    if (is_selected) {
+                        c.ImGui_SetItemDefaultFocus();
                     }
                 }
-                c.ImGui_PopID();
-                c.ImGui_Text("Name:");
-                _ = c.ImGui_InputText("##Name", &UiData.data_name_buf, UiData.data_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
-                if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = 0.5 * c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                    UiData.data_name_buf[0] = 0;
-                    c.ImGui_CloseCurrentPopup();
-                }
-                c.ImGui_SameLine();
-                if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                    switch (UiData.selected_data_type) {
-                        inline else => |data_type| {
-                            _ = pc.addData(@FieldType(CreateDataTypes, @tagName(data_type)), &UiData.data_name_buf) catch |err| {
-                                zgp_log.err("Error adding {s} ({s}) data: {}", .{ &UiData.data_name_buf, @tagName(data_type), err });
-                            };
-                            UiData.data_name_buf[0] = 0;
-                        },
-                    }
-                    c.ImGui_CloseCurrentPopup();
-                }
             }
-        } else {
-            c.ImGui_Text("No Point Cloud selected");
+            c.ImGui_PopID();
+            c.ImGui_Text("Name:");
+            _ = c.ImGui_InputText("##Name", &UiData.data_name_buf, UiData.data_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
+            if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = 0.5 * c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                UiData.data_name_buf[0] = 0;
+                c.ImGui_CloseCurrentPopup();
+            }
+            c.ImGui_SameLine();
+            if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                switch (UiData.selected_data_type) {
+                    inline else => |data_type| {
+                        _ = pc.addData(@FieldType(CreateDataTypes, @tagName(data_type)), &UiData.data_name_buf) catch |err| {
+                            zgp_log.err("Error adding {s} ({s}) data: {}", .{ &UiData.data_name_buf, @tagName(data_type), err });
+                        };
+                        UiData.data_name_buf[0] = 0;
+                    },
+                }
+                c.ImGui_CloseCurrentPopup();
+            }
         }
     } else {
         c.ImGui_PopStyleColorEx(3);

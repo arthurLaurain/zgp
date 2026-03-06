@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const AppContext = @import("../../main.zig").AppContext;
 const SurfaceMesh = @import("SurfaceMesh.zig");
 const vec = @import("../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
@@ -23,7 +24,9 @@ pub fn edgeLength(
 
 /// Compute the lengths of all edges of the given SurfaceMesh
 /// and store them in the given edge_length data.
+/// Probably not worth parallelizing..
 pub fn computeEdgeLengths(
+    _: *AppContext,
     sm: *SurfaceMesh,
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
     edge_length: SurfaceMesh.CellData(.edge, f32),

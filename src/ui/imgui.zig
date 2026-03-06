@@ -1,12 +1,62 @@
 const std = @import("std");
+const gl = @import("gl");
+const c = @import("../main.zig").c;
 
-const zgp = @import("../main.zig");
-const c = zgp.c;
-
+const PointCloudStore = @import("../models/PointCloudStore.zig");
 const PointCloud = @import("../models/point/PointCloud.zig");
+
+const SurfaceMeshStore = @import("../models/SurfaceMeshStore.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 
 const Data = @import("../utils/Data.zig").Data;
+
+pub fn init(sdl_window: *c.SDL_Window, gl_context: c.SDL_GLContext) void {
+    _ = c.CIMGUI_CHECKVERSION();
+    _ = c.ImGui_CreateContext(null);
+
+    const font_size: f32 = 16.0;
+    const imio = c.ImGui_GetIO();
+    imio.*.ConfigFlags = c.ImGuiConfigFlags_NavEnableKeyboard | c.ImGuiConfigFlags_DockingEnable | c.ImGuiConfigFlags_ViewportsEnable;
+    _ = c.ImFontAtlas_AddFontFromFileTTF(imio.*.Fonts, "src/ui/DroidSans.ttf", font_size, null, null);
+    // _ = c.ImFontAtlas_AddFontDefault(imio.*.Fonts, null);
+    var font_config: c.ImFontConfig = .{};
+    font_config.MergeMode = true;
+    font_config.SizePixels = font_size;
+    font_config.GlyphMinAdvanceX = font_size;
+    font_config.GlyphMaxAdvanceX = font_size;
+    font_config.RasterizerMultiply = 1.0;
+    font_config.RasterizerDensity = 1.0;
+    _ = c.ImFontAtlas_AddFontFromFileTTF(imio.*.Fonts, "src/ui/fa-regular-400.ttf", font_size, &font_config, null);
+    _ = c.ImFontAtlas_AddFontFromFileTTF(imio.*.Fonts, "src/ui/fa-solid-900.ttf", font_size, &font_config, null);
+
+    c.ImGui_StyleColorsDark(null);
+    const imstyle = c.ImGui_GetStyle();
+    imstyle.*.Colors[c.ImGuiCol_Header] = c.ImVec4_t{ .x = 65.0 / 255.0, .y = 255.0 / 255.0, .z = 255.0 / 255.0, .w = 120.0 / 255.0 };
+    imstyle.*.Colors[c.ImGuiCol_HeaderActive] = c.ImVec4_t{ .x = 65.0 / 255.0, .y = 255.0 / 255.0, .z = 255.0 / 255.0, .w = 200.0 / 255.0 };
+    imstyle.*.Colors[c.ImGuiCol_HeaderHovered] = c.ImVec4_t{ .x = 65.0 / 255.0, .y = 255.0 / 255.0, .z = 255.0 / 255.0, .w = 80.0 / 255.0 };
+    imstyle.*.SeparatorTextAlign = c.ImVec2{ .x = 1.0, .y = 0.0 };
+    imstyle.*.FrameRounding = 3;
+
+    const shader_version = switch (gl.info.api) {
+        .gl => (
+            \\#version 430 core
+            \\
+        ),
+        .gles, .glsc => (
+            \\#version 300 es
+            \\
+        ),
+    };
+
+    _ = c.cImGui_ImplSDL3_InitForOpenGL(sdl_window, gl_context);
+    _ = c.cImGui_ImplOpenGL3_InitEx(shader_version);
+}
+
+pub fn deinit() void {
+    c.cImGui_ImplOpenGL3_Shutdown();
+    c.cImGui_ImplSDL3_Shutdown();
+    c.ImGui_DestroyContext(null);
+}
 
 pub fn tooltip(text: []const u8) void {
     if (c.ImGui_BeginItemTooltip()) {
@@ -43,20 +93,30 @@ pub fn tooltip(text: []const u8) void {
 //     return false;
 // }
 
+pub fn SelectionResult(comptime T: type) type {
+    return union(enum) {
+        unchanged,
+        cleared,
+        changed: T,
+    };
+}
+
 pub fn surfaceMeshListBox(
-    selected_surface_mesh: ?*SurfaceMesh,
+    sm_store: *SurfaceMeshStore,
     height: f32,
-) ?*SurfaceMesh {
+) SelectionResult(*SurfaceMesh) {
     if (c.ImGui_BeginListBox("##Surface Meshes", c.ImVec2{ .x = 0, .y = height })) {
         defer c.ImGui_EndListBox();
-        var sm_it = zgp.surface_mesh_store.surface_meshes.iterator();
+        var sm_it = sm_store.surface_meshes.iterator();
         while (sm_it.next()) |entry| {
             const sm = entry.value_ptr.*;
             const name = entry.key_ptr.*;
-            const is_selected = selected_surface_mesh == sm;
+            const is_selected = sm_store.selected_model.modelType() == .surface_mesh and sm_store.selected_model.surface_mesh == sm;
             if (c.ImGui_SelectableEx(name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
                 if (!is_selected) {
-                    return sm; // only return if it was not previously selected
+                    return .{ .changed = sm }; // only return if it was not previously selected
+                } else {
+                    return .cleared; // clicking on the currently selected item clears the selection
                 }
             }
             if (is_selected) {
@@ -64,23 +124,25 @@ pub fn surfaceMeshListBox(
             }
         }
     }
-    return null;
+    return .unchanged;
 }
 
 pub fn pointCloudListBox(
-    selected_point_cloud: ?*PointCloud,
+    pc_store: *PointCloudStore,
     height: f32,
-) ?*PointCloud {
+) SelectionResult(*PointCloud) {
     if (c.ImGui_BeginListBox("##Point Clouds", c.ImVec2{ .x = 0, .y = height })) {
         defer c.ImGui_EndListBox();
-        var pc_it = zgp.point_cloud_store.point_clouds.iterator();
+        var pc_it = pc_store.point_clouds.iterator();
         while (pc_it.next()) |entry| {
             const pc = entry.value_ptr.*;
             const name = entry.key_ptr.*;
-            const is_selected = selected_point_cloud == pc;
+            const is_selected = pc_store.selected_model.modelType() == .point_cloud and pc_store.selected_model.point_cloud == pc;
             if (c.ImGui_SelectableEx(name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
                 if (!is_selected) {
-                    return pc; // only return if it was not previously selected
+                    return .{ .changed = pc }; // only return if it was not previously selected
+                } else {
+                    return .cleared; // clicking on the currently selected item clears the selection
                 }
             }
             if (is_selected) {
@@ -88,19 +150,25 @@ pub fn pointCloudListBox(
             }
         }
     }
-    return null;
+    return .unchanged;
 }
 
-// TODO: find a way to support "-- none --" selection
-// (cannot simply return null because it is used as a return value to indicate that nothing has been selected)
 pub fn surfaceMeshCellDataComboBox(
     surface_mesh: *SurfaceMesh,
     comptime cell_type: SurfaceMesh.CellType,
     comptime T: type,
     selected_data: ?SurfaceMesh.CellData(cell_type, T),
-) ?SurfaceMesh.CellData(cell_type, T) {
+) SelectionResult(SurfaceMesh.CellData(cell_type, T)) {
     if (c.ImGui_BeginCombo("", if (selected_data) |data| data.name().ptr else "-- none --", 0)) {
         defer c.ImGui_EndCombo();
+        const is_none_selected = selected_data == null;
+        if (c.ImGui_SelectableEx("-- none --", is_none_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+            return .cleared;
+        }
+        if (is_none_selected) {
+            c.ImGui_SetItemDefaultFocus();
+        }
+
         var data_container = switch (cell_type) {
             .halfedge, .corner => surface_mesh.dart_data,
             .vertex => surface_mesh.vertex_data,
@@ -112,39 +180,43 @@ pub fn surfaceMeshCellDataComboBox(
         while (data_it.next()) |data| {
             const is_selected = if (selected_data) |sd| sd.data == data else false;
             if (c.ImGui_SelectableEx(data.data_gen.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                if (!is_selected) { // only return if it was not previously selected
-                    return .{ .surface_mesh = surface_mesh, .data = data };
-                }
+                return .{ .changed = .{ .surface_mesh = surface_mesh, .data = data } };
             }
             if (is_selected) {
                 c.ImGui_SetItemDefaultFocus();
             }
         }
     }
-    return null;
+    return .unchanged;
 }
 
 pub fn pointCloudDataComboBox(
     point_cloud: *PointCloud,
     comptime T: type,
     selected_data: ?PointCloud.CellData(T),
-) ?PointCloud.CellData(T) {
+) SelectionResult(PointCloud.CellData(T)) {
     if (c.ImGui_BeginCombo("", if (selected_data) |data| data.name().ptr else "-- none --", 0)) {
         defer c.ImGui_EndCombo();
+        const is_none_selected = selected_data == null;
+        if (c.ImGui_SelectableEx("-- none --", is_none_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+            return .cleared;
+        }
+        if (is_none_selected) {
+            c.ImGui_SetItemDefaultFocus();
+        }
+
         var data_it = point_cloud.point_data.typedIterator(T);
         while (data_it.next()) |data| {
             const is_selected = if (selected_data) |sd| sd.data == data else false;
             if (c.ImGui_SelectableEx(data.data_gen.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                if (!is_selected) { // only call on_selected if it was not previously selected
-                    return .{ .point_cloud = point_cloud, .data = data };
-                }
+                return .{ .changed = .{ .point_cloud = point_cloud, .data = data } };
             }
             if (is_selected) {
                 c.ImGui_SetItemDefaultFocus();
             }
         }
     }
-    return null;
+    return .unchanged;
 }
 
 pub fn surfaceMeshCellTypeComboBox(
@@ -155,9 +227,7 @@ pub fn surfaceMeshCellTypeComboBox(
         inline for (@typeInfo(SurfaceMesh.CellType).@"enum".fields) |cell_type| {
             const is_selected = @intFromEnum(selected_cell_type) == cell_type.value;
             if (c.ImGui_SelectableEx(cell_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                if (!is_selected) {
-                    return @enumFromInt(cell_type.value); // only return if it was not previously selected
-                }
+                return @enumFromInt(cell_type.value);
             }
             if (is_selected) {
                 c.ImGui_SetItemDefaultFocus();

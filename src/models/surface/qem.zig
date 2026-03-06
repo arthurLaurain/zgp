@@ -1,7 +1,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const AppContext = @import("../../main.zig").AppContext;
 const SurfaceMesh = @import("SurfaceMesh.zig");
+
 const vec = @import("../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 const Vec4f = vec.Vec4f;
@@ -44,7 +46,7 @@ pub fn vertexQEM(
             vq = mat.add4f(vq, fq);
         }
     }
-    const epsilon = 1e-4;
+    const line_quadric_epsilon = 1e-4;
     const tb = vertex_tangent_basis.value(vertex);
     const plane_tb1 = Vec4f{ tb[0][0], tb[0][1], tb[0][2], -vec.dot3f(p, tb[0]) };
     const plane_tb2 = Vec4f{ tb[1][0], tb[1][1], tb[1][2], -vec.dot3f(p, tb[1]) };
@@ -53,7 +55,7 @@ pub fn vertexQEM(
             mat.outerProduct4f(plane_tb1, plane_tb1),
             mat.outerProduct4f(plane_tb2, plane_tb2),
         ),
-        epsilon * vertex_area.value(vertex),
+        line_quadric_epsilon * vertex_area.value(vertex),
     );
     vq = mat.add4f(vq, reg);
     return vq;
@@ -67,8 +69,9 @@ pub fn vertexQEM(
 /// A regularization term is added to ensure QEM is well-conditioned by adding a small contribution of the vertices tangent basis planes.
 /// SGP2025: Controlling Quadric Error Simplification with Line Quadrics
 /// https://www.dgp.toronto.edu/~hsuehtil/pdf/lineQuadric.pdf
-/// Face contributions to vertices quadrics are computed here in a face-centric manner for better performance.
+/// Face contributions to vertices quadrics are computed here in a face-centric manner => nice but do not allow for parallelization (TODO: measure performance)
 pub fn computeVertexQEMs(
+    _: *AppContext,
     sm: *SurfaceMesh,
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
     vertex_area: SurfaceMesh.CellData(.vertex, f32),
@@ -97,7 +100,7 @@ pub fn computeVertexQEMs(
             );
         }
     }
-    const epsilon = 1e-4;
+    const line_quadric_epsilon = 1e-4;
     var vertex_it = try SurfaceMesh.CellIterator(.vertex).init(sm);
     defer vertex_it.deinit();
     while (vertex_it.next()) |vertex| {
@@ -110,7 +113,7 @@ pub fn computeVertexQEMs(
                 mat.outerProduct4f(plane_tb1, plane_tb1),
                 mat.outerProduct4f(plane_tb2, plane_tb2),
             ),
-            epsilon * vertex_area.value(vertex),
+            line_quadric_epsilon * vertex_area.value(vertex),
         );
         vertex_qem.valuePtr(vertex).* = mat.add4f(
             vertex_qem.value(vertex),

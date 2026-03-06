@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const AppContext = @import("../../main.zig").AppContext;
 const SurfaceMesh = @import("SurfaceMesh.zig");
 const vec = @import("../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
@@ -27,19 +28,41 @@ pub fn cornerAngle(
 /// Compute the angles of all corners of the given SurfaceMesh
 /// and store them in the given corner_angle data.
 pub fn computeCornerAngles(
+    app_ctx: *AppContext,
     sm: *SurfaceMesh,
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
     corner_angle: SurfaceMesh.CellData(.corner, f32),
 ) !void {
-    var it = try SurfaceMesh.CellIterator(.corner).init(sm);
-    defer it.deinit();
-    while (it.next()) |corner| {
-        corner_angle.valuePtr(corner).* = cornerAngle(
-            sm,
-            corner,
-            vertex_position,
-        );
-    }
+    const Task = struct {
+        const Task = @This();
+
+        surface_mesh: *const SurfaceMesh,
+        vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
+        corner_angle: SurfaceMesh.CellData(.corner, f32),
+
+        pub inline fn run(t: *const Task, corner: SurfaceMesh.Cell) void {
+            t.corner_angle.valuePtr(corner).* = cornerAngle(
+                t.surface_mesh,
+                corner,
+                t.vertex_position,
+            );
+        }
+    };
+
+    var pctr = try SurfaceMesh.ParallelCellTaskRunner(.corner).init(sm);
+    defer pctr.deinit();
+    try pctr.run(app_ctx, Task{
+        .surface_mesh = sm,
+        .vertex_position = vertex_position,
+        .corner_angle = corner_angle,
+    });
+
+    // _ = app_ctx;
+    // var corner_it = try SurfaceMesh.CellIterator(.corner).init(sm);
+    // defer corner_it.deinit();
+    // while (corner_it.next()) |corner| {
+    //     corner_angle.valuePtr(corner).* = cornerAngle(sm, corner, vertex_position);
+    // }
 }
 
 /// Compute and return the dihedral angle of the given edge.
@@ -75,22 +98,12 @@ pub fn edgeDihedralAngle(
 /// and store them in the given edge_dihedral_angle data.
 /// Face normals are assumed to be normalized.
 pub fn computeEdgeDihedralAngles(
+    app_ctx: *AppContext,
     sm: *SurfaceMesh,
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
     face_normal: SurfaceMesh.CellData(.face, Vec3f),
     edge_dihedral_angle: SurfaceMesh.CellData(.edge, f32),
 ) !void {
-    // var it = try SurfaceMesh.CellIterator(.edge).init(sm);
-    // defer it.deinit();
-    // while (it.next()) |edge| {
-    //     edge_dihedral_angle.valuePtr(edge).* = edgeDihedralAngle(
-    //         sm,
-    //         edge,
-    //         vertex_position,
-    //         face_normal,
-    //     );
-    // }
-
     const Task = struct {
         const Task = @This();
 
@@ -99,7 +112,7 @@ pub fn computeEdgeDihedralAngles(
         face_normal: SurfaceMesh.CellData(.face, Vec3f),
         edge_dihedral_angle: SurfaceMesh.CellData(.edge, f32),
 
-        pub fn run(t: *const Task, edge: SurfaceMesh.Cell) void {
+        pub inline fn run(t: *const Task, edge: SurfaceMesh.Cell) void {
             t.edge_dihedral_angle.valuePtr(edge).* = edgeDihedralAngle(
                 t.surface_mesh,
                 edge,
@@ -111,7 +124,7 @@ pub fn computeEdgeDihedralAngles(
 
     var pctr = try SurfaceMesh.ParallelCellTaskRunner(.edge).init(sm);
     defer pctr.deinit();
-    try pctr.run(Task{
+    try pctr.run(app_ctx, Task{
         .surface_mesh = sm,
         .vertex_position = vertex_position,
         .face_normal = face_normal,
