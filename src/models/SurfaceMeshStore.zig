@@ -225,6 +225,7 @@ pub fn surfaceMeshDataUpdated(
         vbo.fillFrom(T, data.data);
     }
 
+    // update the last known data update time
     const now = std.time.Instant.now();
     if (now) |t| {
         sms.data_last_update.put(data.gen(), t) catch |err| {
@@ -234,6 +235,7 @@ pub fn surfaceMeshDataUpdated(
         zgp_log.err("Failed to get current time: {}", .{err});
     }
 
+    // dispatch call to listeners
     for (sms.listeners.items) |module| {
         module.surfaceMeshDataUpdated(sm, cell_type, data.gen());
     }
@@ -253,6 +255,17 @@ pub fn surfaceMeshConnectivityUpdated(sms: *SurfaceMeshStore, sm: *SurfaceMesh) 
 
     const info = sms.surface_meshes_info.getPtr(sm).?;
 
+    // update the cached number of boundary darts in the SurfaceMesh
+    var nb_boundary_darts: u32 = 0;
+    var dart_it = sm.dartIterator();
+    while (dart_it.next()) |d| {
+        if (sm.isBoundaryDart(d)) {
+            nb_boundary_darts += 1;
+        }
+    }
+    sm.nb_boundary_darts = nb_boundary_darts;
+
+    // update the different primitives IBO
     info.points_ibo.fillFromSurfaceMesh(sm, .vertex, sms.allocator) catch |err| {
         zgp_log.err("Failed to fill points IBO for SurfaceMesh: {}", .{err});
         return;
@@ -270,6 +283,7 @@ pub fn surfaceMeshConnectivityUpdated(sms: *SurfaceMeshStore, sm: *SurfaceMesh) 
         return;
     };
 
+    // update the cells sets
     info.vertex_set.update() catch |err| {
         zgp_log.err("Failed to update vertex set for SurfaceMesh: {}", .{err});
         return;
@@ -286,6 +300,7 @@ pub fn surfaceMeshConnectivityUpdated(sms: *SurfaceMeshStore, sm: *SurfaceMesh) 
     };
     sms.surfaceMeshCellSetUpdated(sm, .face);
 
+    // dispatch call to listeners
     for (sms.listeners.items) |module| {
         module.surfaceMeshConnectivityUpdated(sm);
     }
@@ -297,6 +312,8 @@ pub fn surfaceMeshCellSetUpdated(
     cell_type: SurfaceMesh.CellType,
 ) void {
     const info = sms.surface_meshes_info.getPtr(sm).?;
+
+    // update the IBOs of the corresponding cell set
     switch (cell_type) {
         .vertex => {
             info.vertex_set_ibo.fillFromCellSlice(sm, info.vertex_set.cells.items, sms.allocator) catch |err| {
@@ -319,6 +336,7 @@ pub fn surfaceMeshCellSetUpdated(
         else => unreachable,
     }
 
+    // dispatch call to listeners
     for (sms.listeners.items) |module| {
         module.surfaceMeshCellSetUpdated(sm, cell_type);
     }
@@ -371,6 +389,7 @@ pub fn setSurfaceMeshStdData(
         },
     }
 
+    // dispatch call to listeners
     for (sms.listeners.items) |module| {
         module.surfaceMeshStdDataChanged(sm, data);
     }
@@ -414,7 +433,6 @@ pub fn leftPanel(sms: *SurfaceMeshStore) void {
         if (sms.selected_model.modelType() != .surface_mesh) return;
         const sm = sms.selected_model.surface_mesh;
 
-        var buf: [64]u8 = undefined; // guess 64 chars is enough for cell stat info
         if (c.ImGui_BeginTable("CellStats", 3, c.ImGuiTableFlags_Borders | c.ImGuiTableFlags_RowBg)) {
             defer c.ImGui_EndTable();
 
@@ -424,15 +442,20 @@ pub fn leftPanel(sms: *SurfaceMeshStore) void {
             c.ImGui_TableHeadersRow();
 
             inline for ([_]SurfaceMesh.CellType{ .halfedge, .corner, .vertex, .edge, .face }) |cell_type| {
-                const cells = std.fmt.bufPrintZ(&buf, "{s}", .{@tagName(cell_type)}) catch "";
+                var buf_name: [32]u8 = undefined;
+                var buf_count: [16]u8 = undefined;
+                var buf_density: [16]u8 = undefined;
+
+                const cells = std.fmt.bufPrintZ(&buf_name, "{s}", .{@tagName(cell_type)}) catch "";
+                const count = std.fmt.bufPrintZ(&buf_count, "{d}", .{sm.nbCells(cell_type)}) catch "";
+                const density = std.fmt.bufPrintZ(&buf_density, "{d:.1}%", .{sm.dataContainer(cell_type).density() * 100}) catch "";
+
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
                 c.ImGui_Text(cells.ptr);
                 _ = c.ImGui_TableNextColumn();
-                const count = std.fmt.bufPrintZ(&buf, "{d}", .{sm.nbCells(cell_type)}) catch "";
                 c.ImGui_Text(count.ptr);
                 _ = c.ImGui_TableNextColumn();
-                const density = std.fmt.bufPrintZ(&buf, "{d:.1}%", .{sm.dataContainer(cell_type).density() * 100}) catch "";
                 c.ImGui_Text(density.ptr);
             }
         }
@@ -753,7 +776,7 @@ pub fn loadSurfaceMeshFromFile(sms: *SurfaceMeshStore, filename: []const u8) !*S
     defer darts_array_lists_arena.deinit();
 
     for (import_data.vertices_position.items) |pos| {
-        const vertex_index = try sm.newDataIndex(.vertex);
+        const vertex_index = try sm.getDataIndex(.vertex);
         vertex_position.data.valuePtr(vertex_index).* = pos;
         darts_of_vertex.data.valuePtr(vertex_index).* = .empty;
     }
