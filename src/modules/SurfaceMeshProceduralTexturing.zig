@@ -289,8 +289,24 @@ pub fn rightPanel(m: *Module) void {
 
         c.ImGui_Text("Scale distorsions");
         c.ImGui_PushID("Scale distorsions");
-        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_distorsion, 0, 1000))
+        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_distorsion, 0, 1))
             smpt.app_ctx.requestRedraw();
+        c.ImGui_PopID();
+
+        c.ImGui_Text("Visualize rotation distorsions");
+        c.ImGui_PushID("Visualize rotation distorsions");
+        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_rotate_dist)) {
+            tnb_data.procedural_texturing_parameters.visu_scale_dist = false;
+            smpt.app_ctx.requestRedraw();
+        }
+        c.ImGui_PopID();
+
+        c.ImGui_Text("Visualize stretch distorsions");
+        c.ImGui_PushID("Visualize stretch distorsions");
+        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_scale_dist)) {
+            tnb_data.procedural_texturing_parameters.visu_rotate_dist = false;
+            smpt.app_ctx.requestRedraw();
+        }
         c.ImGui_PopID();
 
         c.ImGui_Text("Exemplar texture path");

@@ -5,6 +5,8 @@ uniform sampler2D u_exemplar_texture;
 uniform mat4 u_model_view_matrix;
 uniform float u_scale_tex_coords;
 uniform float u_scale_distorsion;
+uniform bool u_visu_rotation_distorsion;
+uniform bool u_visu_stretch_distorsion;
 
 in vec3 frag_position;
 in vec3 v_frag_position;
@@ -53,7 +55,7 @@ vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
   
 }
 
-vec3 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
+vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
 {
     vec3 projPoint = P - dot(P - A, N) * N;
 
@@ -62,7 +64,7 @@ vec3 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
     vec3 BT = cross(N, T);
 
     vec3 AP = projPoint - A;
-    return vec3(dot(AP, T), dot(AP, BT), u_scale_distorsion * dot(projPoint - P, A - P));
+    return vec2(dot(AP, T), dot(AP, BT));
 }
 
 vec2 hash12(int n){
@@ -84,13 +86,61 @@ dvec3 getBarycentric(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
     double d21 = dot(v2, v1);
 
     double denom = d00 * d11 - d01 * d01;
-    denom = max(denom, 1e-16); // plus petit pour double
+    denom = max(denom, 1e-16);
 
     double v = (d11 * d20 - d01 * d21) / denom;
     double w = (d00 * d21 - d01 * d20) / denom;
     double u = 1.0 - v - w;
 
     return dvec3(u, v, w);
+}
+
+mat3 polarDecomposition(mat3 F)
+{
+    mat3 R = F;
+
+    for(int i = 0; i < 5; i++)
+    {
+        mat3 R_invT = inverse(transpose(R));
+        R = 0.5 * (R + R_invT);
+    }
+
+    return R;
+}
+
+void computeStretchAndRotation(vec3 x0, vec3 x1, vec3 x2, vec2 uv0, vec2 uv1, vec2 uv2, out mat3 R, out mat3 S)
+{
+  vec3 x_01 = x1 - x0;
+  vec3 x_02 = x2 - x0;
+  vec3 x_n = cross(x_01,x_02);
+  mat3 P = mat3(x_01, x_02, x_n);
+
+  vec3 u_01 = vec3(uv1,0) - vec3(uv0,0);
+  vec3 u_02 = vec3(uv2,0) - vec3(uv0,0);
+  vec3 u_n = vec3(0,0,1);
+  mat3 U = mat3(u_01, u_02, u_n);
+
+  // to avoid inversion cost, see paper Stable and Efficient Computation of Generalized Polar Decompositions by Benner et al.
+  mat3 F = P * inverse(U);
+  R = polarDecomposition(F);
+  S = transpose(R) * F;
+}
+
+float rotationAngle(mat3 R)
+{
+    float traceR = R[0][0] + R[1][1] + R[2][2];
+    float cos_theta = (traceR - 1.0) * 0.5;
+    cos_theta = clamp(cos_theta, -1.0, 1.0);
+    return acos(cos_theta);
+}
+
+vec3 stretchFactors(mat3 S)
+{
+    return vec3(
+        length(S[0]),
+        length(S[1]),
+        length(S[2])
+    );
 }
 
 void main() {
@@ -115,14 +165,13 @@ void main() {
   // vec3 edge_ref2 = (vec4(edge_ref_ssbo[id_vertices.y * 3], edge_ref_ssbo[id_vertices.y * 3 + 1], edge_ref_ssbo[id_vertices.y * 3 + 2],1.)).xyz;
   // vec3 edge_ref3 = (vec4(edge_ref_ssbo[id_vertices.z * 3], edge_ref_ssbo[id_vertices.z * 3 + 1], edge_ref_ssbo[id_vertices.z * 3 + 2],1.)).xyz;
 
-  // vec2 h1 = getTexCoord(frag_position, p1,p2,p3) * u_scale_tex_coords;
-  // vec2 h2 = getTexCoord(frag_position, p2,p3,p1) * u_scale_tex_coords;
-  // vec2 h3 = getTexCoord(frag_position, p3,p1,p2) * u_scale_tex_coords;
+  // vec2 u1 = getTexCoord(frag_position, p1,p2,p3) * u_scale_tex_coords;
+  // vec2 u2 = getTexCoord(frag_position, p2,p3,p1) * u_scale_tex_coords;
+  // vec2 u3 = getTexCoord(frag_position, p3,p1,p2) * u_scale_tex_coords;
 
-  vec3 h1 = getTexCoordFromVertexPlane(frag_position, p1, n1) * u_scale_tex_coords;
-  vec3 h2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * u_scale_tex_coords;
-  vec3 h3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * u_scale_tex_coords;
-
+  vec2 u1 = getTexCoordFromVertexPlane(frag_position, p1, n1) * u_scale_tex_coords;
+  vec2 u2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * u_scale_tex_coords;
+  vec2 u3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * u_scale_tex_coords;
 
   dvec3 bary = getBarycentric(dvec3(frag_position), p1, p2, p3);
 
@@ -134,12 +183,21 @@ void main() {
   vec2 r2 = hash12(int(id_vertices.y));
   vec2 r3 = hash12(int(id_vertices.z));
 
-  vec3 c1 = texture(u_exemplar_texture, h1.xy + r1).xyz;
-  vec3 c2 = texture(u_exemplar_texture, h2.xy + r2).xyz;
-  vec3 c3 = texture(u_exemplar_texture, h3.xy + r3).xyz;
+  vec3 c1 = texture(u_exemplar_texture, u1.xy + r1).xyz;
+  vec3 c2 = texture(u_exemplar_texture, u2.xy + r2).xyz;
+  vec3 c3 = texture(u_exemplar_texture, u3.xy + r3).xyz;
+
+  mat3 R;
+  mat3 S;
+  computeStretchAndRotation(p1,p2,p3,u1,u2,u3,R,S);
 
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
-  f_color = result;
-  //f_color = vec4(h1.z + h2.z + h3.z,0.,0.,1.);
+  
+  if(u_visu_rotation_distorsion)
+    f_color = vec4(rotationAngle(R) * u_scale_distorsion,0.,0.,1.);
+  else if(u_visu_stretch_distorsion)
+    f_color = vec4(stretchFactors(S) * u_scale_distorsion, 1.);
+  else
+    f_color = result;
 }

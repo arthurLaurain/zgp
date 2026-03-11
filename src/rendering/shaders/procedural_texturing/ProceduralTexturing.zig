@@ -34,6 +34,8 @@ id_exemplar_texture: c_int = undefined,
 exemplar_texture_uniform: c_int = undefined,
 scale_tex_coords_uniform: c_int = undefined,
 u_scale_distorsion_uniform: c_int = undefined,
+visu_rotate_dist_uniform: c_int = undefined,
+visu_stretch_dist_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 vector_attrib: VAO.VertexAttribInfo = undefined,
@@ -62,6 +64,8 @@ fn init() !ProceduralTexturing {
     pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture");
     pt.scale_tex_coords_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_tex_coords");
     pt.u_scale_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_distorsion");
+    pt.visu_rotate_dist_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_rotation_distorsion");
+    pt.visu_stretch_dist_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_stretch_distorsion");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -98,6 +102,8 @@ pub const Parameters = struct {
     edge_ref_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
     scale_distorsion: f32 = 1,
+    visu_rotate_dist: bool = false,
+    visu_scale_dist: bool = false,
 
     pub fn init() Parameters {
         return .{
@@ -153,6 +159,8 @@ pub const Parameters = struct {
         gl.UniformMatrix4fv(p.shader.projection_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.projection_matrix));
         gl.Uniform1f(p.shader.scale_tex_coords_uniform, p.scale_tex_coords);
         gl.Uniform1f(p.shader.u_scale_distorsion_uniform, p.scale_distorsion);
+        gl.Uniform1i(p.shader.visu_rotate_dist_uniform, @intFromBool(p.visu_rotate_dist));
+        gl.Uniform1i(p.shader.visu_stretch_dist_uniform, @intFromBool(p.visu_scale_dist));
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
