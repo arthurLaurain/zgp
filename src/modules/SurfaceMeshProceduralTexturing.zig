@@ -45,10 +45,12 @@ const TnBData = struct {
         const ssbo_info_vertices = SSBO.init();
         const ssbo_edge_ref = SSBO.init();
         const ssbo_normal_vertices = SSBO.init();
+        const ssbo_distorsion_primitives = SSBO.init();
         pt.ssbo_info_triangles = ssbo_info_triangles;
         pt.ssbo_info_vertices = ssbo_info_vertices;
         pt.ssbo_edge_ref = ssbo_edge_ref;
         pt.ssbo_normal_vertices = ssbo_normal_vertices;
+        pt.ssbo_distorsion_primitives = ssbo_distorsion_primitives;
 
         return .{
             .surface_mesh = sm,

@@ -97,6 +97,7 @@ pub const Parameters = struct {
     ssbo_info_vertices: SSBO = undefined,
     ssbo_edge_ref: SSBO = undefined,
     ssbo_normal_vertices: SSBO = undefined,
+    ssbo_distorsion_primitives: SSBO = undefined,
     vertices_normal_vbo: VBO = undefined,
     vertices_position_vbo: VBO = undefined,
     edge_ref_vbo: VBO = undefined,
@@ -124,6 +125,7 @@ pub const Parameters = struct {
         p.ssbo_info_vertices.deinit();
         p.ssbo_edge_ref.deinit();
         p.ssbo_normal_vertices.deinit();
+        p.ssbo_distorsion_primitives.deinit();
         // p.vertices_position_vbo.deinit();
     }
 
@@ -142,6 +144,52 @@ pub const Parameters = struct {
         p.vao.disableVertexAttribArray(attrib_info);
     }
 
+    pub fn computeDistorsion(p: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f) [4]f32 {
+        const p1: [3]f32 = .{ vbo_position[id_triangle[0] * 3], vbo_position[id_triangle[0] * 3 + 1], vbo_position[id_triangle[0] * 3 + 2] };
+        const p2: [3]f32 = .{ vbo_position[id_triangle[1] * 3], vbo_position[id_triangle[1] * 3 + 1], vbo_position[id_triangle[1] * 3 + 2] };
+        const p3: [3]f32 = .{ vbo_position[id_triangle[2] * 3], vbo_position[id_triangle[2] * 3 + 1], vbo_position[id_triangle[2] * 3 + 2] };
+
+        const n1: [3]f32 = .{ vbo_normal[id_triangle[0] * 3], vbo_normal[id_triangle[0] * 3 + 1], vbo_normal[id_triangle[0] * 3 + 2] };
+        const n2: [3]f32 = .{ vbo_normal[id_triangle[1] * 3], vbo_normal[id_triangle[1] * 3 + 1], vbo_normal[id_triangle[1] * 3 + 2] };
+        const n3: [3]f32 = .{ vbo_normal[id_triangle[2] * 3], vbo_normal[id_triangle[2] * 3 + 1], vbo_normal[id_triangle[2] * 3 + 2] };
+    }
+
+    pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *IBO) void {
+
+        // vertices position
+        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.index);
+        const ptr_vbo_position = gl.MapBuffer(gl.ARRAY_BUFFER, gl.READ_ONLY);
+        const array_vbo_position: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_position));
+        gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+        // id vertices per triangle
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
+        const ptr_ibo = gl.MapBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.READ_ONLY);
+        const array_ibo: [*]u32 = @ptrCast(@alignCast(ptr_ibo));
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+
+        // vertices normal
+        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_normal_vbo.index);
+        const ptr_vbo_normal = gl.MapBuffer(gl.ARRAY_BUFFER, gl.READ_ONLY);
+        const array_vbo_normal: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_normal));
+        gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+        // empty SSBO to fill
+        gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
+        defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
+        const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.WRITE_ONLY);
+        const array_ssbo: [*]f32 = @ptrCast(@alignCast(ptr_ssbo));
+
+        const nb_triangle: usize = ibo.nb_indices / 3; // Only for triangles
+
+        for (0..nb_triangle) |i| {
+            const id_triangle: [3]u32 = array_ibo[i][0..3].*;
+            const distorsion: [4]f32 = computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal);
+            array_ssbo[i][0..4].* = distorsion;
+            i = i + 4;
+        }
+    }
+
     pub fn draw(p: *Parameters, ibo: IBO) void {
         gl.UseProgram(p.shader.program.index);
         defer gl.UseProgram(0);
@@ -151,6 +199,7 @@ pub const Parameters = struct {
         p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.index);
         p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
         p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.index);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, p.ssbo_distorsion_primitives.index);
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
