@@ -35,6 +35,13 @@ pub fn copyDataFromBufferObject(s: *SSBO, srcBuffer: u32, size: isize) void {
     gl.BindBuffer(gl.COPY_WRITE_BUFFER, 0);
 }
 
+pub fn memoryAllocationForMapping(s: *SSBO, size: isize) void {
+    gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, s.index);
+    defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
+
+    gl.BufferData(gl.SHADER_STORAGE_BUFFER, size, null, gl.DYNAMIC_DRAW);
+}
+
 pub fn print(s: *SSBO, rawSize: usize, T: type) void {
     gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, s.index);
     defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);

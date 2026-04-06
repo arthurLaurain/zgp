@@ -3,6 +3,7 @@ const ProceduralTexturing = @This();
 const zstbi = @import("zstbi");
 const std = @import("std");
 const gl = @import("gl");
+const eigen = @import("../../../geometry/eigen.zig");
 
 const Shader = @import("../../Shader.zig");
 const VAO = @import("../../VAO.zig");
@@ -13,6 +14,13 @@ const SSBO = @import("../../SSBO.zig");
 
 const vec = @import("../../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
+const Vec2f = vec.Vec2f;
+const Vec3d = vec.Vec3d;
+const Vec4f = vec.Vec4f;
+
+const mat = @import("../../../geometry/mat.zig");
+const Mat3d = mat.Mat3d;
+const Mat4d = mat.Mat4d;
 
 var global_instance: ProceduralTexturing = undefined;
 var init_global_once = std.once(init_global);
@@ -88,6 +96,7 @@ pub fn deinit(tf: *ProceduralTexturing) void {
 pub const Parameters = struct {
     shader: *ProceduralTexturing,
     vao: VAO,
+    first: bool = true,
     exemplar_texture: TEXTURE2D,
     model_view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
@@ -144,53 +153,136 @@ pub const Parameters = struct {
         p.vao.disableVertexAttribArray(attrib_info);
     }
 
-    pub fn computeDistorsion(p: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f) [4]f32 {
-        const p1: [3]f32 = .{ vbo_position[id_triangle[0] * 3], vbo_position[id_triangle[0] * 3 + 1], vbo_position[id_triangle[0] * 3 + 2] };
-        const p2: [3]f32 = .{ vbo_position[id_triangle[1] * 3], vbo_position[id_triangle[1] * 3 + 1], vbo_position[id_triangle[1] * 3 + 2] };
-        const p3: [3]f32 = .{ vbo_position[id_triangle[2] * 3], vbo_position[id_triangle[2] * 3 + 1], vbo_position[id_triangle[2] * 3 + 2] };
+    pub fn getTexCoordFromVertexPlane(P: Vec3f, A: Vec3f, N: Vec3f) Vec2f {
+        const projPoint: Vec3f = vec.sub3f(P, vec.mulScalar3f(N, vec.dot3f(vec.sub3f(P, A), N)));
 
-        const n1: [3]f32 = .{ vbo_normal[id_triangle[0] * 3], vbo_normal[id_triangle[0] * 3 + 1], vbo_normal[id_triangle[0] * 3 + 2] };
-        const n2: [3]f32 = .{ vbo_normal[id_triangle[1] * 3], vbo_normal[id_triangle[1] * 3 + 1], vbo_normal[id_triangle[1] * 3 + 2] };
-        const n3: [3]f32 = .{ vbo_normal[id_triangle[2] * 3], vbo_normal[id_triangle[2] * 3 + 1], vbo_normal[id_triangle[2] * 3 + 2] };
+        const up: Vec3f = .{ 0, 1, 0 };
+        var T: Vec3f = vec.cross3f(N, up);
+        if (vec.norm3f(T) < 1e-6) {
+            const altUp: Vec3f = .{ 1, 0, 0 };
+            T = vec.cross3f(N, altUp);
+        }
+        T = vec.normalized3f(T);
+        const BT: Vec3f = vec.cross3f(N, T);
+
+        const AP: Vec3f = vec.sub3f(projPoint, A);
+        const uv: Vec2f = .{ vec.dot3f(AP, T), vec.dot3f(AP, BT) };
+        return uv;
     }
 
-    pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *IBO) void {
+    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f) Vec3d {
+        const x0: Vec3f = vbo_position[id_triangle[0]];
+        const x1: Vec3f = vbo_position[id_triangle[1]];
+        const x2: Vec3f = vbo_position[id_triangle[2]];
 
-        // vertices position
+        const x0d: Vec3d = .{ @floatCast(x0[0]), @floatCast(x0[1]), @floatCast(x0[2]) };
+        const x1d: Vec3d = .{ @floatCast(x1[0]), @floatCast(x1[1]), @floatCast(x1[2]) };
+        const x2d: Vec3d = .{ @floatCast(x2[0]), @floatCast(x2[1]), @floatCast(x2[2]) };
+
+        const x01: Vec3d = vec.sub3d(x1d, x0d);
+        const x02: Vec3d = vec.sub3d(x2d, x0d);
+
+        const n0: Vec3f = vbo_normal[id_triangle[0]];
+        // const n1: Vec3f = vbo_normal[id_triangle[1] * 3];
+        // const n2: Vec3f = vbo_normal[id_triangle[2] * 3];
+
+        const n0d: Vec3d = .{ @floatCast(n0[0]), @floatCast(n0[1]), @floatCast(n0[2]) };
+
+        // computing distorsion for tiling based on p0
+        const uv01: Vec2f = getTexCoordFromVertexPlane(x1, x0, n0);
+        const uv02: Vec2f = getTexCoordFromVertexPlane(x2, x0, n0);
+
+        const uv01_extended: Vec3d = .{ uv01[0], uv01[1], 0 };
+        const uv02_extended: Vec3d = .{ uv02[0], uv02[1], 0 };
+
+        const X: Mat3d = .{ x01, x02, n0d };
+        const U: Mat3d = .{ uv01_extended, uv02_extended, Vec3d{ 0, 0, 1 } };
+        const U_1 = eigen.computeInverse3d(U).?;
+        const F: Mat3d = mat.mul3d(X, U_1);
+
+        var decompo_U: Mat3d = undefined;
+        var decompo_S: Mat3d = undefined;
+        var decompo_V: Mat3d = undefined;
+
+        eigen.computeJacobiSVD(&F, &decompo_U, &decompo_S, &decompo_V);
+
+        const S: Mat3d = mat.mul3d(decompo_V, mat.mul3d(decompo_S, mat.transpose3d(decompo_V)));
+
+        mat.printMat3d(S);
+
+        return .{ decompo_S[0][0], decompo_S[1][1], 0 };
+
+        // var eigenvectors: Mat3d = undefined;
+        // var eigenvalues_squared: Mat3d = undefined;
+
+        // const FFT: Mat3d = mat.mul3d(F, mat.transpose3d(F));
+        // eigen.computeEigenValuesAndEigenVectors3d(&FFT, &eigenvectors, &eigenvalues_squared);
+
+        // const eigenvalues: Mat3d = .{ .{ @sqrt(eigenvalues_squared[0][0]), 0, 0 }, .{ 0, @sqrt(eigenvalues_squared[1][1]), 0 }, .{ 0, 0, @sqrt(eigenvalues_squared[2][2]) } };
+
+        // const S: Mat3d = mat.mul3d(eigenvectors, mat.mul3d(eigenvalues, eigen.computeInverse3d(eigenvectors).?));
+
+        // mat.printMat3d(S);
+
+        // return .{ 0, 0, 0 };
+    }
+
+    pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) void {
         gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.index);
         const ptr_vbo_position = gl.MapBuffer(gl.ARRAY_BUFFER, gl.READ_ONLY);
         const array_vbo_position: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_position));
-        gl.BindBuffer(gl.ARRAY_BUFFER, 0);
 
-        // id vertices per triangle
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
         const ptr_ibo = gl.MapBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.READ_ONLY);
         const array_ibo: [*]u32 = @ptrCast(@alignCast(ptr_ibo));
-        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
 
-        // vertices normal
         gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_normal_vbo.index);
         const ptr_vbo_normal = gl.MapBuffer(gl.ARRAY_BUFFER, gl.READ_ONLY);
         const array_vbo_normal: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_normal));
-        gl.BindBuffer(gl.ARRAY_BUFFER, 0);
 
-        // empty SSBO to fill
+        const nb_triangle: usize = ibo.nb_indices / 3;
+
+        ssbo.memoryAllocationForMapping(@intCast(@sizeOf(f64) * 4 * nb_triangle));
+
         gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
-        defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
-        const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.WRITE_ONLY);
-        const array_ssbo: [*]f32 = @ptrCast(@alignCast(ptr_ssbo));
+        const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
+        const array_ssbo: [*]f64 = @ptrCast(@alignCast(ptr_ssbo));
 
-        const nb_triangle: usize = ibo.nb_indices / 3; // Only for triangles
+        var i: usize = 0;
+        while (i < nb_triangle * 4) : (i += 4) {
+            const tri_idx = i / 4;
 
-        for (0..nb_triangle) |i| {
-            const id_triangle: [3]u32 = array_ibo[i][0..3].*;
-            const distorsion: [4]f32 = computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal);
-            array_ssbo[i][0..4].* = distorsion;
-            i = i + 4;
+            const id_triangle: [3]u32 = .{
+                array_ibo[tri_idx * 3 + 0],
+                array_ibo[tri_idx * 3 + 1],
+                array_ibo[tri_idx * 3 + 2],
+            };
+
+            const r: Vec3d = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal);
+
+            // std.log.debug("{d} {d} {d}\n", .{ r[0], r[1], r[2] });
+            array_ssbo[i] = r[0];
+            array_ssbo[i + 1] = r[1];
+            array_ssbo[i + 2] = r[2];
+            array_ssbo[i + 3] = 1;
         }
+
+        _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
+        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.index);
+        _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
+        gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+        _ = gl.UnmapBuffer(gl.ELEMENT_ARRAY_BUFFER);
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+        _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
+        gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
     }
 
     pub fn draw(p: *Parameters, ibo: IBO) void {
+        if (p.first) {
+            p.fillDistorsionSSBO(&p.ssbo_distorsion_primitives, &ibo);
+            p.first = false;
+        }
+
         gl.UseProgram(p.shader.program.index);
         defer gl.UseProgram(0);
         gl.ActiveTexture(gl.TEXTURE0);

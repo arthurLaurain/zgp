@@ -75,6 +75,32 @@ pub fn mat4dFromMat4f(m: Mat4f) Mat4d {
     };
 }
 
+pub fn transpose3d(m: [3][3]f64) [3][3]f64 {
+    var result: [3][3]f64 = undefined;
+
+    var i: usize = 0;
+    while (i < 3) : (i += 1) {
+        var j: usize = 0;
+        while (j < 3) : (j += 1) {
+            result[i][j] = m[j][i];
+        }
+    }
+
+    return result;
+}
+
+pub fn printMat3d(m: [3][3]f64) void {
+    std.debug.print("-----------------\n", .{});
+    for (m) |row| {
+        std.debug.print("( ", .{});
+        for (row) |val| {
+            std.debug.print("{:.6} ", .{val});
+        }
+        std.debug.print(")\n", .{});
+    }
+    std.debug.print("-----------------\n", .{});
+}
+
 pub fn mul3f(a: Mat3f, b: Mat3f) Mat3f {
     var result: Mat3f = undefined;
     for (0..2) |i| {

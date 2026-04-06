@@ -11,11 +11,26 @@ const Mat4d = mat.Mat4d;
 pub const Index = i32;
 pub const Scalar = f64;
 
+pub fn computeJacobiSVD(M: *const Mat3d, U: *Mat3d, S: *Mat3d, V: *Mat3d) void {
+    c.computeJacobiSVD3d(@ptrCast(M), @ptrCast(U), @ptrCast(S), @ptrCast(V));
+}
+
 pub fn computeInverse4d(m: Mat4d) ?Mat4d {
     var inv: Mat4d = undefined;
     var invertible = false;
     c.computeInverseWithCheck4d(@ptrCast(&m), @ptrCast(&inv), &invertible);
     return if (invertible) inv else null;
+}
+
+pub fn computeInverse3d(m: Mat3d) ?Mat3d {
+    var inv: Mat3d = undefined;
+    var invertible = false;
+    c.computeInverseWithCheck3d(@ptrCast(&m), @ptrCast(&inv), &invertible);
+    return if (invertible) inv else null;
+}
+
+pub fn computeEigenValuesAndEigenVectors3d(m: *const Mat3d, eigenvectors: *Mat3d, eigenvalues: *Mat3d) void {
+    c.computeEigenValuesAndEigenVectors3d(@ptrCast(m), @ptrCast(eigenvectors), @ptrCast(eigenvalues));
 }
 
 pub fn solveSymmetricLinearSystem4d(A: Mat4d, b: Vec4d) Vec4d {

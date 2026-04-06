@@ -35,6 +35,11 @@ layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
   float vertices_normal[];
 };
 
+layout(std430, binding = 4) readonly buffer ssbo_triangles_distorsion
+{
+  dvec4 triangles_distorsion[];
+};
+
 mat2 rotate(float theta)
 {
     float c = cos(theta);
@@ -112,99 +117,6 @@ dvec3 getBarycentric(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
 //     return R;
 // }
 
-// GLSL function to compute eigenvalues of a symmetric 3x3 matrix using Jacobi iteration
-vec3 jacobiEigenvalues(mat3 A) {
-    const int MAX_ITER = 10;
-    const float EPSILON = 1e-5;
-
-    mat3 D = A; // Working copy
-    for (int iter = 0; iter < MAX_ITER; iter++) {
-        // Find largest off-diagonal element
-        float a01 = D[0][1];
-        float a02 = D[0][2];
-        float a12 = D[1][2];
-
-        float abs01 = abs(a01);
-        float abs02 = abs(a02);
-        float abs12 = abs(a12);
-
-        // Pick the largest
-        int p, q;
-        if (abs01 > abs02 && abs01 > abs12) { p = 0; q = 1; }
-        else if (abs02 > abs12) { p = 0; q = 2; }
-        else { p = 1; q = 2; }
-
-        // If off-diagonal is small, we're done
-        if (abs(D[p][q]) < EPSILON) break;
-
-        // Compute rotation
-        float phi = 0.5 * atan(2.0 * D[p][q], D[q][q] - D[p][p]);
-        float c = cos(phi);
-        float s = sin(phi);
-
-        // Apply rotation to matrix
-        for (int k = 0; k < 3; k++) {
-            float Dpk = D[p][k];
-            float Dqk = D[q][k];
-            D[p][k] = c*Dpk - s*Dqk;
-            D[q][k] = s*Dpk + c*Dqk;
-        }
-        for (int k = 0; k < 3; k++) {
-            float Dkp = D[k][p];
-            float Dkq = D[k][q];
-            D[k][p] = c*Dkp - s*Dkq;
-            D[k][q] = s*Dkp + c*Dkq;
-        }
-    }
-
-    // Diagonal now approximates eigenvalues
-    return vec3(D[0][0], D[1][1], D[2][2]);
-}
-
-vec3 eigenvector(mat3 A, float lambda) {
-    mat3 B = A - lambda * mat3(1.0);
-    vec3 v;
-
-    v = cross(B[0], B[1]);
-    if (length(v) < 1e-6) v = cross(B[0], B[2]);
-    if (length(v) < 1e-6) v = cross(B[1], B[2]);
-    return normalize(v);
-}
-
-void polarDecomposition(mat3 A, out mat3 R, out mat3 S)
-{
-  mat3 AA_T = A * transpose(A);
-
-  vec3 eigenvalues = jacobiEigenvalues(AA_T);
-  mat3 U = mat3(eigenvector(AA_T, eigenvalues.x), eigenvector(AA_T, eigenvalues.y), eigenvector(AA_T, eigenvalues.z));
-  mat3 U_t = transpose(U);
-
-  vec3 eigenvalues_squared = sqrt(eigenvalues);
-  mat3 sigma = mat3(vec3(eigenvalues_squared.x, 0., 0.), 
-                    vec3(0., eigenvalues_squared.y, 0.),
-                    vec3(0.,0.,eigenvalues_squared.z));
-  
-  R = U * sigma * U_t;
-  S = transpose(R) * A;
-}
-
-void computeStretchAndRotation(vec3 x0, vec3 x1, vec3 x2, vec2 uv0, vec2 uv1, vec2 uv2, out mat3 R, out mat3 S)
-{
-  vec3 x_01 = x1 - x0;
-  vec3 x_02 = x2 - x0;
-  vec3 x_n = cross(x_01,x_02);
-  mat3 P = mat3(x_01, x_02, x_n);
-
-  vec3 u_01 = vec3(uv1,0) - vec3(uv0,0);
-  vec3 u_02 = vec3(uv2,0) - vec3(uv0,0);
-  vec3 u_n = vec3(0,0,1);
-  mat3 U = mat3(u_01, u_02, u_n);
-
-  mat3 F = P * inverse(U);
-
-  polarDecomposition(F, R, S);
-}
-
 // https://nulldog.com/calculate-angle-from-rotation-matrix-formulas-examples
 // Give rotation magnitude but not the direction of the rotation axis
 float rotationAngle(mat3 R)
@@ -242,6 +154,7 @@ void main() {
   vec3 n2 = (vec4(vertices_normal[id_vertices.y * 3], vertices_normal[id_vertices.y * 3 + 1], vertices_normal[id_vertices.y * 3 + 2],1.)).xyz;
   vec3 n3 = (vec4(vertices_normal[id_vertices.z * 3], vertices_normal[id_vertices.z * 3 + 1], vertices_normal[id_vertices.z * 3 + 2],1.)).xyz;
 
+  vec4 distorsions = vec4(triangles_distorsion[id_triangle]);
   // vec3 edge_ref1 = (vec4(edge_ref_ssbo[id_vertices.x * 3], edge_ref_ssbo[id_vertices.x * 3 + 1], edge_ref_ssbo[id_vertices.x * 3 + 2],1.)).xyz;
   // vec3 edge_ref2 = (vec4(edge_ref_ssbo[id_vertices.y * 3], edge_ref_ssbo[id_vertices.y * 3 + 1], edge_ref_ssbo[id_vertices.y * 3 + 2],1.)).xyz;
   // vec3 edge_ref3 = (vec4(edge_ref_ssbo[id_vertices.z * 3], edge_ref_ssbo[id_vertices.z * 3 + 1], edge_ref_ssbo[id_vertices.z * 3 + 2],1.)).xyz;
@@ -268,22 +181,8 @@ void main() {
   vec3 c2 = texture(u_exemplar_texture, u2.xy + r2).xyz;
   vec3 c3 = texture(u_exemplar_texture, u3.xy + r3).xyz;
 
-  mat3 R;
-  mat3 S;
-  computeStretchAndRotation(p1,p2,p3,u1,u2,u3,R,S);
-
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
-  
-  if(u_visu_rotation_distorsion)
-  {
-    // rotationAngle(R) [0:PI]
-    float theta = rotationAngle(R) / PI;
-    // f_color = vec4(rotationAngle(R) * u_scale_distorsion,0.,0.,1.);
-    f_color = vec4(vec3(theta,0.,0.) * u_scale_distorsion, 1.);
-  }
-  else if(u_visu_stretch_distorsion)
-    f_color = vec4(stretchFactors(S) * u_scale_distorsion, 1.);
-  else
-    f_color = result;
+
+  f_color = vec4((distorsions.x / distorsions.y) * u_scale_distorsion, 0,0,1);
 }
