@@ -114,7 +114,7 @@ pub const Parameters = struct {
     edge_ref_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
     scale_distorsion: f32 = 1,
-    visu_area_distorsion: bool = true,
+    visu_area_distorsion: bool = false,
     visu_angle_distorsion: bool = false,
     visu_arap_energy: bool = false,
 
@@ -217,22 +217,11 @@ pub const Parameters = struct {
         const V_transpose: Mat3d = mat.transpose3d(decompo_V);
         const S: Mat3d = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
         const R: Mat3d = mat.mul3d(decompo_U, V_transpose);
+        const energy_arap: f64 = computeAsRigidAsPossibleEnergy(F, R, S);
+
+        std.log.debug("Aire: {d} Angle: {d} Energie {d}", .{ S[0][0] * S[1][1], S[0][0] / S[1][1], energy_arap });
 
         return .{ S[0][0], S[1][1], computeAsRigidAsPossibleEnergy(F, R, S) };
-
-        // var eigenvectors: Mat3d = undefined;
-        // var eigenvalues_squared: Mat3d = undefined;
-
-        // const FFT: Mat3d = mat.mul3d(F, mat.transpose3d(F));
-        // eigen.computeEigenValuesAndEigenVectors3d(&FFT, &eigenvectors, &eigenvalues_squared);
-
-        // const eigenvalues: Mat3d = .{ .{ @sqrt(eigenvalues_squared[0][0]), 0, 0 }, .{ 0, @sqrt(eigenvalues_squared[1][1]), 0 }, .{ 0, 0, @sqrt(eigenvalues_squared[2][2]) } };
-
-        // const S: Mat3d = mat.mul3d(eigenvectors, mat.mul3d(eigenvalues, eigen.computeInverse3d(eigenvectors).?));
-
-        // mat.printMat3d(S);
-
-        // return .{ 0, 0, 0 };
     }
 
     pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) void {
@@ -268,7 +257,6 @@ pub const Parameters = struct {
 
             const r: Vec3d = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal);
 
-            // std.log.debug("{d} {d} {d}\n", .{ r[0], r[1], r[2] });
             array_ssbo[i] = r[0];
             array_ssbo[i + 1] = r[1];
             array_ssbo[i + 2] = r[2];

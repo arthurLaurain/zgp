@@ -103,40 +103,6 @@ dvec3 getBarycentric(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
     return dvec3(u, v, w);
 }
 
-
-// mat3 polarDecomposition(mat3 F)
-// {
-//     mat3 R = F;
-
-//     for(int i = 0; i < 5; i++)
-//     {
-//         // to avoid inversion cost, see paper Stable and Efficient Computation of Generalized Polar Decompositions by Benner et al.
-//         mat3 R_invT = inverse(transpose(R));
-//         R = 0.5 * (R + R_invT);
-//     }
-
-//     return R;
-// }
-
-// https://nulldog.com/calculate-angle-from-rotation-matrix-formulas-examples
-// Give rotation magnitude but not the direction of the rotation axis
-float rotationAngle(mat3 R)
-{
-    float traceR = R[0][0] + R[1][1] + R[2][2];
-    float cos_theta = (traceR - 1.0) * 0.5;
-    cos_theta = clamp(cos_theta, -1.0, 1.0);
-    return acos(cos_theta);
-}
-
-vec3 stretchFactors(mat3 S)
-{
-    return vec3(
-        length(S[0]),
-        length(S[1]),
-        length(S[2])
-    );
-}
-
 void main() {
 
   vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
@@ -186,11 +152,11 @@ void main() {
   vec4 result = vec4(albedo * lambert_term,1.);
 
   if(u_visu_angle_distorsion)
-    f_color = vec4((distorsions.x / distorsions.y) * u_scale_distorsion, 0,0,1);
+    f_color = vec4((abs((distorsions.x - distorsions.y))) * u_scale_distorsion, 0,0,1);
   else if(u_visu_area_distorsion)
-    f_color = vec4((distorsions.x * distorsions.y) * u_scale_distorsion,0,0,1);
+    f_color = vec4((abs(1. - distorsions.x * distorsions.y)) * u_scale_distorsion,0,0,1);
   else if(u_visu_arap_energy)
     f_color = vec4((distorsions.z * u_scale_distorsion), 0, 0, 1);
   else
-    f_color = vec4(1.);
+    f_color = vec4(result);
 }
