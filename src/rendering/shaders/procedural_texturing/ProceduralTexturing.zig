@@ -42,8 +42,9 @@ id_exemplar_texture: c_int = undefined,
 exemplar_texture_uniform: c_int = undefined,
 scale_tex_coords_uniform: c_int = undefined,
 u_scale_distorsion_uniform: c_int = undefined,
-visu_rotate_dist_uniform: c_int = undefined,
-visu_stretch_dist_uniform: c_int = undefined,
+visu_area_distorsion_uniform: c_int = undefined,
+visu_angle_distorsion_uniform: c_int = undefined,
+visu_arap_energy_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 vector_attrib: VAO.VertexAttribInfo = undefined,
@@ -72,8 +73,9 @@ fn init() !ProceduralTexturing {
     pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture");
     pt.scale_tex_coords_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_tex_coords");
     pt.u_scale_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_distorsion");
-    pt.visu_rotate_dist_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_rotation_distorsion");
-    pt.visu_stretch_dist_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_stretch_distorsion");
+    pt.visu_area_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_area_distorsion");
+    pt.visu_angle_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_angle_distorsion");
+    pt.visu_arap_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_arap_energy");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -112,8 +114,9 @@ pub const Parameters = struct {
     edge_ref_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
     scale_distorsion: f32 = 1,
-    visu_rotate_dist: bool = false,
-    visu_scale_dist: bool = false,
+    visu_area_distorsion: bool = true,
+    visu_angle_distorsion: bool = false,
+    visu_arap_energy: bool = false,
 
     pub fn init() Parameters {
         return .{
@@ -170,6 +173,11 @@ pub const Parameters = struct {
         return uv;
     }
 
+    pub fn computeAsRigidAsPossibleEnergy(F: Mat3d, R: Mat3d, S: Mat3d) f64 {
+        return mat.squaredFroberniusNorm3d(F) + mat.squaredFroberniusNorm3d(R) - 2 * mat.trace3d(S);
+    }
+
+    // return (σ_1, σ_2, ψ_as-rigid-as-possible)
     pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f) Vec3d {
         const x0: Vec3f = vbo_position[id_triangle[0]];
         const x1: Vec3f = vbo_position[id_triangle[1]];
@@ -206,11 +214,11 @@ pub const Parameters = struct {
 
         eigen.computeJacobiSVD(&F, &decompo_U, &decompo_S, &decompo_V);
 
-        const S: Mat3d = mat.mul3d(decompo_V, mat.mul3d(decompo_S, mat.transpose3d(decompo_V)));
+        const V_transpose: Mat3d = mat.transpose3d(decompo_V);
+        const S: Mat3d = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
+        const R: Mat3d = mat.mul3d(decompo_U, V_transpose);
 
-        mat.printMat3d(S);
-
-        return .{ decompo_S[0][0], decompo_S[1][1], 0 };
+        return .{ S[0][0], S[1][1], computeAsRigidAsPossibleEnergy(F, R, S) };
 
         // var eigenvectors: Mat3d = undefined;
         // var eigenvalues_squared: Mat3d = undefined;
@@ -300,8 +308,9 @@ pub const Parameters = struct {
         gl.UniformMatrix4fv(p.shader.projection_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.projection_matrix));
         gl.Uniform1f(p.shader.scale_tex_coords_uniform, p.scale_tex_coords);
         gl.Uniform1f(p.shader.u_scale_distorsion_uniform, p.scale_distorsion);
-        gl.Uniform1i(p.shader.visu_rotate_dist_uniform, @intFromBool(p.visu_rotate_dist));
-        gl.Uniform1i(p.shader.visu_stretch_dist_uniform, @intFromBool(p.visu_scale_dist));
+        gl.Uniform1i(p.shader.visu_angle_distorsion_uniform, @intFromBool(p.visu_angle_distorsion));
+        gl.Uniform1i(p.shader.visu_area_distorsion_uniform, @intFromBool(p.visu_area_distorsion));
+        gl.Uniform1i(p.shader.visu_arap_energy_uniform, @intFromBool(p.visu_arap_energy));
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);

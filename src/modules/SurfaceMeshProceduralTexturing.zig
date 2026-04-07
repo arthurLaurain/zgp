@@ -40,7 +40,6 @@ const TnBData = struct {
     pub fn init(sm: *SurfaceMesh) TnBData {
         var pt = ProceduralTexturing.Parameters.init();
 
-        //TODO handle error
         const ssbo_info_triangles = SSBO.init();
         const ssbo_info_vertices = SSBO.init();
         const ssbo_edge_ref = SSBO.init();
@@ -295,18 +294,29 @@ pub fn rightPanel(m: *Module) void {
             smpt.app_ctx.requestRedraw();
         c.ImGui_PopID();
 
-        c.ImGui_Text("Visualize rotation distorsions");
-        c.ImGui_PushID("Visualize rotation distorsions");
-        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_rotate_dist)) {
-            tnb_data.procedural_texturing_parameters.visu_scale_dist = false;
+        c.ImGui_Text("Visualize area distorsions");
+        c.ImGui_PushID("Visualize area distorsions");
+        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_area_distorsion)) {
+            tnb_data.procedural_texturing_parameters.visu_angle_distorsion = false;
+            tnb_data.procedural_texturing_parameters.visu_arap_energy = false;
             smpt.app_ctx.requestRedraw();
         }
         c.ImGui_PopID();
 
-        c.ImGui_Text("Visualize stretch distorsions");
-        c.ImGui_PushID("Visualize stretch distorsions");
-        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_scale_dist)) {
-            tnb_data.procedural_texturing_parameters.visu_rotate_dist = false;
+        c.ImGui_Text("Visualize angle distorsions");
+        c.ImGui_PushID("Visualize angle distorsions");
+        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_angle_distorsion)) {
+            tnb_data.procedural_texturing_parameters.visu_area_distorsion = false;
+            tnb_data.procedural_texturing_parameters.visu_arap_energy = false;
+            smpt.app_ctx.requestRedraw();
+        }
+        c.ImGui_PopID();
+
+        c.ImGui_Text("Visualize As-Rigid-As-Possible energy");
+        c.ImGui_PushID("Visualize As-Rigid-As-Possible energy");
+        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_arap_energy)) {
+            tnb_data.procedural_texturing_parameters.visu_area_distorsion = false;
+            tnb_data.procedural_texturing_parameters.visu_angle_distorsion = false;
             smpt.app_ctx.requestRedraw();
         }
         c.ImGui_PopID();

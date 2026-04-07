@@ -7,8 +7,9 @@ uniform sampler2D u_exemplar_texture;
 uniform mat4 u_model_view_matrix;
 uniform float u_scale_tex_coords;
 uniform float u_scale_distorsion;
-uniform bool u_visu_rotation_distorsion;
-uniform bool u_visu_stretch_distorsion;
+uniform bool u_visu_area_distorsion;
+uniform bool u_visu_angle_distorsion;
+uniform bool u_visu_arap_energy;
 
 in vec3 frag_position;
 in vec3 v_frag_position;
@@ -184,5 +185,12 @@ void main() {
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
 
-  f_color = vec4((distorsions.x / distorsions.y) * u_scale_distorsion, 0,0,1);
+  if(u_visu_angle_distorsion)
+    f_color = vec4((distorsions.x / distorsions.y) * u_scale_distorsion, 0,0,1);
+  else if(u_visu_area_distorsion)
+    f_color = vec4((distorsions.x * distorsions.y) * u_scale_distorsion,0,0,1);
+  else if(u_visu_arap_energy)
+    f_color = vec4((distorsions.z * u_scale_distorsion), 0, 0, 1);
+  else
+    f_color = vec4(1.);
 }

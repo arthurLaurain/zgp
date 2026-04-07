@@ -44,6 +44,20 @@ pub const zero4f: Mat4f = .{ vec.zero4f, vec.zero4f, vec.zero4f, vec.zero4f };
 pub const zero3d: Mat3d = .{ vec.zero3d, vec.zero3d, vec.zero3d };
 pub const zero4d: Mat4d = .{ vec.zero4d, vec.zero4d, vec.zero4d, vec.zero4d };
 
+pub fn squaredFroberniusNorm3d(m: Mat3d) f64 {
+    var n: f64 = 0;
+    for (0..2) |c| {
+        for (0..2) |r| {
+            n += m[c][r] * m[c][r];
+        }
+    }
+    return n;
+}
+
+pub fn trace3d(m: Mat3d) f64 {
+    return m[0][0] + m[1][1] + m[2][2];
+}
+
 pub fn mat3fFromMat3d(m: Mat3d) Mat3f {
     return .{
         vec.vec3fFromVec3d(m[0]),
