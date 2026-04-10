@@ -109,6 +109,7 @@ pub const Parameters = struct {
     ssbo_edge_ref: SSBO = undefined,
     ssbo_normal_vertices: SSBO = undefined,
     ssbo_distorsion_primitives: SSBO = undefined,
+    ssbo_neigh_selected_vertices: SSBO = undefined,
     vertices_normal_vbo: VBO = undefined,
     vertices_position_vbo: VBO = undefined,
     edge_ref_vbo: VBO = undefined,
@@ -138,6 +139,7 @@ pub const Parameters = struct {
         p.ssbo_edge_ref.deinit();
         p.ssbo_normal_vertices.deinit();
         p.ssbo_distorsion_primitives.deinit();
+        p.ssbo_neigh_selected_vertices.deinit();
         // p.vertices_position_vbo.deinit();
     }
 
@@ -219,9 +221,9 @@ pub const Parameters = struct {
         const R: Mat3d = mat.mul3d(decompo_U, V_transpose);
         const energy_arap: f64 = computeAsRigidAsPossibleEnergy(F, R, S);
 
-        std.log.debug("Aire: {d} Angle: {d} Energie {d}", .{ S[0][0] * S[1][1], S[0][0] / S[1][1], energy_arap });
+        // std.log.debug("Aire: {d} Angle: {d} Energie {d}", .{ S[0][0] * S[1][1], S[0][0] / S[1][1], energy_arap });
 
-        return .{ S[0][0], S[1][1], computeAsRigidAsPossibleEnergy(F, R, S) };
+        return .{ S[0][0], S[1][1], energy_arap };
     }
 
     pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) void {
@@ -288,6 +290,7 @@ pub const Parameters = struct {
         p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
         p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, p.ssbo_distorsion_primitives.index);
+        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, p.ssbo_neigh_selected_vertices.index);
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));

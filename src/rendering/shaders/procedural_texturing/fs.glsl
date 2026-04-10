@@ -41,15 +41,11 @@ layout(std430, binding = 4) readonly buffer ssbo_triangles_distorsion
   dvec4 triangles_distorsion[];
 };
 
-mat2 rotate(float theta)
+layout(std430, binding = 5) readonly buffer ssbo_neigh_selected_vertices
 {
-    float c = cos(theta);
-    float s = sin(theta);
-    return mat2(
-        c, -s,
-        s,  c
-    );
-}
+  double num_selected_vertices;
+  double neigh_selected_vertices[];
+};
 
 vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
 {
@@ -61,6 +57,45 @@ vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
 
   return vec2(dot(AP,T), dot(AP,BT));
   
+}
+
+
+
+bool pointOnTriangle(vec3 p, dvec3 a, dvec3 b, dvec3 c)
+{
+    double scale = length(b - a) + length(c - a) + length(c - b);
+    double eps = 1e-6 * scale;
+
+    dvec3 v0 = b - a;
+    dvec3 v1 = c - a;
+    dvec3 v2 = p - a;
+
+    dvec3 n = cross(v0, v1);
+    double n_len = length(n);
+
+    if(n_len < eps)
+        return false;
+
+    n /= n_len;
+
+
+    double d00 = dot(v0, v0);
+    double d01 = dot(v0, v1);
+    double d11 = dot(v1, v1);
+    double d20 = dot(v2, v0);
+    double d21 = dot(v2, v1);
+
+    double denom = d00 * d11 - d01 * d01;
+
+    if(abs(denom) < eps)
+        return false;
+
+    double v = (d11 * d20 - d01 * d21) / denom;
+    double w = (d00 * d21 - d01 * d20) / denom;
+    double u = 1.0 - v - w;
+
+    return (u >= -eps && v >= -eps && w >= -eps &&
+        u <= 1.0 + eps && v <= 1.0 + eps && w <= 1.0 + eps);
 }
 
 vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
@@ -101,6 +136,63 @@ dvec3 getBarycentric(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
     double u = 1.0 - v - w;
 
     return dvec3(u, v, w);
+}
+
+float pointInTriangleBary(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
+{
+    dvec3 bary = getBarycentric(P, A, B, C);
+    double eps = 1e-6;
+
+    if(bary.x >= -eps && bary.y >= -eps && bary.z >= -eps)
+        return 1.0;
+    return 0.0;
+}
+
+vec4 addColorForSelectedOneRing(vec4 rgba)
+{
+  vec4 color = vec4(1.);
+  float t = 0.;
+  if (num_selected_vertices > 0)
+  {
+      int offset = 0;
+
+      for (int i = 0; i < num_selected_vertices; i++)
+      {
+          int num_neigh = int(neigh_selected_vertices[offset]) - 1;
+
+          dvec3 center = dvec3(
+              neigh_selected_vertices[offset + 1],
+              neigh_selected_vertices[offset + 2],
+              neigh_selected_vertices[offset + 3]
+          );
+
+          int base = offset + 4;
+
+          for (int k = 0; k < num_neigh; k++)
+          {
+              int k_next = (k + 1) % num_neigh;
+
+              dvec3 p1 = center;
+
+              dvec3 p2 = dvec3(
+                  neigh_selected_vertices[base + k * 3 + 0],
+                  neigh_selected_vertices[base + k * 3 + 1],
+                  neigh_selected_vertices[base + k * 3 + 2]
+              );
+
+              dvec3 p3 = dvec3(
+                  neigh_selected_vertices[base + k_next * 3 + 0],
+                  neigh_selected_vertices[base + k_next * 3 + 1],
+                  neigh_selected_vertices[base + k_next * 3 + 2]
+              );
+
+              t += 0.25 * pointInTriangleBary(frag_position, p1, p2, p3);
+          }
+
+          offset += 4 + num_neigh * 3;
+      }
+  }
+  return mix(color, rgba, t);
 }
 
 void main() {
@@ -159,4 +251,7 @@ void main() {
     f_color = vec4((distorsions.z * u_scale_distorsion), 0, 0, 1);
   else
     f_color = vec4(result);
+
+  f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
+
 }

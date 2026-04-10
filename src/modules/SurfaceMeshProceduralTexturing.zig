@@ -19,6 +19,7 @@ const Texture2D = @import("../rendering/Texture2D");
 
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
+const Vec3d = vec.Vec3d;
 const mat = @import("../geometry/mat.zig");
 const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
@@ -45,11 +46,13 @@ const TnBData = struct {
         const ssbo_edge_ref = SSBO.init();
         const ssbo_normal_vertices = SSBO.init();
         const ssbo_distorsion_primitives = SSBO.init();
+        const ssbo_neigh_selected_vertices = SSBO.init();
         pt.ssbo_info_triangles = ssbo_info_triangles;
         pt.ssbo_info_vertices = ssbo_info_vertices;
         pt.ssbo_edge_ref = ssbo_edge_ref;
         pt.ssbo_normal_vertices = ssbo_normal_vertices;
         pt.ssbo_distorsion_primitives = ssbo_distorsion_primitives;
+        pt.ssbo_neigh_selected_vertices = ssbo_neigh_selected_vertices;
 
         return .{
             .surface_mesh = sm,
@@ -110,6 +113,7 @@ module: Module = .{
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
+        .surfaceMeshCellSetUpdated = surfaceMeshCellSetUpdated,
         .sdlEvent = sdlEvent,
         .rightPanel = rightPanel,
         .draw = draw,
@@ -170,6 +174,61 @@ pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
         std.debug.print("Failed to store TnBData for new SurfaceMesh: {}\n", .{err});
         return;
     };
+}
+
+/// Part of the Module interface
+/// Called everytime a cell is selected by the user
+pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, _: SurfaceMesh.CellType) void {
+    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
+    const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
+    if (!tnb_data.initialized) return;
+
+    const info = smpt.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
+    const vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = info.std_datas.vertex_position.?;
+    var list_neigh_position: std.ArrayList(f64) = .empty;
+    if (info.vertex_set.cells.items.len == 0) return;
+    defer list_neigh_position.deinit(smpt.app_ctx.allocator);
+    for (info.vertex_set.cells.items) |value| {
+        var current: u32 = value.dart();
+        const position_selected_vertex: Vec3f = vertex_position.value(.{ .vertex = current });
+
+        list_neigh_position.append(smpt.app_ctx.allocator, position_selected_vertex[0]) catch unreachable;
+        list_neigh_position.append(smpt.app_ctx.allocator, position_selected_vertex[1]) catch unreachable;
+        list_neigh_position.append(smpt.app_ctx.allocator, position_selected_vertex[2]) catch unreachable;
+        var count: usize = 1;
+        while (true) {
+            const pos_neigh = vertex_position.value(.{ .vertex = sm.phi_1(current) });
+            list_neigh_position.append(smpt.app_ctx.allocator, pos_neigh[0]) catch unreachable;
+            list_neigh_position.append(smpt.app_ctx.allocator, pos_neigh[1]) catch unreachable;
+            list_neigh_position.append(smpt.app_ctx.allocator, pos_neigh[2]) catch unreachable;
+            current = sm.phi2(sm.phi_1(current));
+            count = count + 1;
+            if (current == value.dart()) break;
+        }
+        list_neigh_position.insert(smpt.app_ctx.allocator, list_neigh_position.items.len - (count * 3), @floatFromInt(count)) catch unreachable;
+    }
+
+    const ssbo_neigh: *SSBO = &tnb_data.procedural_texturing_parameters.ssbo_neigh_selected_vertices;
+    ssbo_neigh.memoryAllocationForMapping(@intCast(@sizeOf(f64) * (list_neigh_position.items.len + 1)));
+
+    gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo_neigh.index);
+    defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
+
+    const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
+    const array_ssbo: [*]f64 = @ptrCast(@alignCast(ptr_ssbo));
+
+    array_ssbo[0] = @floatFromInt(info.vertex_set.cells.items.len);
+    for (list_neigh_position.items, 0..) |value, i| {
+        array_ssbo[i + 1] = value;
+    }
+
+    std.log.debug("Print liste de taille {d}\n", .{list_neigh_position.items.len + 1});
+    for (0..list_neigh_position.items.len + 1) |value| {
+        if ((value + 1) % 3 == 0 and value > 1) std.log.debug("==========================\n", .{});
+        std.log.debug("{d}\n", .{array_ssbo[value]});
+    }
+
+    _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
 }
 
 /// Part of the Module interface.
