@@ -186,7 +186,6 @@ pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, _: SurfaceMesh.Ce
     const info = smpt.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
     const vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = info.std_datas.vertex_position.?;
     var list_neigh_position: std.ArrayList(f64) = .empty;
-    if (info.vertex_set.cells.items.len == 0) return;
     defer list_neigh_position.deinit(smpt.app_ctx.allocator);
     for (info.vertex_set.cells.items) |value| {
         var current: u32 = value.dart();
@@ -222,11 +221,11 @@ pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, _: SurfaceMesh.Ce
         array_ssbo[i + 1] = value;
     }
 
-    std.log.debug("Print liste de taille {d}\n", .{list_neigh_position.items.len + 1});
-    for (0..list_neigh_position.items.len + 1) |value| {
-        if ((value + 1) % 3 == 0 and value > 1) std.log.debug("==========================\n", .{});
-        std.log.debug("{d}\n", .{array_ssbo[value]});
-    }
+    // std.log.debug("Print liste de taille {d}\n", .{list_neigh_position.items.len + 1});
+    // for (0..list_neigh_position.items.len + 1) |value| {
+    //     if ((value + 1) % 3 == 0 and value > 1) std.log.debug("==========================\n", .{});
+    //     std.log.debug("{d}\n", .{array_ssbo[value]});
+    // }
 
     _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
 }
