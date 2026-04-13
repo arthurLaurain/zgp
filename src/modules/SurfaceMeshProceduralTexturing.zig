@@ -379,6 +379,13 @@ pub fn rightPanel(m: *Module) void {
         }
         c.ImGui_PopID();
 
+        c.ImGui_Text("Compensating distorsions");
+        c.ImGui_PushID("Compensatind distorsions");
+        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compense_distorsions)) {
+            smpt.app_ctx.requestRedraw();
+        }
+        c.ImGui_PopID();
+
         c.ImGui_Text("Exemplar texture path");
         c.ImGui_PushID("Exemplar texture path");
         _ = c.ImGui_InputText("", &tnb_data.exemplar_texture_path[0], @sizeOf([128]u8), 0);

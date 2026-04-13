@@ -10,6 +10,7 @@ uniform float u_scale_distorsion;
 uniform bool u_visu_area_distorsion;
 uniform bool u_visu_angle_distorsion;
 uniform bool u_visu_arap_energy;
+uniform bool u_compense_distorsions;
 
 in vec3 frag_position;
 in vec3 v_frag_position;
@@ -213,7 +214,6 @@ void main() {
   vec3 n2 = (vec4(vertices_normal[id_vertices.y * 3], vertices_normal[id_vertices.y * 3 + 1], vertices_normal[id_vertices.y * 3 + 2],1.)).xyz;
   vec3 n3 = (vec4(vertices_normal[id_vertices.z * 3], vertices_normal[id_vertices.z * 3 + 1], vertices_normal[id_vertices.z * 3 + 2],1.)).xyz;
 
-  vec4 distorsions = vec4(triangles_distorsion[id_triangle]);
   // vec3 edge_ref1 = (vec4(edge_ref_ssbo[id_vertices.x * 3], edge_ref_ssbo[id_vertices.x * 3 + 1], edge_ref_ssbo[id_vertices.x * 3 + 2],1.)).xyz;
   // vec3 edge_ref2 = (vec4(edge_ref_ssbo[id_vertices.y * 3], edge_ref_ssbo[id_vertices.y * 3 + 1], edge_ref_ssbo[id_vertices.y * 3 + 2],1.)).xyz;
   // vec3 edge_ref3 = (vec4(edge_ref_ssbo[id_vertices.z * 3], edge_ref_ssbo[id_vertices.z * 3 + 1], edge_ref_ssbo[id_vertices.z * 3 + 2],1.)).xyz;
@@ -236,19 +236,42 @@ void main() {
   vec2 r2 = hash12(int(id_vertices.y));
   vec2 r3 = hash12(int(id_vertices.z));
 
-  vec3 c1 = texture(u_exemplar_texture, u1.xy + r1).xyz;
-  vec3 c2 = texture(u_exemplar_texture, u2.xy + r2).xyz;
-  vec3 c3 = texture(u_exemplar_texture, u3.xy + r3).xyz;
+
+  vec4 distorsions = vec4(triangles_distorsion[id_triangle]);
+  mat2 S; 
+  S[0] = vec2(distorsions.x, distorsions.y);
+  S[1] = vec2(distorsions.y, distorsions.z);
+  float arap_energy = distorsions.w * u_scale_distorsion;
+  float angle_distorsion = abs((distorsions.x - distorsions.z)) * u_scale_distorsion;
+  float area_distorsion = abs(1. - distorsions.x * distorsions.z) * u_scale_distorsion;
+
+  vec3 c1;
+  vec3 c2;
+  vec3 c3;
+  if(u_compense_distorsions)
+  {
+    c1 = texture(u_exemplar_texture, S * u1.xy + r1).xyz;
+    c2 = texture(u_exemplar_texture, S * u2.xy + r2).xyz;
+    c3 = texture(u_exemplar_texture, S * u3.xy + r3).xyz;
+  }
+  else
+  {
+    c1 = texture(u_exemplar_texture, u1.xy + r1).xyz;
+    c2 = texture(u_exemplar_texture, u2.xy + r2).xyz;
+    c3 = texture(u_exemplar_texture, u3.xy + r3).xyz;
+  }
+  
 
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
 
+
   if(u_visu_angle_distorsion)
-    f_color = vec4((abs((distorsions.x - distorsions.y))) * u_scale_distorsion, 0,0,1);
+    f_color = vec4(angle_distorsion,0,0,1);
   else if(u_visu_area_distorsion)
-    f_color = vec4((abs(1. - distorsions.x * distorsions.y)) * u_scale_distorsion,0,0,1);
+    f_color = vec4(area_distorsion,0,0,1);
   else if(u_visu_arap_energy)
-    f_color = vec4((distorsions.z * u_scale_distorsion), 0, 0, 1);
+    f_color = vec4(arap_energy, 0, 0, 1);
   else
     f_color = vec4(result);
 

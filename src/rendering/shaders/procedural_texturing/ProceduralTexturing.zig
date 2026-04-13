@@ -45,6 +45,7 @@ u_scale_distorsion_uniform: c_int = undefined,
 visu_area_distorsion_uniform: c_int = undefined,
 visu_angle_distorsion_uniform: c_int = undefined,
 visu_arap_energy_uniform: c_int = undefined,
+compense_distorsions_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 vector_attrib: VAO.VertexAttribInfo = undefined,
@@ -76,6 +77,7 @@ fn init() !ProceduralTexturing {
     pt.visu_area_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_area_distorsion");
     pt.visu_angle_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_angle_distorsion");
     pt.visu_arap_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_arap_energy");
+    pt.compense_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_compense_distorsions");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -118,6 +120,7 @@ pub const Parameters = struct {
     visu_area_distorsion: bool = false,
     visu_angle_distorsion: bool = false,
     visu_arap_energy: bool = false,
+    compense_distorsions: bool = false,
 
     pub fn init() Parameters {
         return .{
@@ -179,8 +182,7 @@ pub const Parameters = struct {
         return mat.squaredFroberniusNorm3d(F) + mat.squaredFroberniusNorm3d(R) - 2 * mat.trace3d(S);
     }
 
-    // return (σ_1, σ_2, ψ_as-rigid-as-possible)
-    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f) Vec3d {
+    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, R: *Mat3d, S: *Mat3d) f64 {
         const x0: Vec3f = vbo_position[id_triangle[0]];
         const x1: Vec3f = vbo_position[id_triangle[1]];
         const x2: Vec3f = vbo_position[id_triangle[2]];
@@ -217,13 +219,13 @@ pub const Parameters = struct {
         eigen.computeJacobiSVD(&F, &decompo_U, &decompo_S, &decompo_V);
 
         const V_transpose: Mat3d = mat.transpose3d(decompo_V);
-        const S: Mat3d = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
-        const R: Mat3d = mat.mul3d(decompo_U, V_transpose);
-        const energy_arap: f64 = computeAsRigidAsPossibleEnergy(F, R, S);
+        S.* = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
+        R.* = mat.mul3d(decompo_U, V_transpose);
+        const energy_arap: f64 = computeAsRigidAsPossibleEnergy(F, R.*, S.*);
 
         // std.log.debug("Aire: {d} Angle: {d} Energie {d}", .{ S[0][0] * S[1][1], S[0][0] / S[1][1], energy_arap });
 
-        return .{ S[0][0], S[1][1], energy_arap };
+        return energy_arap;
     }
 
     pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) void {
@@ -257,12 +259,15 @@ pub const Parameters = struct {
                 array_ibo[tri_idx * 3 + 2],
             };
 
-            const r: Vec3d = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal);
+            var R: Mat3d = mat.identity3d;
+            var S: Mat3d = mat.identity3d;
+            const arap_energy: f64 = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &R, &S);
 
-            array_ssbo[i] = r[0];
-            array_ssbo[i + 1] = r[1];
-            array_ssbo[i + 2] = r[2];
-            array_ssbo[i + 3] = 1;
+            // We don't need to send S[1][0] to the GPU because S is a 2x2 symmetric matrix
+            array_ssbo[i] = S[0][0];
+            array_ssbo[i + 1] = S[0][1];
+            array_ssbo[i + 2] = S[1][1];
+            array_ssbo[i + 3] = arap_energy;
         }
 
         _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
@@ -302,6 +307,7 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.visu_angle_distorsion_uniform, @intFromBool(p.visu_angle_distorsion));
         gl.Uniform1i(p.shader.visu_area_distorsion_uniform, @intFromBool(p.visu_area_distorsion));
         gl.Uniform1i(p.shader.visu_arap_energy_uniform, @intFromBool(p.visu_arap_energy));
+        gl.Uniform1i(p.shader.compense_distorsions_uniform, @intFromBool(p.compense_distorsions));
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
