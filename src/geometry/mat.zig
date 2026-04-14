@@ -3,6 +3,7 @@ const math = std.math;
 const assert = std.debug.assert;
 
 const vec = @import("vec.zig");
+const Vec2d = vec.Vec2d;
 const Vec3f = vec.Vec3f;
 const Vec4f = vec.Vec4f;
 const Vec3d = vec.Vec3d;
@@ -10,10 +11,16 @@ const Vec4d = vec.Vec4d;
 
 /// 4x4 matrix
 /// All operations consider the matrix to be in column-major order.
+pub const Mat2d = [2]Vec2d;
 pub const Mat3f = [3]Vec3f;
 pub const Mat4f = [4]Vec4f;
 pub const Mat3d = [3]Vec3d;
 pub const Mat4d = [4]Vec4d;
+
+pub const identity2d: Mat2d = .{
+    .{ 1.0, 0.0 },
+    .{ 0.0, 1.0 },
+};
 
 pub const identity3f: Mat3f = .{
     .{ 1.0, 0.0, 0.0 },
@@ -103,7 +110,19 @@ pub fn transpose3d(m: [3][3]f64) [3][3]f64 {
     return result;
 }
 
-pub fn printMat3d(m: [3][3]f64) void {
+pub fn printMat2d(m: Mat2d) void {
+    std.debug.print("-----------------\n", .{});
+    for (m) |row| {
+        std.debug.print("( ", .{});
+        for (row) |val| {
+            std.debug.print("{:.6} ", .{val});
+        }
+        std.debug.print(")\n", .{});
+    }
+    std.debug.print("-----------------\n", .{});
+}
+
+pub fn printMat3d(m: Mat3d) void {
     std.debug.print("-----------------\n", .{});
     for (m) |row| {
         std.debug.print("( ", .{});

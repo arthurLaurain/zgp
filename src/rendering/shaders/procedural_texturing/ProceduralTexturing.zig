@@ -15,10 +15,12 @@ const SSBO = @import("../../SSBO.zig");
 const vec = @import("../../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 const Vec2f = vec.Vec2f;
+const Vec2d = vec.Vec2d;
 const Vec3d = vec.Vec3d;
 const Vec4f = vec.Vec4f;
 
 const mat = @import("../../../geometry/mat.zig");
+const Mat2d = mat.Mat2d;
 const Mat3d = mat.Mat3d;
 const Mat4d = mat.Mat4d;
 
@@ -182,50 +184,73 @@ pub const Parameters = struct {
         return mat.squaredFroberniusNorm3d(F) + mat.squaredFroberniusNorm3d(R) - 2 * mat.trace3d(S);
     }
 
-    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, R: *Mat3d, S: *Mat3d) f64 {
-        const x0: Vec3f = vbo_position[id_triangle[0]];
-        const x1: Vec3f = vbo_position[id_triangle[1]];
-        const x2: Vec3f = vbo_position[id_triangle[2]];
+    pub fn computeLogSPD(M: Mat3d) Mat2d {
+        var out: Mat2d = mat.identity2d;
+        const M_2d: Mat2d = .{ .{ M[0][0], M[0][1] }, .{ M[1][0], M[1][1] } };
+        eigen.computeLogOnEigenValues2d(&M_2d, &out);
+        // mat.printMat2d(M);
+        // mat.printMat2d(out);
+        return mat.identity2d;
+    }
 
+    pub fn computeF(x0: Vec3f, x1: Vec3f, x2: Vec3f, n0: Vec3f) Mat3d {
         const x0d: Vec3d = .{ @floatCast(x0[0]), @floatCast(x0[1]), @floatCast(x0[2]) };
         const x1d: Vec3d = .{ @floatCast(x1[0]), @floatCast(x1[1]), @floatCast(x1[2]) };
         const x2d: Vec3d = .{ @floatCast(x2[0]), @floatCast(x2[1]), @floatCast(x2[2]) };
-
-        const x01: Vec3d = vec.sub3d(x1d, x0d);
-        const x02: Vec3d = vec.sub3d(x2d, x0d);
-
-        const n0: Vec3f = vbo_normal[id_triangle[0]];
-        // const n1: Vec3f = vbo_normal[id_triangle[1] * 3];
-        // const n2: Vec3f = vbo_normal[id_triangle[2] * 3];
-
         const n0d: Vec3d = .{ @floatCast(n0[0]), @floatCast(n0[1]), @floatCast(n0[2]) };
 
-        // computing distorsion for tiling based on p0
         const uv01: Vec2f = getTexCoordFromVertexPlane(x1, x0, n0);
         const uv02: Vec2f = getTexCoordFromVertexPlane(x2, x0, n0);
-
         const uv01_extended: Vec3d = .{ uv01[0], uv01[1], 0 };
         const uv02_extended: Vec3d = .{ uv02[0], uv02[1], 0 };
+        const x01: Vec3d = vec.sub3d(x1d, x0d);
+        const x02: Vec3d = vec.sub3d(x2d, x0d);
 
         const X: Mat3d = .{ x01, x02, n0d };
         const U: Mat3d = .{ uv01_extended, uv02_extended, Vec3d{ 0, 0, 1 } };
         const U_1 = eigen.computeInverse3d(U).?;
-        const F: Mat3d = mat.mul3d(X, U_1);
+        return mat.mul3d(X, U_1);
+    }
+
+    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, S0: *Mat2d, S1: *Mat2d, S2: *Mat2d) Vec3d {
+        const x0: Vec3f = vbo_position[id_triangle[0]];
+        const x1: Vec3f = vbo_position[id_triangle[1]];
+        const x2: Vec3f = vbo_position[id_triangle[2]];
+
+        const n0: Vec3f = vbo_normal[id_triangle[0]];
+        const n1: Vec3f = vbo_normal[id_triangle[1]];
+        const n2: Vec3f = vbo_normal[id_triangle[2]];
+
+        const F0 = computeF(x0, x1, x2, n0);
+        const F1 = computeF(x1, x2, x0, n1);
+        const F2 = computeF(x2, x0, x1, n2);
 
         var decompo_U: Mat3d = undefined;
         var decompo_S: Mat3d = undefined;
         var decompo_V: Mat3d = undefined;
 
-        eigen.computeJacobiSVD(&F, &decompo_U, &decompo_S, &decompo_V);
+        eigen.computeJacobiSVD(&F0, &decompo_U, &decompo_S, &decompo_V);
+        var V_transpose: Mat3d = mat.transpose3d(decompo_V);
+        const S0_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
+        const R0 = mat.mul3d(decompo_U, V_transpose);
+        S0.* = computeLogSPD(S0_3D);
 
-        const V_transpose: Mat3d = mat.transpose3d(decompo_V);
-        S.* = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
-        R.* = mat.mul3d(decompo_U, V_transpose);
-        const energy_arap: f64 = computeAsRigidAsPossibleEnergy(F, R.*, S.*);
+        eigen.computeJacobiSVD(&F1, &decompo_U, &decompo_S, &decompo_V);
+        V_transpose = mat.transpose3d(decompo_V);
+        const S1_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
+        const R1 = mat.mul3d(decompo_U, V_transpose);
+        S1.* = computeLogSPD(S1_3D);
+
+        eigen.computeJacobiSVD(&F2, &decompo_U, &decompo_S, &decompo_V);
+        V_transpose = mat.transpose3d(decompo_V);
+        const S2_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
+        const R2 = mat.mul3d(decompo_U, V_transpose);
+        S2.* = computeLogSPD(S2_3D);
+
+        return .{ computeAsRigidAsPossibleEnergy(F0, R0, S0_3D), computeAsRigidAsPossibleEnergy(F1, R1, S1_3D), computeAsRigidAsPossibleEnergy(F2, R2, S2_3D) };
 
         // std.log.debug("Aire: {d} Angle: {d} Energie {d}", .{ S[0][0] * S[1][1], S[0][0] / S[1][1], energy_arap });
 
-        return energy_arap;
     }
 
     pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) void {
@@ -243,15 +268,15 @@ pub const Parameters = struct {
 
         const nb_triangle: usize = ibo.nb_indices / 3;
 
-        ssbo.memoryAllocationForMapping(@intCast(@sizeOf(f64) * 4 * nb_triangle));
+        ssbo.memoryAllocationForMapping(@intCast((@sizeOf(f64) * 12) * nb_triangle));
 
         gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
         const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
         const array_ssbo: [*]f64 = @ptrCast(@alignCast(ptr_ssbo));
 
         var i: usize = 0;
-        while (i < nb_triangle * 4) : (i += 4) {
-            const tri_idx = i / 4;
+        while (i < nb_triangle * 12) : (i += 12) {
+            const tri_idx = i / 12;
 
             const id_triangle: [3]u32 = .{
                 array_ibo[tri_idx * 3 + 0],
@@ -259,15 +284,24 @@ pub const Parameters = struct {
                 array_ibo[tri_idx * 3 + 2],
             };
 
-            var R: Mat3d = mat.identity3d;
-            var S: Mat3d = mat.identity3d;
-            const arap_energy: f64 = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &R, &S);
+            var S0: Mat2d = mat.identity2d;
+            var S1: Mat2d = mat.identity2d;
+            var S2: Mat2d = mat.identity2d;
+            const arap_energy: Vec3d = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &S0, &S1, &S2);
 
-            // We don't need to send S[1][0] to the GPU because S is a 2x2 symmetric matrix
-            array_ssbo[i] = S[0][0];
-            array_ssbo[i + 1] = S[0][1];
-            array_ssbo[i + 2] = S[1][1];
-            array_ssbo[i + 3] = arap_energy;
+            // We don't need to send S_i[1][0] to the GPU because S_i is a 2x2 symmetric matrix
+            array_ssbo[i] = S0[0][0];
+            array_ssbo[i + 1] = S0[0][1];
+            array_ssbo[i + 2] = S0[1][1];
+            array_ssbo[i + 3] = arap_energy[0];
+            array_ssbo[i + 4] = S1[0][0];
+            array_ssbo[i + 5] = S1[0][1];
+            array_ssbo[i + 6] = S1[1][1];
+            array_ssbo[i + 7] = arap_energy[1];
+            array_ssbo[i + 8] = S2[0][0];
+            array_ssbo[i + 9] = S2[0][1];
+            array_ssbo[i + 10] = S2[1][1];
+            array_ssbo[i + 11] = arap_energy[2];
         }
 
         _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);

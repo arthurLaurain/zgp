@@ -7,6 +7,7 @@ const Vec4d = vec.Vec4d;
 const mat = @import("mat.zig");
 const Mat3d = mat.Mat3d;
 const Mat4d = mat.Mat4d;
+const Mat2d = mat.Mat2d;
 
 pub const Index = i32;
 pub const Scalar = f64;
@@ -31,6 +32,9 @@ pub fn computeInverse3d(m: Mat3d) ?Mat3d {
 
 pub fn computeEigenValuesAndEigenVectors3d(m: *const Mat3d, eigenvectors: *Mat3d, eigenvalues: *Mat3d) void {
     c.computeEigenValuesAndEigenVectors3d(@ptrCast(m), @ptrCast(eigenvectors), @ptrCast(eigenvalues));
+}
+pub fn computeLogOnEigenValues2d(m: *const Mat2d, out: *Mat2d) void {
+    c.computeLogOnEigenValues2d(@ptrCast(m), @ptrCast(out));
 }
 
 pub fn solveSymmetricLinearSystem4d(A: Mat4d, b: Vec4d) Vec4d {
