@@ -18,8 +18,8 @@
         },
         .ceigen = .{
             // .path = "../ceigen",
-            .url = "git+https://github.com/arthurLaurain/ceigen#994e563bedc058e6ac3c383f83b10825bdec7ab8",
-            .hash = "ceigen-0.0.0-nikIKaecBgHuztn5nmByuSl9WRG66AAaJ4jMq1URuarU",
+            .url = "git+https://github.com/arthurLaurain/ceigen#cbf790de46c7a12bab1e88e4a9ac568b3b2ebef1",
+            .hash = "ceigen-0.0.0-nikIKfqhBgFY5qtFUTzqlba566wbpDTWpDM5RP8cax_Z",
         },
         .clibacc = .{
             // .path = "../clibacc",

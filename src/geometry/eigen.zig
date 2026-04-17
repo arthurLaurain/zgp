@@ -12,7 +12,11 @@ const Mat2d = mat.Mat2d;
 pub const Index = i32;
 pub const Scalar = f64;
 
-pub fn computeJacobiSVD(M: *const Mat3d, U: *Mat3d, S: *Mat3d, V: *Mat3d) void {
+pub fn computeJacobiSVD2D(M: *const Mat2d, U: *Mat2d, S: *Mat2d, V: *Mat2d) void {
+    c.computeJacobiSVD2d(@ptrCast(M), @ptrCast(U), @ptrCast(S), @ptrCast(V));
+}
+
+pub fn computeJacobiSVD3D(M: *const Mat3d, U: *Mat3d, S: *Mat3d, V: *Mat3d) void {
     c.computeJacobiSVD3d(@ptrCast(M), @ptrCast(U), @ptrCast(S), @ptrCast(V));
 }
 
@@ -28,6 +32,10 @@ pub fn computeInverse3d(m: Mat3d) ?Mat3d {
     var invertible = false;
     c.computeInverseWithCheck3d(@ptrCast(&m), @ptrCast(&inv), &invertible);
     return if (invertible) inv else null;
+}
+
+pub fn computeEigenValuesAndEigenVectors2d(m: *const Mat2d, eigenvectors: *Mat2d, eigenvalues: *Mat2d) void {
+    c.computeEigenValuesAndEigenVectors2d(@ptrCast(m), @ptrCast(eigenvectors), @ptrCast(eigenvalues));
 }
 
 pub fn computeEigenValuesAndEigenVectors3d(m: *const Mat3d, eigenvectors: *Mat3d, eigenvalues: *Mat3d) void {

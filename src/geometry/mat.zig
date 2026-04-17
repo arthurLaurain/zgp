@@ -51,6 +51,10 @@ pub const zero4f: Mat4f = .{ vec.zero4f, vec.zero4f, vec.zero4f, vec.zero4f };
 pub const zero3d: Mat3d = .{ vec.zero3d, vec.zero3d, vec.zero3d };
 pub const zero4d: Mat4d = .{ vec.zero4d, vec.zero4d, vec.zero4d, vec.zero4d };
 
+pub fn squaredFroberniusNorm2d(m: Mat2d) f64 {
+    return m[0][0] * m[0][0] + m[0][1] * m[0][1] + m[1][0] * m[1][0] + m[1][1] * m[1][1];
+}
+
 pub fn squaredFroberniusNorm3d(m: Mat3d) f64 {
     var n: f64 = 0;
     for (0..2) |c| {
@@ -59,6 +63,10 @@ pub fn squaredFroberniusNorm3d(m: Mat3d) f64 {
         }
     }
     return n;
+}
+
+pub fn trace2d(m: Mat2d) f64 {
+    return m[0][0] + m[1][1];
 }
 
 pub fn trace3d(m: Mat3d) f64 {
@@ -96,6 +104,20 @@ pub fn mat4dFromMat4f(m: Mat4f) Mat4d {
     };
 }
 
+pub fn transpose2d(m: [2][2]f64) [2][2]f64 {
+    var result: [2][2]f64 = undefined;
+
+    var i: usize = 0;
+    while (i < 2) : (i += 1) {
+        var j: usize = 0;
+        while (j < 2) : (j += 1) {
+            result[i][j] = m[j][i];
+        }
+    }
+
+    return result;
+}
+
 pub fn transpose3d(m: [3][3]f64) [3][3]f64 {
     var result: [3][3]f64 = undefined;
 
@@ -110,27 +132,19 @@ pub fn transpose3d(m: [3][3]f64) [3][3]f64 {
     return result;
 }
 
-pub fn printMat2d(m: Mat2d) void {
+pub fn printMatrix(m: anytype) void {
     std.debug.print("-----------------\n", .{});
-    for (m) |row| {
-        std.debug.print("( ", .{});
-        for (row) |val| {
-            std.debug.print("{:.6} ", .{val});
-        }
-        std.debug.print(")\n", .{});
-    }
-    std.debug.print("-----------------\n", .{});
-}
 
-pub fn printMat3d(m: Mat3d) void {
-    std.debug.print("-----------------\n", .{});
     for (m) |row| {
         std.debug.print("( ", .{});
+
         for (row) |val| {
             std.debug.print("{:.6} ", .{val});
         }
+
         std.debug.print(")\n", .{});
     }
+
     std.debug.print("-----------------\n", .{});
 }
 
@@ -143,6 +157,20 @@ pub fn mul3f(a: Mat3f, b: Mat3f) Mat3f {
     }
     return result;
 }
+pub fn mul2d(a: Mat2d, b: Mat2d) Mat2d {
+    var result: Mat2d = undefined;
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            result[i][j] =
+                a[0][j] * b[i][0] +
+                a[1][j] * b[i][1];
+        }
+    }
+
+    return result;
+}
+
 pub fn mul3d(a: Mat3d, b: Mat3d) Mat3d {
     var result: Mat3d = undefined;
     for (0..2) |i| {

@@ -37,9 +37,16 @@ layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
   float vertices_normal[];
 };
 
+struct SSBO_distorsion
+{
+  dmat2 eigenvectors[3];
+  dvec2 eigenvalues[3];
+  dvec4 arap_energy;
+};
+
 layout(std430, binding = 4) readonly buffer ssbo_triangles_distorsion
 {
-  double triangles_distorsion[];
+  SSBO_distorsion distorsions[];
 };
 
 layout(std430, binding = 5) readonly buffer ssbo_neigh_selected_vertices
@@ -229,6 +236,18 @@ mat2 expSPD(mat2 M)
     return U * D * transpose(U);
 }
 
+void computeInterpolationBetweenEigenElements(mat2 eigenvectors0, mat2 eigenvalues0, mat2 eigenvectors1, mat2 eigenvalues1, mat2 eigenvectors2, mat2 eigenvalues2, dvec3 bary, out mat2 eigenvectors_S, out mat2 eigenvalues_S)
+{
+  eigenvectors_S = mat2(
+  eigenvectors0[0] * bary.x + eigenvectors1[0] * bary.y + eigenvectors2[0] * bary.z,
+  eigenvectors0[1] * bary.x + eigenvectors1[1] * bary.y + eigenvectors2[1] * bary.z
+  );
+
+
+  eigenvalues_S = mat2(vec2(eigenvalues0[0][0] * bary.x + eigenvalues1[0][0] * bary.y + eigenvalues2[0][0] * bary.z, 0), vec2(0, eigenvalues0[1][1] * bary.x + eigenvalues1[1][1] * bary.y + eigenvalues2[1][1] * bary.z));
+}
+
+
 mat2 computeDistorsionMatrix(dvec3 S0, dvec3 S1, dvec3 S2, dvec3 barycentric)
 {
   dmat2 m0 = dmat2(dvec2(S0.x, S0.y), dvec2(S0.y, S0.z)); 
@@ -272,27 +291,59 @@ void main() {
 
   dvec3 bary = getBarycentric(dvec3(frag_position), p1, p2, p3);
 
-  double w1 = bary.x;
-  double w2 = bary.y;
-  double w3 = bary.z;
 
   vec2 r1 = hash12(int(id_vertices.x));
   vec2 r2 = hash12(int(id_vertices.y));
   vec2 r3 = hash12(int(id_vertices.z));
 
-  dvec4 T0 = dvec4(triangles_distorsion[id_triangle * 12], triangles_distorsion[id_triangle * 12 + 1], triangles_distorsion[id_triangle * 12 + 2], triangles_distorsion[id_triangle * 12 + 3]);
-  dvec4 T1 = dvec4(triangles_distorsion[id_triangle * 12 + 4], triangles_distorsion[id_triangle * 12 + 5], triangles_distorsion[id_triangle * 12 + 6], triangles_distorsion[id_triangle * 12 + 7]);
-  dvec4 T2 = dvec4(triangles_distorsion[id_triangle * 12 + 8], triangles_distorsion[id_triangle * 12 + 9], triangles_distorsion[id_triangle * 12 + 10], triangles_distorsion[id_triangle * 12 + 11]);
+  // dvec4 T0 = dvec4(triangles_distorsion[id_triangle * 12], triangles_distorsion[id_triangle * 12 + 1], triangles_distorsion[id_triangle * 12 + 2], triangles_distorsion[id_triangle * 12 + 3]);
+  // dvec4 T1 = dvec4(triangles_distorsion[id_triangle * 12 + 4], triangles_distorsion[id_triangle * 12 + 5], triangles_distorsion[id_triangle * 12 + 6], triangles_distorsion[id_triangle * 12 + 7]);
+  // dvec4 T2 = dvec4(triangles_distorsion[id_triangle * 12 + 8], triangles_distorsion[id_triangle * 12 + 9], triangles_distorsion[id_triangle * 12 + 10], triangles_distorsion[id_triangle * 12 + 11]);
 
-  mat2 S = computeDistorsionMatrix(T0.xyz, T1.xyz, T2.xyz, bary);
+  // mat2 S = computeDistorsionMatrix(T0.xyz, T1.xyz, T2.xyz, bary);
 
-  vec3 arap_energy = vec3(T0.w, T1.w, T2.w) * u_scale_distorsion;
+  // vec3 arap_energy = vec3(T0.w, T1.w, T2.w) * u_scale_distorsion;
   // float angle_distorsion = abs((distorsions.x - distorsions.z)) * u_scale_distorsion;
   // float area_distorsion = abs(1. - distorsions.x * distorsions.z) * u_scale_distorsion;
 
   vec3 c1;
   vec3 c2;
   vec3 c3;
+
+  double w1 = bary.x;
+  double w2 = bary.y;
+  double w3 = bary.z;
+
+  SSBO_distorsion distorsion = distorsions[id_triangle];
+
+  mat2 eigenvectors0 = mat2(distorsion.eigenvectors[0]);
+
+  mat2 eigenvectors1 = mat2(distorsion.eigenvectors[1]);
+
+  mat2 eigenvectors2 = mat2(distorsion.eigenvectors[2]);
+
+  mat2 eigenvalues0 = mat2(
+    vec2(distorsion.eigenvalues[0].x, 0.0),
+    vec2(0.0, distorsion.eigenvalues[0].y)
+  );
+
+  mat2 eigenvalues1 = mat2(
+      vec2(distorsion.eigenvalues[1].x, 0.0),
+      vec2(0.0, distorsion.eigenvalues[1].y)
+  );
+
+  mat2 eigenvalues2 = mat2(
+      vec2(distorsion.eigenvalues[2].x, 0.0),
+      vec2(0.0, distorsion.eigenvalues[2].y)
+  );
+
+  mat2 eigenvectors_S = mat2(0.);
+  mat2 eigenvalues_S = mat2(0.);
+
+  computeInterpolationBetweenEigenElements(eigenvectors0, eigenvalues0, eigenvectors1, eigenvalues1, eigenvectors2, eigenvalues2, bary, eigenvectors_S, eigenvalues_S);
+
+  mat2 S = eigenvectors_S * eigenvalues_S * transpose(eigenvectors_S);
+
   if(u_compense_distorsions)
   {
     c1 = texture(u_exemplar_texture, S * u1.xy + r1).xyz;
@@ -311,10 +362,18 @@ void main() {
   //   f_color = vec4(angle_distorsion,0,0,1);
   // else if(u_visu_area_distorsion)
   //   f_color = vec4(area_distorsion,0,0,1);
-  // else if(u_visu_arap_energy)
-  //   f_color = vec4(arap_energy, 1);
-  // else
-  f_color = vec4(result);
+  if(u_visu_arap_energy)
+  {
+    dvec3 arap = dvec3(
+        double(distorsion.arap_energy.x),
+        double(distorsion.arap_energy.y),
+        double(distorsion.arap_energy.z)
+    );
+    double energy = w1 * arap.x + w2 * arap.y + w3 * arap.z;
+    f_color = vec4(float(energy) * u_scale_distorsion, 0., 0., 1.);
+  }
+  else
+    f_color = vec4(result);
 
   f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
 

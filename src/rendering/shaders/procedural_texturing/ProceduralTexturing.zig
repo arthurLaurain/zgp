@@ -18,10 +18,12 @@ const Vec2f = vec.Vec2f;
 const Vec2d = vec.Vec2d;
 const Vec3d = vec.Vec3d;
 const Vec4f = vec.Vec4f;
+const Vec4d = vec.Vec4d;
 
 const mat = @import("../../../geometry/mat.zig");
 const Mat2d = mat.Mat2d;
 const Mat3d = mat.Mat3d;
+const Mat3f = mat.Mat3f;
 const Mat4d = mat.Mat4d;
 
 var global_instance: ProceduralTexturing = undefined;
@@ -180,8 +182,8 @@ pub const Parameters = struct {
         return uv;
     }
 
-    pub fn computeAsRigidAsPossibleEnergy(F: Mat3d, R: Mat3d, S: Mat3d) f64 {
-        return mat.squaredFroberniusNorm3d(F) + mat.squaredFroberniusNorm3d(R) - 2 * mat.trace3d(S);
+    pub fn computeAsRigidAsPossibleEnergy(F: Mat2d, R: Mat2d, S: Mat2d) f64 {
+        return mat.squaredFroberniusNorm2d(F) + mat.squaredFroberniusNorm2d(R) - 2 * mat.trace2d(S);
     }
 
     pub fn computeLogSPD(M: Mat3d) Mat2d {
@@ -212,10 +214,26 @@ pub const Parameters = struct {
         return mat.mul3d(X, U_1);
     }
 
-    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, S0: *Mat2d, S1: *Mat2d, S2: *Mat2d) Vec3d {
+    pub fn projectDistorsionOntoTriangle(F: Mat3d, x0: Vec3d, x1: Vec3d, x2: Vec3d) Mat2d {
+        const t1 = vec.normalized3d(vec.sub3d(x1, x0));
+        const n = vec.normalized3d(vec.cross3d(t1, vec.sub3d(x2, x0)));
+        const t2 = vec.cross3d(n, t1);
+        const T: Mat3d = .{ t1, t2, n };
+        const TT: Mat3d = mat.transpose3d(T);
+        const F_local = mat.mul3d(TT, mat.mul3d(F, T));
+        return .{ .{ F_local[0][0], F_local[0][1] }, .{ F_local[1][0], F_local[1][1] } };
+    }
+
+    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, eigenvectors: *[3]Mat2d, eigenvalues: *[3]Mat2d) Vec3d {
+
+        // Compute triangle deformation
         const x0: Vec3f = vbo_position[id_triangle[0]];
         const x1: Vec3f = vbo_position[id_triangle[1]];
         const x2: Vec3f = vbo_position[id_triangle[2]];
+
+        const x0d: Vec3d = .{ @floatCast(x0[0]), @floatCast(x0[1]), @floatCast(x0[2]) };
+        const x1d: Vec3d = .{ @floatCast(x1[0]), @floatCast(x1[1]), @floatCast(x1[2]) };
+        const x2d: Vec3d = .{ @floatCast(x2[0]), @floatCast(x2[1]), @floatCast(x2[2]) };
 
         const n0: Vec3f = vbo_normal[id_triangle[0]];
         const n1: Vec3f = vbo_normal[id_triangle[1]];
@@ -225,29 +243,71 @@ pub const Parameters = struct {
         const F1 = computeF(x1, x2, x0, n1);
         const F2 = computeF(x2, x0, x1, n2);
 
-        var decompo_U: Mat3d = undefined;
-        var decompo_S: Mat3d = undefined;
-        var decompo_V: Mat3d = undefined;
+        // Project each deformation gradient onto triangle basis
+        const F0_2D = projectDistorsionOntoTriangle(F0, x0d, x1d, x2d);
+        const F1_2D = projectDistorsionOntoTriangle(F1, x1d, x2d, x0d);
+        const F2_2D = projectDistorsionOntoTriangle(F2, x2d, x0d, x1d);
 
-        eigen.computeJacobiSVD(&F0, &decompo_U, &decompo_S, &decompo_V);
-        var V_transpose: Mat3d = mat.transpose3d(decompo_V);
-        const S0_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
-        const R0 = mat.mul3d(decompo_U, V_transpose);
-        S0.* = computeLogSPD(S0_3D);
+        // Compute polar decomposition for each deformation gradient
+        var decompo_U: Mat2d = undefined;
+        var decompo_S: Mat2d = undefined;
+        var decompo_V: Mat2d = undefined;
 
-        eigen.computeJacobiSVD(&F1, &decompo_U, &decompo_S, &decompo_V);
-        V_transpose = mat.transpose3d(decompo_V);
-        const S1_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
-        const R1 = mat.mul3d(decompo_U, V_transpose);
-        S1.* = computeLogSPD(S1_3D);
+        // F0
+        eigen.computeJacobiSVD2D(&F0_2D, &decompo_U, &decompo_S, &decompo_V);
+        var V_transpose: Mat2d = mat.transpose2d(decompo_V);
+        const R0 = mat.mul2d(decompo_U, V_transpose);
+        const S0 = mat.mul2d(decompo_V, mat.mul2d(decompo_S, V_transpose));
 
-        eigen.computeJacobiSVD(&F2, &decompo_U, &decompo_S, &decompo_V);
-        V_transpose = mat.transpose3d(decompo_V);
-        const S2_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
-        const R2 = mat.mul3d(decompo_U, V_transpose);
-        S2.* = computeLogSPD(S2_3D);
+        // F1
+        eigen.computeJacobiSVD2D(&F1_2D, &decompo_U, &decompo_S, &decompo_V);
+        V_transpose = mat.transpose2d(decompo_V);
+        const R1 = mat.mul2d(decompo_U, V_transpose);
+        const S1 = mat.mul2d(decompo_V, mat.mul2d(decompo_S, V_transpose));
 
-        return .{ computeAsRigidAsPossibleEnergy(F0, R0, S0_3D), computeAsRigidAsPossibleEnergy(F1, R1, S1_3D), computeAsRigidAsPossibleEnergy(F2, R2, S2_3D) };
+        // F2
+        eigen.computeJacobiSVD2D(&F2_2D, &decompo_U, &decompo_S, &decompo_V);
+        V_transpose = mat.transpose2d(decompo_V);
+        const R2 = mat.mul2d(decompo_U, V_transpose);
+        const S2 = mat.mul2d(decompo_V, mat.mul2d(decompo_S, V_transpose));
+
+        // Compute eigenvectors and eigenvalues for each deformation gradient
+        eigen.computeEigenValuesAndEigenVectors2d(&S0, &eigenvectors.*[0], &eigenvalues.*[0]);
+        eigen.computeEigenValuesAndEigenVectors2d(&S1, &eigenvectors.*[1], &eigenvalues.*[1]);
+        eigen.computeEigenValuesAndEigenVectors2d(&S2, &eigenvectors.*[2], &eigenvalues.*[2]);
+
+        return .{ computeAsRigidAsPossibleEnergy(F0_2D, R0, S0), computeAsRigidAsPossibleEnergy(F1_2D, R1, S1), computeAsRigidAsPossibleEnergy(F2_2D, R2, S2) };
+
+        // eigen.computeJacobiSVD3D(&F0, &decompo_U, &decompo_S, &decompo_V);
+        // var V_transpose: Mat3d = mat.transpose3d(decompo_V);
+        // const S0_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
+        // const R0 = mat.mul3d(decompo_U, V_transpose);
+        // S0.* = computeLogSPD(S0_3D);
+
+        // eigen.computeJacobiSVD3D(&F1, &decompo_U, &decompo_S, &decompo_V);
+        // V_transpose = mat.transpose3d(decompo_V);
+        // const S1_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
+        // const R1 = mat.mul3d(decompo_U, V_transpose);
+        // S1.* = computeLogSPD(S1_3D);
+
+        // eigen.computeJacobiSVD3D(&F2, &decompo_U, &decompo_S, &decompo_V);
+        // V_transpose = mat.transpose3d(decompo_V);
+        // const S2_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
+        // const R2 = mat.mul3d(decompo_U, V_transpose);
+        // S2.* = computeLogSPD(S2_3D);
+
+        // var eigenvectors: Mat3d = undefined;
+        // var eigenvalues: Mat3d = undefined;
+        // eigen.computeEigenValuesAndEigenVectors3d(&S0_3D, &eigenvectors, &eigenvalues);
+
+        // std.log.debug("Oui\n", .{});
+        // mat.printMat3d(F0);
+        // mat.printMat3d(R0);
+        // mat.printMat3d(S0_3D);
+        // mat.printMat3d(eigenvectors);
+        // mat.printMat3d(eigenvalues);
+
+        // return .{ computeAsRigidAsPossibleEnergy(F0, R0, S0_3D), computeAsRigidAsPossibleEnergy(F1, R1, S1_3D), computeAsRigidAsPossibleEnergy(F2, R2, S2_3D) };
 
         // std.log.debug("Aire: {d} Angle: {d} Energie {d}", .{ S[0][0] * S[1][1], S[0][0] / S[1][1], energy_arap });
 
@@ -268,15 +328,20 @@ pub const Parameters = struct {
 
         const nb_triangle: usize = ibo.nb_indices / 3;
 
-        ssbo.memoryAllocationForMapping(@intCast((@sizeOf(f64) * 12) * nb_triangle));
+        // ssbo.memoryAllocationForMapping(@intCast((@sizeOf(f64) * 12) * nb_triangle));
+
+        const SSBO_structure = struct { eigenvectors: [3]Mat2d, eigenvalues: [3]Vec2d, arap_energy: Vec4d };
+
+        // Memory allocation for 3 eigenvectors matrices + 3 eigenvalues diagonales matrices + ARAP energy
+        ssbo.memoryAllocationForMapping(@intCast(nb_triangle * (@sizeOf(SSBO_structure))));
 
         gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
         const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
-        const array_ssbo: [*]f64 = @ptrCast(@alignCast(ptr_ssbo));
+        const array_ssbo: [*]SSBO_structure = @ptrCast(@alignCast(ptr_ssbo));
 
         var i: usize = 0;
-        while (i < nb_triangle * 12) : (i += 12) {
-            const tri_idx = i / 12;
+        while (i < nb_triangle) : (i += 1) {
+            const tri_idx = i;
 
             const id_triangle: [3]u32 = .{
                 array_ibo[tri_idx * 3 + 0],
@@ -284,34 +349,48 @@ pub const Parameters = struct {
                 array_ibo[tri_idx * 3 + 2],
             };
 
-            var S0: Mat2d = mat.identity2d;
-            var S1: Mat2d = mat.identity2d;
-            var S2: Mat2d = mat.identity2d;
-            const arap_energy: Vec3d = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &S0, &S1, &S2);
+            var eigenvectors: [3]Mat2d = undefined;
+            var eigenvalues_mat: [3]Mat2d = undefined;
+            const arap_energy: Vec3d = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &eigenvectors, &eigenvalues_mat);
 
-            // We don't need to send S_i[1][0] to the GPU because S_i is a 2x2 symmetric matrix
-            array_ssbo[i] = S0[0][0];
-            array_ssbo[i + 1] = S0[0][1];
-            array_ssbo[i + 2] = S0[1][1];
-            array_ssbo[i + 3] = arap_energy[0];
-            array_ssbo[i + 4] = S1[0][0];
-            array_ssbo[i + 5] = S1[0][1];
-            array_ssbo[i + 6] = S1[1][1];
-            array_ssbo[i + 7] = arap_energy[1];
-            array_ssbo[i + 8] = S2[0][0];
-            array_ssbo[i + 9] = S2[0][1];
-            array_ssbo[i + 10] = S2[1][1];
-            array_ssbo[i + 11] = arap_energy[2];
+            var eigenvalues: [3]Vec2d = undefined;
+            eigenvalues[0] = .{ eigenvalues_mat[0][0][0], eigenvalues_mat[0][1][1] };
+            eigenvalues[1] = .{ eigenvalues_mat[1][0][0], eigenvalues_mat[1][1][1] };
+            eigenvalues[2] = .{ eigenvalues_mat[2][0][0], eigenvalues_mat[2][1][1] };
+
+            const ssbo_content: SSBO_structure = .{
+                .eigenvectors = eigenvectors,
+                .eigenvalues = eigenvalues,
+                .arap_energy = Vec4d{ arap_energy[0], arap_energy[1], arap_energy[2], 1 },
+            };
+
+            array_ssbo[tri_idx] = ssbo_content;
+            // // We don't need to send S_i[1][0] to the GPU because S_i is a 2x2 symmetric matrix
+            // array_ssbo[i] = S0[0][0];
+            // array_ssbo[i + 1] = S0[0][1];
+            // array_ssbo[i + 2] = S0[1][1];
+            // array_ssbo[i + 3] = arap_energy[0];
+            // array_ssbo[i + 4] = S1[0][0];
+            // array_ssbo[i + 5] = S1[0][1];
+            // array_ssbo[i + 6] = S1[1][1];
+            // array_ssbo[i + 7] = arap_energy[1];
+            // array_ssbo[i + 8] = S2[0][0];
+            // array_ssbo[i + 9] = S2[0][1];
+            // array_ssbo[i + 10] = S2[1][1];
+            // array_ssbo[i + 11] = arap_energy[2];
         }
 
-        _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
         gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.index);
         _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
-        gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+
+        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_normal_vbo.index);
+        _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
+
+        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
         _ = gl.UnmapBuffer(gl.ELEMENT_ARRAY_BUFFER);
-        gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+
+        gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
         _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
-        gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
     }
 
     pub fn draw(p: *Parameters, ibo: IBO) void {
