@@ -22,6 +22,7 @@ const Vec4d = vec.Vec4d;
 
 const mat = @import("../../../geometry/mat.zig");
 const Mat2d = mat.Mat2d;
+const Mat2f = mat.Mat2f;
 const Mat3d = mat.Mat3d;
 const Mat3f = mat.Mat3f;
 const Mat4d = mat.Mat4d;
@@ -182,7 +183,11 @@ pub const Parameters = struct {
         return uv;
     }
 
-    pub fn computeAsRigidAsPossibleEnergy(F: Mat2d, R: Mat2d, S: Mat2d) f64 {
+    pub fn computeAsRigidAsPossibleEnergy3D(F: Mat3f, R: Mat3f, S: Mat3f) f32 {
+        return mat.squaredFroberniusNorm3d(F) + mat.squaredFroberniusNorm3d(R) - 2 * mat.trace3d(S);
+    }
+
+    pub fn computeAsRigidAsPossibleEnergy(F: Mat2f, R: Mat2f, S: Mat2f) f32 {
         return mat.squaredFroberniusNorm2d(F) + mat.squaredFroberniusNorm2d(R) - 2 * mat.trace2d(S);
     }
 
@@ -195,45 +200,69 @@ pub const Parameters = struct {
         return mat.identity2d;
     }
 
-    pub fn computeF(x0: Vec3f, x1: Vec3f, x2: Vec3f, n0: Vec3f) Mat3d {
-        const x0d: Vec3d = .{ @floatCast(x0[0]), @floatCast(x0[1]), @floatCast(x0[2]) };
-        const x1d: Vec3d = .{ @floatCast(x1[0]), @floatCast(x1[1]), @floatCast(x1[2]) };
-        const x2d: Vec3d = .{ @floatCast(x2[0]), @floatCast(x2[1]), @floatCast(x2[2]) };
-        const n0d: Vec3d = .{ @floatCast(n0[0]), @floatCast(n0[1]), @floatCast(n0[2]) };
-
+    pub fn computeF(x0: Vec3f, x1: Vec3f, x2: Vec3f, n0: Vec3f) Mat3f {
         const uv01: Vec2f = getTexCoordFromVertexPlane(x1, x0, n0);
         const uv02: Vec2f = getTexCoordFromVertexPlane(x2, x0, n0);
-        const uv01_extended: Vec3d = .{ uv01[0], uv01[1], 0 };
-        const uv02_extended: Vec3d = .{ uv02[0], uv02[1], 0 };
-        const x01: Vec3d = vec.sub3d(x1d, x0d);
-        const x02: Vec3d = vec.sub3d(x2d, x0d);
 
-        const X: Mat3d = .{ x01, x02, n0d };
-        const U: Mat3d = .{ uv01_extended, uv02_extended, Vec3d{ 0, 0, 1 } };
-        const U_1 = eigen.computeInverse3d(U).?;
-        return mat.mul3d(X, U_1);
+        const uv01_extended: Vec3f = .{ uv01[0], uv01[1], 0 };
+        const uv02_extended: Vec3f = .{ uv02[0], uv02[1], 0 };
+
+        const x01: Vec3f = vec.sub3f(x1, x0);
+        const x02: Vec3f = vec.sub3f(x2, x0);
+
+        const X: Mat3d = .{
+            vec.vec3fToVec3d(x01),
+            vec.vec3fToVec3d(x02),
+            vec.vec3fToVec3d(n0),
+        };
+
+        const U: Mat3d = .{
+            vec.vec3fToVec3d(uv01_extended),
+            vec.vec3fToVec3d(uv02_extended),
+            .{ 0.0, 0.0, 1.0 },
+        };
+
+        const U_1: Mat3d = eigen.computeInverse3d(U).?;
+
+        const XUU_1: Mat3d = mat.mul3d(X, .{
+            U_1[0],
+            U_1[1],
+            U_1[2],
+        });
+
+        return .{
+            .{
+                @floatCast(XUU_1[0][0]),
+                @floatCast(XUU_1[0][1]),
+                @floatCast(XUU_1[0][2]),
+            },
+            .{
+                @floatCast(XUU_1[1][1]),
+                @floatCast(XUU_1[1][2]),
+                @floatCast(XUU_1[1][0]),
+            },
+            .{
+                @floatCast(XUU_1[2][0]),
+                @floatCast(XUU_1[2][1]),
+                @floatCast(XUU_1[2][2]),
+            },
+        };
     }
 
-    pub fn projectDistorsionOntoTriangle(F: Mat3d, x0: Vec3d, x1: Vec3d, x2: Vec3d) Mat2d {
-        const t1 = vec.normalized3d(vec.sub3d(x1, x0));
-        const n = vec.normalized3d(vec.cross3d(t1, vec.sub3d(x2, x0)));
-        const t2 = vec.cross3d(n, t1);
-        const T: Mat3d = .{ t1, t2, n };
-        const TT: Mat3d = mat.transpose3d(T);
-        const F_local = mat.mul3d(TT, mat.mul3d(F, T));
+    pub fn distorsionsFromTriangleBasis(F: Mat3f, x0: Vec3f, x1: Vec3f, x2: Vec3f) Mat2f {
+        const t1 = vec.normalized3f(vec.sub3f(x1, x0));
+        const n = vec.normalized3f(vec.cross3f(t1, vec.sub3f(x2, x0)));
+        const t2 = vec.cross3f(n, t1);
+        const T: Mat3f = .{ t1, t2, n };
+        const TT: Mat3f = mat.transpose3f(T);
+        const F_local = mat.mul3f(TT, mat.mul3f(F, T));
         return .{ .{ F_local[0][0], F_local[0][1] }, .{ F_local[1][0], F_local[1][1] } };
     }
 
-    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, eigenvectors: *[3]Mat2d, eigenvalues: *[3]Mat2d) Vec3d {
-
-        // Compute triangle deformation
+    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, eigenvectors: *[3]Mat2d, eigenvalues: *[3]Mat2d) Vec3f {
         const x0: Vec3f = vbo_position[id_triangle[0]];
         const x1: Vec3f = vbo_position[id_triangle[1]];
         const x2: Vec3f = vbo_position[id_triangle[2]];
-
-        const x0d: Vec3d = .{ @floatCast(x0[0]), @floatCast(x0[1]), @floatCast(x0[2]) };
-        const x1d: Vec3d = .{ @floatCast(x1[0]), @floatCast(x1[1]), @floatCast(x1[2]) };
-        const x2d: Vec3d = .{ @floatCast(x2[0]), @floatCast(x2[1]), @floatCast(x2[2]) };
 
         const n0: Vec3f = vbo_normal[id_triangle[0]];
         const n1: Vec3f = vbo_normal[id_triangle[1]];
@@ -243,74 +272,52 @@ pub const Parameters = struct {
         const F1 = computeF(x1, x2, x0, n1);
         const F2 = computeF(x2, x0, x1, n2);
 
-        // Project each deformation gradient onto triangle basis
-        const F0_2D = projectDistorsionOntoTriangle(F0, x0d, x1d, x2d);
-        const F1_2D = projectDistorsionOntoTriangle(F1, x1d, x2d, x0d);
-        const F2_2D = projectDistorsionOntoTriangle(F2, x2d, x0d, x1d);
+        const F0_2D = distorsionsFromTriangleBasis(F0, x0, x1, x2);
+        const F1_2D = distorsionsFromTriangleBasis(F1, x0, x1, x2);
+        const F2_2D = distorsionsFromTriangleBasis(F2, x0, x1, x2);
 
-        // Compute polar decomposition for each deformation gradient
-        var decompo_U: Mat2d = undefined;
-        var decompo_S: Mat2d = undefined;
-        var decompo_V: Mat2d = undefined;
+        var F0_d: Mat3d = mat.mat3dFromMat3f(F0);
 
-        // F0
-        eigen.computeJacobiSVD2D(&F0_2D, &decompo_U, &decompo_S, &decompo_V);
-        var V_transpose: Mat2d = mat.transpose2d(decompo_V);
-        const R0 = mat.mul2d(decompo_U, V_transpose);
-        const S0 = mat.mul2d(decompo_V, mat.mul2d(decompo_S, V_transpose));
+        var U3d: Mat3d = undefined;
+        var S3d: Mat3d = undefined;
+        var V3d: Mat3d = undefined;
+
+        eigen.computeJacobiSVD3D(&F0_d, &U3d, &S3d, &V3d);
+
+        const Vt3d = mat.transpose3d(V3d);
+        const R0_3D_d = mat.mul3d(U3d, Vt3d);
+        const S0_3D_d = mat.mul3d(V3d, mat.mul3d(S3d, Vt3d));
+
+        // Retour en f32
+        const R0_3D = mat.mat3dToMat3f(R0_3D_d);
+        const S0_3D = mat.mat3dToMat3f(S0_3D_d);
+
+        var U2: Mat2d = undefined;
+        var S2: Mat2d = undefined;
+        var V2: Mat2d = undefined;
+
+        const F0d_2D = mat.mat2dFromMat2f(F0_2D);
+        eigen.computeJacobiSVD2D(&F0d_2D, &U2, &S2, &V2);
+        _ = mat.mul2d(U2, mat.transpose2d(V2));
 
         // F1
-        eigen.computeJacobiSVD2D(&F1_2D, &decompo_U, &decompo_S, &decompo_V);
-        V_transpose = mat.transpose2d(decompo_V);
-        const R1 = mat.mul2d(decompo_U, V_transpose);
-        const S1 = mat.mul2d(decompo_V, mat.mul2d(decompo_S, V_transpose));
+        const F1d_2D = mat.mat2dFromMat2f(F1_2D);
+        eigen.computeJacobiSVD2D(&F1d_2D, &U2, &S2, &V2);
+        const Vt = mat.transpose2d(V2);
+        const R1 = mat.mul2d(U2, Vt);
+        const S1 = mat.mul2d(V2, mat.mul2d(S2, Vt));
 
         // F2
-        eigen.computeJacobiSVD2D(&F2_2D, &decompo_U, &decompo_S, &decompo_V);
-        V_transpose = mat.transpose2d(decompo_V);
-        const R2 = mat.mul2d(decompo_U, V_transpose);
-        const S2 = mat.mul2d(decompo_V, mat.mul2d(decompo_S, V_transpose));
+        const F2d_2D = mat.mat2dFromMat2f(F2_2D);
+        eigen.computeJacobiSVD2D(&F2d_2D, &U2, &S2, &V2);
+        const Vt2 = mat.transpose2d(V2);
+        const R2 = mat.mul2d(U2, Vt2);
+        const S2m = mat.mul2d(V2, mat.mul2d(S2, Vt2));
 
-        // Compute eigenvectors and eigenvalues for each deformation gradient
-        eigen.computeEigenValuesAndEigenVectors2d(&S0, &eigenvectors.*[0], &eigenvalues.*[0]);
         eigen.computeEigenValuesAndEigenVectors2d(&S1, &eigenvectors.*[1], &eigenvalues.*[1]);
-        eigen.computeEigenValuesAndEigenVectors2d(&S2, &eigenvectors.*[2], &eigenvalues.*[2]);
+        eigen.computeEigenValuesAndEigenVectors2d(&S2m, &eigenvectors.*[2], &eigenvalues.*[2]);
 
-        return .{ computeAsRigidAsPossibleEnergy(F0_2D, R0, S0), computeAsRigidAsPossibleEnergy(F1_2D, R1, S1), computeAsRigidAsPossibleEnergy(F2_2D, R2, S2) };
-
-        // eigen.computeJacobiSVD3D(&F0, &decompo_U, &decompo_S, &decompo_V);
-        // var V_transpose: Mat3d = mat.transpose3d(decompo_V);
-        // const S0_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
-        // const R0 = mat.mul3d(decompo_U, V_transpose);
-        // S0.* = computeLogSPD(S0_3D);
-
-        // eigen.computeJacobiSVD3D(&F1, &decompo_U, &decompo_S, &decompo_V);
-        // V_transpose = mat.transpose3d(decompo_V);
-        // const S1_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
-        // const R1 = mat.mul3d(decompo_U, V_transpose);
-        // S1.* = computeLogSPD(S1_3D);
-
-        // eigen.computeJacobiSVD3D(&F2, &decompo_U, &decompo_S, &decompo_V);
-        // V_transpose = mat.transpose3d(decompo_V);
-        // const S2_3D = mat.mul3d(decompo_V, mat.mul3d(decompo_S, V_transpose));
-        // const R2 = mat.mul3d(decompo_U, V_transpose);
-        // S2.* = computeLogSPD(S2_3D);
-
-        // var eigenvectors: Mat3d = undefined;
-        // var eigenvalues: Mat3d = undefined;
-        // eigen.computeEigenValuesAndEigenVectors3d(&S0_3D, &eigenvectors, &eigenvalues);
-
-        // std.log.debug("Oui\n", .{});
-        // mat.printMat3d(F0);
-        // mat.printMat3d(R0);
-        // mat.printMat3d(S0_3D);
-        // mat.printMat3d(eigenvectors);
-        // mat.printMat3d(eigenvalues);
-
-        // return .{ computeAsRigidAsPossibleEnergy(F0, R0, S0_3D), computeAsRigidAsPossibleEnergy(F1, R1, S1_3D), computeAsRigidAsPossibleEnergy(F2, R2, S2_3D) };
-
-        // std.log.debug("Aire: {d} Angle: {d} Energie {d}", .{ S[0][0] * S[1][1], S[0][0] / S[1][1], energy_arap });
-
+        return .{ computeAsRigidAsPossibleEnergy3D(F0, R0_3D, S0_3D), computeAsRigidAsPossibleEnergy(F1_2D, mat.mat2fFromMat2d(R1), mat.mat2fFromMat2d(S1)), computeAsRigidAsPossibleEnergy(F2_2D, mat.mat2fFromMat2d(R2), mat.mat2fFromMat2d(S2m)) };
     }
 
     pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) void {
@@ -330,7 +337,7 @@ pub const Parameters = struct {
 
         // ssbo.memoryAllocationForMapping(@intCast((@sizeOf(f64) * 12) * nb_triangle));
 
-        const SSBO_structure = struct { eigenvectors: [3]Mat2d, eigenvalues: [3]Vec2d, arap_energy: Vec4d };
+        const SSBO_structure = struct { eigenvectors: [3]Mat2f, eigenvalues: [3]Vec2f, arap_energy: Vec4f };
 
         // Memory allocation for 3 eigenvectors matrices + 3 eigenvalues diagonales matrices + ARAP energy
         ssbo.memoryAllocationForMapping(@intCast(nb_triangle * (@sizeOf(SSBO_structure))));
@@ -349,35 +356,28 @@ pub const Parameters = struct {
                 array_ibo[tri_idx * 3 + 2],
             };
 
-            var eigenvectors: [3]Mat2d = undefined;
+            var eigenvectorsd: [3]Mat2d = undefined;
             var eigenvalues_mat: [3]Mat2d = undefined;
-            const arap_energy: Vec3d = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &eigenvectors, &eigenvalues_mat);
+            const arap_energy: Vec3f = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &eigenvectorsd, &eigenvalues_mat);
 
-            var eigenvalues: [3]Vec2d = undefined;
-            eigenvalues[0] = .{ eigenvalues_mat[0][0][0], eigenvalues_mat[0][1][1] };
-            eigenvalues[1] = .{ eigenvalues_mat[1][0][0], eigenvalues_mat[1][1][1] };
-            eigenvalues[2] = .{ eigenvalues_mat[2][0][0], eigenvalues_mat[2][1][1] };
+            var eigenvectors: [3]Mat2f = undefined;
+            eigenvectors[0] = mat.mat2fFromMat2d(eigenvectorsd[0]);
+            eigenvectors[1] = mat.mat2fFromMat2d(eigenvectorsd[1]);
+            eigenvectors[2] = mat.mat2fFromMat2d(eigenvectorsd[2]);
 
+            var eigenvalues: [3]Vec2f = undefined;
+            eigenvalues[0] = .{ @floatCast(eigenvalues_mat[0][0][0]), @floatCast(eigenvalues_mat[0][1][1]) };
+            eigenvalues[1] = .{ @floatCast(eigenvalues_mat[1][0][0]), @floatCast(eigenvalues_mat[1][1][1]) };
+            eigenvalues[2] = .{ @floatCast(eigenvalues_mat[2][0][0]), @floatCast(eigenvalues_mat[2][1][1]) };
+
+            // std.log.debug("{d} {d} {d}\n", .{ arap_energy[0], arap_energy[1], arap_energy[2] });
             const ssbo_content: SSBO_structure = .{
                 .eigenvectors = eigenvectors,
                 .eigenvalues = eigenvalues,
-                .arap_energy = Vec4d{ arap_energy[0], arap_energy[1], arap_energy[2], 1 },
+                .arap_energy = Vec4f{ arap_energy[0], arap_energy[1], arap_energy[2], 1 },
             };
 
             array_ssbo[tri_idx] = ssbo_content;
-            // // We don't need to send S_i[1][0] to the GPU because S_i is a 2x2 symmetric matrix
-            // array_ssbo[i] = S0[0][0];
-            // array_ssbo[i + 1] = S0[0][1];
-            // array_ssbo[i + 2] = S0[1][1];
-            // array_ssbo[i + 3] = arap_energy[0];
-            // array_ssbo[i + 4] = S1[0][0];
-            // array_ssbo[i + 5] = S1[0][1];
-            // array_ssbo[i + 6] = S1[1][1];
-            // array_ssbo[i + 7] = arap_energy[1];
-            // array_ssbo[i + 8] = S2[0][0];
-            // array_ssbo[i + 9] = S2[0][1];
-            // array_ssbo[i + 10] = S2[1][1];
-            // array_ssbo[i + 11] = arap_energy[2];
         }
 
         gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.index);

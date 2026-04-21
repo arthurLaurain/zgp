@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 
 const vec = @import("vec.zig");
 const Vec2d = vec.Vec2d;
+const Vec2f = vec.Vec2f;
 const Vec3f = vec.Vec3f;
 const Vec4f = vec.Vec4f;
 const Vec3d = vec.Vec3d;
@@ -12,6 +13,7 @@ const Vec4d = vec.Vec4d;
 /// 4x4 matrix
 /// All operations consider the matrix to be in column-major order.
 pub const Mat2d = [2]Vec2d;
+pub const Mat2f = [2]Vec2f;
 pub const Mat3f = [3]Vec3f;
 pub const Mat4f = [4]Vec4f;
 pub const Mat3d = [3]Vec3d;
@@ -51,12 +53,12 @@ pub const zero4f: Mat4f = .{ vec.zero4f, vec.zero4f, vec.zero4f, vec.zero4f };
 pub const zero3d: Mat3d = .{ vec.zero3d, vec.zero3d, vec.zero3d };
 pub const zero4d: Mat4d = .{ vec.zero4d, vec.zero4d, vec.zero4d, vec.zero4d };
 
-pub fn squaredFroberniusNorm2d(m: Mat2d) f64 {
+pub fn squaredFroberniusNorm2d(m: Mat2f) f32 {
     return m[0][0] * m[0][0] + m[0][1] * m[0][1] + m[1][0] * m[1][0] + m[1][1] * m[1][1];
 }
 
-pub fn squaredFroberniusNorm3d(m: Mat3d) f64 {
-    var n: f64 = 0;
+pub fn squaredFroberniusNorm3d(m: Mat3f) f32 {
+    var n: f32 = 0;
     for (0..2) |c| {
         for (0..2) |r| {
             n += m[c][r] * m[c][r];
@@ -65,14 +67,21 @@ pub fn squaredFroberniusNorm3d(m: Mat3d) f64 {
     return n;
 }
 
-pub fn trace2d(m: Mat2d) f64 {
+pub fn trace2d(m: Mat2f) f32 {
     return m[0][0] + m[1][1];
 }
 
-pub fn trace3d(m: Mat3d) f64 {
+pub fn trace3d(m: Mat3f) f32 {
     return m[0][0] + m[1][1] + m[2][2];
 }
 
+pub fn mat2fFromMat2d(m: Mat2d) Mat2f {
+    return .{ vec.vec2fFromVec2d(m[0]), vec.vec2fFromVec2d(m[1]) };
+}
+
+pub fn mat2dFromMat2f(m: Mat2f) Mat2d {
+    return .{ vec.vec2dFromVec2f(m[0]), vec.vec2dFromVec2f(m[1]) };
+}
 pub fn mat3fFromMat3d(m: Mat3d) Mat3f {
     return .{
         vec.vec3fFromVec3d(m[0]),
@@ -104,6 +113,20 @@ pub fn mat4dFromMat4f(m: Mat4f) Mat4d {
     };
 }
 
+pub fn transpose2f(m: [2][2]f32) [2][2]f32 {
+    var result: [2][2]f32 = undefined;
+
+    var i: usize = 0;
+    while (i < 2) : (i += 1) {
+        var j: usize = 0;
+        while (j < 2) : (j += 1) {
+            result[i][j] = m[j][i];
+        }
+    }
+
+    return result;
+}
+
 pub fn transpose2d(m: [2][2]f64) [2][2]f64 {
     var result: [2][2]f64 = undefined;
 
@@ -111,6 +134,20 @@ pub fn transpose2d(m: [2][2]f64) [2][2]f64 {
     while (i < 2) : (i += 1) {
         var j: usize = 0;
         while (j < 2) : (j += 1) {
+            result[i][j] = m[j][i];
+        }
+    }
+
+    return result;
+}
+
+pub fn transpose3f(m: [3][3]f32) [3][3]f32 {
+    var result: [3][3]f32 = undefined;
+
+    var i: usize = 0;
+    while (i < 3) : (i += 1) {
+        var j: usize = 0;
+        while (j < 3) : (j += 1) {
             result[i][j] = m[j][i];
         }
     }
@@ -157,6 +194,33 @@ pub fn mul3f(a: Mat3f, b: Mat3f) Mat3f {
     }
     return result;
 }
+
+pub fn mul2f(a: Mat2f, b: Mat2f) Mat2f {
+    var result: Mat2f = undefined;
+
+    for (0..2) |i| {
+        for (0..2) |j| {
+            result[i][j] =
+                a[0][j] * b[i][0] +
+                a[1][j] * b[i][1];
+        }
+    }
+
+    return result;
+}
+
+pub fn mat3dToMat3f(m: Mat3d) Mat3f {
+    var result: Mat3f = undefined;
+
+    for (m, 0..) |row, i| {
+        for (row, 0..) |val, j| {
+            result[i][j] = @floatCast(val);
+        }
+    }
+
+    return result;
+}
+
 pub fn mul2d(a: Mat2d, b: Mat2d) Mat2d {
     var result: Mat2d = undefined;
 

@@ -39,9 +39,9 @@ layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
 
 struct SSBO_distorsion
 {
-  dmat2 eigenvectors[3];
-  dvec2 eigenvalues[3];
-  dvec4 arap_energy;
+  mat2 eigenvectors[3];
+  vec2 eigenvalues[3];
+  vec4 arap_energy;
 };
 
 layout(std430, binding = 4) readonly buffer ssbo_triangles_distorsion
@@ -51,8 +51,8 @@ layout(std430, binding = 4) readonly buffer ssbo_triangles_distorsion
 
 layout(std430, binding = 5) readonly buffer ssbo_neigh_selected_vertices
 {
-  double num_selected_vertices;
-  double neigh_selected_vertices[];
+  float num_selected_vertices;
+  float neigh_selected_vertices[];
 };
 
 vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
@@ -67,19 +67,17 @@ vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
   
 }
 
-
-
-bool pointOnTriangle(vec3 p, dvec3 a, dvec3 b, dvec3 c)
+bool pointOnTriangle(vec3 p, vec3 a, vec3 b, vec3 c)
 {
-    double scale = length(b - a) + length(c - a) + length(c - b);
-    double eps = 1e-6 * scale;
+    float scale = length(b - a) + length(c - a) + length(c - b);
+    float eps = 1e-6 * scale;
 
-    dvec3 v0 = b - a;
-    dvec3 v1 = c - a;
-    dvec3 v2 = p - a;
+    vec3 v0 = b - a;
+    vec3 v1 = c - a;
+    vec3 v2 = p - a;
 
-    dvec3 n = cross(v0, v1);
-    double n_len = length(n);
+    vec3 n = cross(v0, v1);
+    float n_len = length(n);
 
     if(n_len < eps)
         return false;
@@ -87,20 +85,20 @@ bool pointOnTriangle(vec3 p, dvec3 a, dvec3 b, dvec3 c)
     n /= n_len;
 
 
-    double d00 = dot(v0, v0);
-    double d01 = dot(v0, v1);
-    double d11 = dot(v1, v1);
-    double d20 = dot(v2, v0);
-    double d21 = dot(v2, v1);
+    float d00 = dot(v0, v0);
+    float d01 = dot(v0, v1);
+    float d11 = dot(v1, v1);
+    float d20 = dot(v2, v0);
+    float d21 = dot(v2, v1);
 
-    double denom = d00 * d11 - d01 * d01;
+    float denom = d00 * d11 - d01 * d01;
 
     if(abs(denom) < eps)
         return false;
 
-    double v = (d11 * d20 - d01 * d21) / denom;
-    double w = (d00 * d21 - d01 * d20) / denom;
-    double u = 1.0 - v - w;
+    float v = (d11 * d20 - d01 * d21) / denom;
+    float w = (d00 * d21 - d01 * d20) / denom;
+    float u = 1.0 - v - w;
 
     return (u >= -eps && v >= -eps && w >= -eps &&
         u <= 1.0 + eps && v <= 1.0 + eps && w <= 1.0 + eps);
@@ -124,32 +122,32 @@ vec2 hash12(int n){
     return vec2(x,y);
 }
 
-dvec3 getBarycentric(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
+vec3 getBarycentric(vec3 P, vec3 A, vec3 B, vec3 C)
 {
-    dvec3 v0 = B - A;
-    dvec3 v1 = C - A;
-    dvec3 v2 = P - A;
+    vec3 v0 = B - A;
+    vec3 v1 = C - A;
+    vec3 v2 = P - A;
 
-    double d00 = dot(v0, v0);
-    double d01 = dot(v0, v1);
-    double d11 = dot(v1, v1);
-    double d20 = dot(v2, v0);
-    double d21 = dot(v2, v1);
+    float  d00 = dot(v0, v0);
+    float  d01 = dot(v0, v1);
+    float  d11 = dot(v1, v1);
+    float  d20 = dot(v2, v0);
+    float  d21 = dot(v2, v1);
 
-    double denom = d00 * d11 - d01 * d01;
+    float denom = d00 * d11 - d01 * d01;
     denom = max(denom, 1e-16);
 
-    double v = (d11 * d20 - d01 * d21) / denom;
-    double w = (d00 * d21 - d01 * d20) / denom;
-    double u = 1.0 - v - w;
+    float v = (d11 * d20 - d01 * d21) / denom;
+    float w = (d00 * d21 - d01 * d20) / denom;
+    float u = 1.0 - v - w;
 
-    return dvec3(u, v, w);
+    return vec3(u, v, w);
 }
 
-float pointInTriangleBary(dvec3 P, dvec3 A, dvec3 B, dvec3 C)
+float pointInTriangleBary(vec3 P, vec3 A, vec3 B, vec3 C)
 {
-    dvec3 bary = getBarycentric(P, A, B, C);
-    double eps = 1e-6;
+    vec3 bary = vec3(getBarycentric(P, A, B, C));
+    float eps = 1e-6;
 
     if(bary.x >= -eps && bary.y >= -eps && bary.z >= -eps)
         return 1.0;
@@ -168,7 +166,7 @@ vec4 addColorForSelectedOneRing(vec4 rgba)
       {
           int num_neigh = int(neigh_selected_vertices[offset]) - 1;
 
-          dvec3 center = dvec3(
+          vec3 center = vec3(
               neigh_selected_vertices[offset + 1],
               neigh_selected_vertices[offset + 2],
               neigh_selected_vertices[offset + 3]
@@ -180,15 +178,15 @@ vec4 addColorForSelectedOneRing(vec4 rgba)
           {
               int k_next = (k + 1) % num_neigh;
 
-              dvec3 p1 = center;
+              vec3 p1 = center;
 
-              dvec3 p2 = dvec3(
+              vec3 p2 = vec3(
                   neigh_selected_vertices[base + k * 3 + 0],
                   neigh_selected_vertices[base + k * 3 + 1],
                   neigh_selected_vertices[base + k * 3 + 2]
               );
 
-              dvec3 p3 = dvec3(
+              vec3 p3 = vec3(
                   neigh_selected_vertices[base + k_next * 3 + 0],
                   neigh_selected_vertices[base + k_next * 3 + 1],
                   neigh_selected_vertices[base + k_next * 3 + 2]
@@ -236,25 +234,35 @@ mat2 expSPD(mat2 M)
     return U * D * transpose(U);
 }
 
-void computeInterpolationBetweenEigenElements(mat2 eigenvectors0, mat2 eigenvalues0, mat2 eigenvectors1, mat2 eigenvalues1, mat2 eigenvectors2, mat2 eigenvalues2, dvec3 bary, out mat2 eigenvectors_S, out mat2 eigenvalues_S)
+void computeInterpolationBetweenEigenElements(mat2 eigenvectors0, mat2 eigenvalues0, mat2 eigenvectors1, mat2 eigenvalues1, mat2 eigenvectors2, mat2 eigenvalues2, vec3 bary, out mat2 eigenvectors_S, out mat2 eigenvalues_S)
 {
+  float t0 = atan(float(eigenvectors0[0][1]), float(eigenvectors0[0][0]));
+  float t1 = atan(float(eigenvectors1[0][1]), float(eigenvectors1[0][0]));
+  float t2 = atan(float(eigenvectors2[0][1]), float(eigenvectors2[0][0]));
+
+  if (t1 - t0 > PI) t1 -= 2.0 * PI;
+  if (t1 - t0 < -PI) t1 += 2.0 * PI;
+
+  if (t2 - t0 > PI) t2 -= 2.0 * PI;
+  if (t2 - t0 < -PI) t2 += 2.0 * PI;
+
+  float theta = float(bary.x * t0 + bary.y * t1 + bary.z * t2);
+
   eigenvectors_S = mat2(
-  eigenvectors0[0] * bary.x + eigenvectors1[0] * bary.y + eigenvectors2[0] * bary.z,
-  eigenvectors0[1] * bary.x + eigenvectors1[1] * bary.y + eigenvectors2[1] * bary.z
+    vec2(cos(theta), sin(theta)),
+    vec2(-sin(theta), cos(theta))
   );
-
-
   eigenvalues_S = mat2(vec2(eigenvalues0[0][0] * bary.x + eigenvalues1[0][0] * bary.y + eigenvalues2[0][0] * bary.z, 0), vec2(0, eigenvalues0[1][1] * bary.x + eigenvalues1[1][1] * bary.y + eigenvalues2[1][1] * bary.z));
 }
 
 
-mat2 computeDistorsionMatrix(dvec3 S0, dvec3 S1, dvec3 S2, dvec3 barycentric)
+mat2 computeDistorsionMatrix(vec3 S0, vec3 S1, vec3 S2, vec3 barycentric)
 {
-  dmat2 m0 = dmat2(dvec2(S0.x, S0.y), dvec2(S0.y, S0.z)); 
-  dmat2 m1 = dmat2(dvec2(S1.x, S1.y), dvec2(S1.y, S1.z));
-  dmat2 m2 = dmat2(dvec2(S2.x, S2.y), dvec2(S2.y, S2.z));
+  mat2 m0 = mat2(vec2(S0.x, S0.y), vec2(S0.y, S0.z)); 
+  mat2 m1 = mat2(vec2(S1.x, S1.y), vec2(S1.y, S1.z));
+  mat2 m2 = mat2(vec2(S2.x, S2.y), vec2(S2.y, S2.z));
 
-  dmat2 L = barycentric.x * m0 + barycentric.y * m1 + barycentric.z * m2;
+  mat2 L = barycentric.x * m0 + barycentric.y * m1 + barycentric.z * m2;
 
   return expSPD(mat2(L));
 }
@@ -289,7 +297,7 @@ void main() {
   vec2 u2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * u_scale_tex_coords;
   vec2 u3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * u_scale_tex_coords;
 
-  dvec3 bary = getBarycentric(dvec3(frag_position), p1, p2, p3);
+  vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 
 
   vec2 r1 = hash12(int(id_vertices.x));
@@ -310,9 +318,9 @@ void main() {
   vec3 c2;
   vec3 c3;
 
-  double w1 = bary.x;
-  double w2 = bary.y;
-  double w3 = bary.z;
+  float w1 = bary.x;
+  float w2 = bary.y;
+  float w3 = bary.z;
 
   SSBO_distorsion distorsion = distorsions[id_triangle];
 
@@ -344,11 +352,13 @@ void main() {
 
   mat2 S = eigenvectors_S * eigenvalues_S * transpose(eigenvectors_S);
 
+  S = eigenvectors0 * eigenvalues0 * transpose(eigenvectors0);
+
   if(u_compense_distorsions)
   {
-    c1 = texture(u_exemplar_texture, S * u1.xy + r1).xyz;
-    c2 = texture(u_exemplar_texture, S * u2.xy + r2).xyz;
-    c3 = texture(u_exemplar_texture, S * u3.xy + r3).xyz;
+    c1 = texture(u_exemplar_texture, mat2(S) * u1.xy + r1).xyz;
+    c2 = texture(u_exemplar_texture, mat2(S) * u2.xy + r2).xyz;
+    c3 = texture(u_exemplar_texture, mat2(S) * u3.xy + r3).xyz;
   }
   else
   {
@@ -364,17 +374,25 @@ void main() {
   //   f_color = vec4(area_distorsion,0,0,1);
   if(u_visu_arap_energy)
   {
-    dvec3 arap = dvec3(
-        double(distorsion.arap_energy.x),
-        double(distorsion.arap_energy.y),
-        double(distorsion.arap_energy.z)
+    vec3 arap = vec3(
+        float(distorsion.arap_energy.x),
+        float(distorsion.arap_energy.y),
+        float(distorsion.arap_energy.z)
     );
-    double energy = w1 * arap.x + w2 * arap.y + w3 * arap.z;
-    f_color = vec4(float(energy) * u_scale_distorsion, 0., 0., 1.);
+    float energy = w1 * arap.x + w2 * arap.y + w3 * arap.z;
+    f_color = vec4(distorsion.arap_energy.x * u_scale_distorsion, 0., 0., 1.);
+
+    if(arap.x >= 1. && arap.x <= 2.)
+      f_color = vec4(1.);
+    else
+      f_color = vec4(0.);
   }
   else
     f_color = vec4(result);
 
+  f_color = vec4(bary.x,0,0, 1.);
   f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
+
+
 
 }

@@ -20,6 +20,13 @@ pub const zero2d: Vec2d = @splat(0);
 pub const zero3d: Vec3d = @splat(0);
 pub const zero4d: Vec4d = @splat(0);
 
+pub fn vec2fFromVec2d(v: Vec2d) Vec2f {
+    return .{ @floatCast(v[0]), @floatCast(v[1]) };
+}
+pub fn vec2dFromVec2f(v: Vec2f) Vec2d {
+    return .{ @floatCast(v[0]), @floatCast(v[1]) };
+}
+
 pub fn vec3fFromVec3d(v: Vec3d) Vec3f {
     return .{ @floatCast(v[0]), @floatCast(v[1]), @floatCast(v[2]) };
 }
@@ -31,6 +38,14 @@ pub fn vec4fFromVec4d(v: Vec4d) Vec4f {
 }
 pub fn vec4dFromVec4f(v: Vec4f) Vec4d {
     return .{ @floatCast(v[0]), @floatCast(v[1]), @floatCast(v[2]), @floatCast(v[3]) };
+}
+
+pub fn vec3fToVec3d(v: Vec3f) Vec3d {
+    return .{
+        @floatCast(v[0]),
+        @floatCast(v[1]),
+        @floatCast(v[2]),
+    };
 }
 
 pub fn splat2f(scalar: f32) Vec2f {
