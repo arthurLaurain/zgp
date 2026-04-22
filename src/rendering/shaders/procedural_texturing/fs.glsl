@@ -39,8 +39,8 @@ layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
 
 struct SSBO_distorsion
 {
-  mat2 eigenvectors[3];
-  vec2 eigenvalues[3];
+  mat3 eigenvectors[3];
+  vec4 eigenvalues[3];
   vec4 arap_energy;
 };
 
@@ -201,26 +201,69 @@ vec4 addColorForSelectedOneRing(vec4 rgba)
   return mix(color, rgba, t);
 }
 
-
-void computeInterpolationBetweenEigenElements(mat2 eigenvectors0, mat2 eigenvalues0, mat2 eigenvectors1, mat2 eigenvalues1, mat2 eigenvectors2, mat2 eigenvalues2, vec3 bary, out mat2 eigenvectors_S, out mat2 eigenvalues_S)
+vec4 mat3ToQuat(mat3 m)
 {
-  float t0 = atan(float(eigenvectors0[0][1]), float(eigenvectors0[0][0]));
-  float t1 = atan(float(eigenvectors1[0][1]), float(eigenvectors1[0][0]));
-  float t2 = atan(float(eigenvectors2[0][1]), float(eigenvectors2[0][0]));
+    float trace = m[0][0] + m[1][1] + m[2][2];
+    vec4 q;
 
-  if (t1 - t0 > PI) t1 -= 2.0 * PI;
-  if (t1 - t0 < -PI) t1 += 2.0 * PI;
+    if (trace > 0.0) {
+        float s = sqrt(trace + 1.0) * 2.0;
+        q.w = 0.25 * s;
+        q.x = (m[2][1] - m[1][2]) / s;
+        q.y = (m[0][2] - m[2][0]) / s;
+        q.z = (m[1][0] - m[0][1]) / s;
+    } else if ((m[0][0] > m[1][1]) && (m[0][0] > m[2][2])) {
+        float s = sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2.0;
+        q.w = (m[2][1] - m[1][2]) / s;
+        q.x = 0.25 * s;
+        q.y = (m[0][1] + m[1][0]) / s;
+        q.z = (m[0][2] + m[2][0]) / s;
+    } else if (m[1][1] > m[2][2]) {
+        float s = sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2.0;
+        q.w = (m[0][2] - m[2][0]) / s;
+        q.x = (m[0][1] + m[1][0]) / s;
+        q.y = 0.25 * s;
+        q.z = (m[1][2] + m[2][1]) / s;
+    } else {
+        float s = sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2.0;
+        q.w = (m[1][0] - m[0][1]) / s;
+        q.x = (m[0][2] + m[2][0]) / s;
+        q.y = (m[1][2] + m[2][1]) / s;
+        q.z = 0.25 * s;
+    }
 
-  if (t2 - t0 > PI) t2 -= 2.0 * PI;
-  if (t2 - t0 < -PI) t2 += 2.0 * PI;
+    return normalize(q);
+}
 
-  float theta = float(bary.x * t0 + bary.y * t1 + bary.z * t2);
+mat3 quatToMat3(vec4 q)
+{
+    float x = q.x, y = q.y, z = q.z, w = q.w;
 
-  eigenvectors_S = mat2(
-    vec2(cos(theta), sin(theta)),
-    vec2(-sin(theta), cos(theta))
-  );
-  eigenvalues_S = mat2(vec2(eigenvalues0[0][0] * bary.x + eigenvalues1[0][0] * bary.y + eigenvalues2[0][0] * bary.z, 0), vec2(0, eigenvalues0[1][1] * bary.x + eigenvalues1[1][1] * bary.y + eigenvalues2[1][1] * bary.z));
+    return mat3(
+        1.0 - 2.0*(y*y + z*z), 2.0*(x*y - z*w),     2.0*(x*z + y*w),
+        2.0*(x*y + z*w),     1.0 - 2.0*(x*x + z*z), 2.0*(y*z - x*w),
+        2.0*(x*z - y*w),     2.0*(y*z + x*w),     1.0 - 2.0*(x*x + y*y)
+    );
+}
+
+void computeInterpolationBetweenEigenElements(mat3 eigenvectors0, mat3 eigenvalues0,mat3 eigenvectors1, mat3 eigenvalues1,mat3 eigenvectors2, mat3 eigenvalues2,vec3 bary,out mat3 eigenvectors_S,out mat3 eigenvalues_S)
+{
+    vec4 q0 = mat3ToQuat(eigenvectors0);
+    vec4 q1 = mat3ToQuat(eigenvectors1);
+    vec4 q2 = mat3ToQuat(eigenvectors2);
+
+    if (dot(q0, q1) < 0.0) q1 = -q1;
+    if (dot(q0, q2) < 0.0) q2 = -q2;
+
+    vec4 q = normalize(bary.x * q0 + bary.y * q1 + bary.z * q2);
+
+    eigenvectors_S = quatToMat3(q);
+
+    eigenvalues_S = mat3(
+        eigenvalues0[0][0] * bary.x + eigenvalues1[0][0] * bary.y + eigenvalues2[0][0] * bary.z, 0, 0,
+        0, eigenvalues0[1][1] * bary.x + eigenvalues1[1][1] * bary.y + eigenvalues2[1][1] * bary.z, 0,
+        0, 0, eigenvalues0[2][2] * bary.x + eigenvalues1[2][2] * bary.y + eigenvalues2[2][2] * bary.z
+    );
 }
 
 
@@ -270,41 +313,40 @@ void main() {
 
   SSBO_distorsion distorsion = distorsions[id_triangle];
 
-  mat2 eigenvectors0 = mat2(distorsion.eigenvectors[0]);
+  mat3 eigenvectors0 = distorsion.eigenvectors[0];
+  mat3 eigenvectors1 = distorsion.eigenvectors[1];
+  mat3 eigenvectors2 = distorsion.eigenvectors[2];
 
-  mat2 eigenvectors1 = mat2(distorsion.eigenvectors[1]);
-
-  mat2 eigenvectors2 = mat2(distorsion.eigenvectors[2]);
-
-  mat2 eigenvalues0 = mat2(
-    vec2(distorsion.eigenvalues[0].x, 0.0),
-    vec2(0.0, distorsion.eigenvalues[0].y)
+  mat3 eigenvalues0 = mat3(
+    vec3(distorsion.eigenvalues[0].x, 0.0, 0.0),
+    vec3(0.0, distorsion.eigenvalues[0].y, 0.0),
+    vec3(0.0,0.0,distorsion.eigenvalues[0].z)
   );
 
-  mat2 eigenvalues1 = mat2(
-      vec2(distorsion.eigenvalues[1].x, 0.0),
-      vec2(0.0, distorsion.eigenvalues[1].y)
+  mat3 eigenvalues1 = mat3(
+    vec3(distorsion.eigenvalues[1].x, 0.0, 0.0),
+    vec3(0.0, distorsion.eigenvalues[1].y, 0.0),
+    vec3(0.0,0.0,distorsion.eigenvalues[1].z)
   );
 
-  mat2 eigenvalues2 = mat2(
-      vec2(distorsion.eigenvalues[2].x, 0.0),
-      vec2(0.0, distorsion.eigenvalues[2].y)
+  mat3 eigenvalues2 = mat3(
+    vec3(distorsion.eigenvalues[2].x, 0.0, 0.0),
+    vec3(0.0, distorsion.eigenvalues[2].y, 0.0),
+    vec3(0.0,0.0,distorsion.eigenvalues[2].z)
   );
 
-  mat2 eigenvectors_S = mat2(0.);
-  mat2 eigenvalues_S = mat2(0.);
+  mat3 eigenvectors_S = mat3(0.);
+  mat3 eigenvalues_S = mat3(0.);
 
   computeInterpolationBetweenEigenElements(eigenvectors0, eigenvalues0, eigenvectors1, eigenvalues1, eigenvectors2, eigenvalues2, bary, eigenvectors_S, eigenvalues_S);
 
-  mat2 S = eigenvectors_S * eigenvalues_S * transpose(eigenvectors_S);
-
-  S = eigenvectors0 * eigenvalues0 * transpose(eigenvectors0);
+  mat3 S = eigenvectors_S * eigenvalues_S * transpose(eigenvectors_S);
 
   if(u_compense_distorsions)
   {
-    c1 = texture(u_exemplar_texture, mat2(S) * u1.xy + r1).xyz;
-    c2 = texture(u_exemplar_texture, mat2(S) * u2.xy + r2).xyz;
-    c3 = texture(u_exemplar_texture, mat2(S) * u3.xy + r3).xyz;
+    c1 = texture(u_exemplar_texture, u1.xy + r1).xyz;
+    c2 = texture(u_exemplar_texture, u2.xy + r2).xyz;
+    c3 = texture(u_exemplar_texture, u3.xy + r3).xyz;
   }
   else
   {
@@ -314,14 +356,12 @@ void main() {
   }
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
-  // if(u_visu_angle_distorsion)
-  //   f_color = vec4(angle_distorsion,0,0,1);
-  // else if(u_visu_area_distorsion)
-  //   f_color = vec4(area_distorsion,0,0,1);
+  
   if(u_visu_arap_energy)
   {
-    float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
-    f_color = vec4(distorsion.arap_energy.x * u_scale_distorsion, 0., 0., 1.);
+    // float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
+    float energy = distorsion.arap_energy.x;
+    f_color = vec4(energy * u_scale_distorsion, 0., 0., 1.);
   }
   else
     f_color = vec4(result);

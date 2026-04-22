@@ -224,7 +224,7 @@ pub const Parameters = struct {
         return .{ .{ F_local[0][0], F_local[0][1] }, .{ F_local[1][0], F_local[1][1] } };
     }
 
-    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, eigenvectors: *[3]Mat2d, eigenvalues: *[3]Mat2d) Vec3f {
+    pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, eigenvectors: *[3]Mat3d, eigenvalues: *[3]Mat3d) Vec3f {
         const x0: Vec3f = vbo_position[id_triangle[0]];
         const x1: Vec3f = vbo_position[id_triangle[1]];
         const x2: Vec3f = vbo_position[id_triangle[2]];
@@ -237,54 +237,35 @@ pub const Parameters = struct {
         const F1 = computeF(x1, x2, x0, n1);
         const F2 = computeF(x2, x0, x1, n2);
 
-        const F0_2D = distorsionsFromTriangleBasis(F0, x0, x1, x2);
-        const F1_2D = distorsionsFromTriangleBasis(F1, x0, x1, x2);
-        const F2_2D = distorsionsFromTriangleBasis(F2, x0, x1, x2);
+        var U: Mat3d = undefined;
+        var S: Mat3d = undefined;
+        var V: Mat3d = undefined;
 
-        var F0_d: Mat3d = mat.mat3dFromMat3f(F0);
-
-        var U3d: Mat3d = undefined;
-        var S3d: Mat3d = undefined;
-        var V3d: Mat3d = undefined;
-
-        eigen.computeJacobiSVD3D(&F0_d, &U3d, &S3d, &V3d);
-
-        const Vt3d = mat.transpose3d(V3d);
-        const R0_3D_d = mat.mul3d(U3d, Vt3d);
-        const S0_3D_d = mat.mul3d(V3d, mat.mul3d(S3d, Vt3d));
-
-        const R0_3D = mat.mat3dToMat3f(R0_3D_d);
-        const S0_3D = mat.mat3dToMat3f(S0_3D_d);
-
-        var U2: Mat2d = undefined;
-        var S2: Mat2d = undefined;
-        var V2: Mat2d = undefined;
-
-        const F0d_2D = mat.mat2dFromMat2f(F0_2D);
-        eigen.computeJacobiSVD2D(&F0d_2D, &U2, &S2, &V2);
-        _ = mat.mul2d(U2, mat.transpose2d(V2));
+        const F0d = mat.mat3dFromMat3f(F0);
+        eigen.computeJacobiSVD3D(&F0d, &U, &S, &V);
+        const Vt0 = mat.transpose3d(V);
+        const R0 = mat.mul3d(U, Vt0);
+        const S0 = mat.mul3d(V, mat.mul3d(S, Vt0));
 
         // F1
-        const F1d_2D = mat.mat2dFromMat2f(F1_2D);
-        eigen.computeJacobiSVD2D(&F1d_2D, &U2, &S2, &V2);
-        const Vt = mat.transpose2d(V2);
-        const R1 = mat.mul2d(U2, Vt);
-        const S1 = mat.mul2d(V2, mat.mul2d(S2, Vt));
+        const F1d = mat.mat3dFromMat3f(F1);
+        eigen.computeJacobiSVD3D(&F1d, &U, &S, &V);
+        const Vt1 = mat.transpose3d(V);
+        const R1 = mat.mul3d(U, Vt1);
+        const S1 = mat.mul3d(V, mat.mul3d(S, Vt1));
 
         // F2
-        const F2d_2D = mat.mat2dFromMat2f(F2_2D);
-        eigen.computeJacobiSVD2D(&F2d_2D, &U2, &S2, &V2);
-        const Vt2 = mat.transpose2d(V2);
-        const R2 = mat.mul2d(U2, Vt2);
-        const S2m = mat.mul2d(V2, mat.mul2d(S2, Vt2));
+        const F2d = mat.mat3dFromMat3f(F2);
+        eigen.computeJacobiSVD3D(&F2d, &U, &S, &V);
+        const Vt2 = mat.transpose3d(V);
+        const R2 = mat.mul3d(U, Vt2);
+        const S2 = mat.mul3d(V, mat.mul3d(S, Vt2));
 
-        //Temporary to debug 2D arap computation
-        eigenvalues.*[0] = mat.identity2d;
-        eigenvectors.*[0] = mat.identity2d;
-        eigen.computeEigenValuesAndEigenVectors2d(&S1, &eigenvectors.*[1], &eigenvalues.*[1]);
-        eigen.computeEigenValuesAndEigenVectors2d(&S2m, &eigenvectors.*[2], &eigenvalues.*[2]);
+        eigen.computeEigenValuesAndEigenVectors3d(&S0, &eigenvectors.*[0], &eigenvalues.*[0]);
+        eigen.computeEigenValuesAndEigenVectors3d(&S1, &eigenvectors.*[1], &eigenvalues.*[1]);
+        eigen.computeEigenValuesAndEigenVectors3d(&S2, &eigenvectors.*[2], &eigenvalues.*[2]);
 
-        return .{ computeAsRigidAsPossibleEnergy3D(F0, R0_3D, S0_3D), computeAsRigidAsPossibleEnergy(F1_2D, mat.mat2fFromMat2d(R1), mat.mat2fFromMat2d(S1)), computeAsRigidAsPossibleEnergy(F2_2D, mat.mat2fFromMat2d(R2), mat.mat2fFromMat2d(S2m)) };
+        return .{ computeAsRigidAsPossibleEnergy3D(F0, mat.mat3fFromMat3d(R0), mat.mat3fFromMat3d(S0)), computeAsRigidAsPossibleEnergy3D(F1, mat.mat3fFromMat3d(R1), mat.mat3fFromMat3d(S1)), computeAsRigidAsPossibleEnergy3D(F2, mat.mat3fFromMat3d(R2), mat.mat3fFromMat3d(S2)) };
     }
 
     pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) void {
@@ -302,7 +283,7 @@ pub const Parameters = struct {
 
         const nb_triangle: usize = ibo.nb_indices / 3;
 
-        const SSBO_structure = struct { eigenvectors: [3]Mat2f, eigenvalues: [3]Vec2f, padding: [2]f32, arap_energy: Vec4f };
+        const SSBO_structure = struct { eigenvectors: [3][3]Vec4f, eigenvalues: [3]Vec4f, arap_energy: Vec4f };
 
         // Memory allocation for 3 eigenvectors matrices + 3 eigenvalues diagonales matrices + ARAP energy
         ssbo.memoryAllocationForMapping(@intCast(nb_triangle * (@sizeOf(SSBO_structure))));
@@ -321,27 +302,29 @@ pub const Parameters = struct {
                 array_ibo[tri_idx * 3 + 2],
             };
 
-            var eigenvectorsd: [3]Mat2d = undefined;
-            var eigenvalues_mat: [3]Mat2d = undefined;
+            var eigenvectorsd: [3]Mat3d = undefined;
+            var eigenvalues_mat: [3]Mat3d = undefined;
             const arap_energy: Vec3f = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &eigenvectorsd, &eigenvalues_mat);
 
-            var eigenvectors: [3]Mat2f = undefined;
-            eigenvectors[0] = mat.mat2fFromMat2d(eigenvectorsd[0]);
-            eigenvectors[1] = mat.mat2fFromMat2d(eigenvectorsd[1]);
-            eigenvectors[2] = mat.mat2fFromMat2d(eigenvectorsd[2]);
+            var eigenvectors: [3][3]Vec4f = undefined;
 
-            var eigenvalues: [3]Vec2f = undefined;
-            eigenvalues[0] = .{ @floatCast(eigenvalues_mat[0][0][0]), @floatCast(eigenvalues_mat[0][1][1]) };
-            eigenvalues[1] = .{ @floatCast(eigenvalues_mat[1][0][0]), @floatCast(eigenvalues_mat[1][1][1]) };
-            eigenvalues[2] = .{ @floatCast(eigenvalues_mat[2][0][0]), @floatCast(eigenvalues_mat[2][1][1]) };
+            for (0..3) |j| {
+                const m = eigenvectorsd[j];
+                eigenvectors[j][0] = Vec4f{ @floatCast(m[0][0]), @floatCast(m[0][1]), @floatCast(m[0][2]), 0.0 };
+                eigenvectors[j][1] = Vec4f{ @floatCast(m[1][0]), @floatCast(m[1][1]), @floatCast(m[1][2]), 0.0 };
+                eigenvectors[j][2] = Vec4f{ @floatCast(m[2][0]), @floatCast(m[2][1]), @floatCast(m[2][2]), 0.0 };
+            }
+
+            var eigenvalues: [3]Vec4f = undefined;
+            eigenvalues[0] = .{ @floatCast(eigenvalues_mat[0][0][0]), @floatCast(eigenvalues_mat[0][1][1]), @floatCast(eigenvalues_mat[0][2][2]), 0 };
+            eigenvalues[1] = .{ @floatCast(eigenvalues_mat[1][0][0]), @floatCast(eigenvalues_mat[1][1][1]), @floatCast(eigenvalues_mat[1][2][2]), 0 };
+            eigenvalues[2] = .{ @floatCast(eigenvalues_mat[2][0][0]), @floatCast(eigenvalues_mat[2][1][1]), @floatCast(eigenvalues_mat[2][2][2]), 0 };
 
             const ssbo_content: SSBO_structure = .{
                 .eigenvectors = eigenvectors,
                 .eigenvalues = eigenvalues,
-                .padding = .{ 0, 0 },
                 .arap_energy = Vec4f{ arap_energy[0], arap_energy[1], arap_energy[2], 1 },
             };
-
             array_ssbo[tri_idx] = ssbo_content;
         }
 
