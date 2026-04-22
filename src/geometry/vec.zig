@@ -48,6 +48,17 @@ pub fn vec3fToVec3d(v: Vec3f) Vec3d {
     };
 }
 
+pub fn printVec(v: anytype) void {
+    std.debug.print("-----------------\n", .{});
+
+    for (v) |val| {
+        std.debug.print("{:.6} ", .{val});
+    }
+    std.debug.print(")\n", .{});
+
+    std.debug.print("-----------------\n", .{});
+}
+
 pub fn splat2f(scalar: f32) Vec2f {
     return @splat(scalar);
 }

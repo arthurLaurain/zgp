@@ -201,38 +201,6 @@ vec4 addColorForSelectedOneRing(vec4 rgba)
   return mix(color, rgba, t);
 }
 
-mat2 expSPD(mat2 M)
-{
-    float a = M[0][0];
-    float b = M[0][1];
-    float c = M[1][1];
-
-    float t = 0.5 * (a + c);
-    float d = sqrt(max(0.0, 0.25 * (a - c) * (a - c) + b * b));
-
-    float l1 = t + d;
-    float l2 = t - d;
-
-    vec2 v1;
-    if (abs(b) > 1e-8)
-        v1 = normalize(vec2(b, l1 - a));
-    else
-        v1 = vec2(1.0, 0.0);
-
-    vec2 v2 = vec2(-v1.y, v1.x);
-
-    mat2 U = mat2(v1, v2);
-
-    float e1 = exp(l1);
-    float e2 = exp(l2);
-
-    mat2 D = mat2(
-        e1, 0.0,
-        0.0, e2
-    );
-
-    return U * D * transpose(U);
-}
 
 void computeInterpolationBetweenEigenElements(mat2 eigenvectors0, mat2 eigenvalues0, mat2 eigenvectors1, mat2 eigenvalues1, mat2 eigenvectors2, mat2 eigenvalues2, vec3 bary, out mat2 eigenvectors_S, out mat2 eigenvalues_S)
 {
@@ -255,17 +223,6 @@ void computeInterpolationBetweenEigenElements(mat2 eigenvectors0, mat2 eigenvalu
   eigenvalues_S = mat2(vec2(eigenvalues0[0][0] * bary.x + eigenvalues1[0][0] * bary.y + eigenvalues2[0][0] * bary.z, 0), vec2(0, eigenvalues0[1][1] * bary.x + eigenvalues1[1][1] * bary.y + eigenvalues2[1][1] * bary.z));
 }
 
-
-mat2 computeDistorsionMatrix(vec3 S0, vec3 S1, vec3 S2, vec3 barycentric)
-{
-  mat2 m0 = mat2(vec2(S0.x, S0.y), vec2(S0.y, S0.z)); 
-  mat2 m1 = mat2(vec2(S1.x, S1.y), vec2(S1.y, S1.z));
-  mat2 m2 = mat2(vec2(S2.x, S2.y), vec2(S2.y, S2.z));
-
-  mat2 L = barycentric.x * m0 + barycentric.y * m1 + barycentric.z * m2;
-
-  return expSPD(mat2(L));
-}
 
 void main() {
 
@@ -299,20 +256,9 @@ void main() {
 
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 
-
   vec2 r1 = hash12(int(id_vertices.x));
   vec2 r2 = hash12(int(id_vertices.y));
   vec2 r3 = hash12(int(id_vertices.z));
-
-  // dvec4 T0 = dvec4(triangles_distorsion[id_triangle * 12], triangles_distorsion[id_triangle * 12 + 1], triangles_distorsion[id_triangle * 12 + 2], triangles_distorsion[id_triangle * 12 + 3]);
-  // dvec4 T1 = dvec4(triangles_distorsion[id_triangle * 12 + 4], triangles_distorsion[id_triangle * 12 + 5], triangles_distorsion[id_triangle * 12 + 6], triangles_distorsion[id_triangle * 12 + 7]);
-  // dvec4 T2 = dvec4(triangles_distorsion[id_triangle * 12 + 8], triangles_distorsion[id_triangle * 12 + 9], triangles_distorsion[id_triangle * 12 + 10], triangles_distorsion[id_triangle * 12 + 11]);
-
-  // mat2 S = computeDistorsionMatrix(T0.xyz, T1.xyz, T2.xyz, bary);
-
-  // vec3 arap_energy = vec3(T0.w, T1.w, T2.w) * u_scale_distorsion;
-  // float angle_distorsion = abs((distorsions.x - distorsions.z)) * u_scale_distorsion;
-  // float area_distorsion = abs(1. - distorsions.x * distorsions.z) * u_scale_distorsion;
 
   vec3 c1;
   vec3 c2;
@@ -374,23 +320,12 @@ void main() {
   //   f_color = vec4(area_distorsion,0,0,1);
   if(u_visu_arap_energy)
   {
-    vec3 arap = vec3(
-        float(distorsion.arap_energy.x),
-        float(distorsion.arap_energy.y),
-        float(distorsion.arap_energy.z)
-    );
-    float energy = w1 * arap.x + w2 * arap.y + w3 * arap.z;
+    float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
     f_color = vec4(distorsion.arap_energy.x * u_scale_distorsion, 0., 0., 1.);
-
-    if(arap.x >= 1. && arap.x <= 2.)
-      f_color = vec4(1.);
-    else
-      f_color = vec4(0.);
   }
   else
     f_color = vec4(result);
 
-  f_color = vec4(bary.x,0,0, 1.);
   f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
 
 
