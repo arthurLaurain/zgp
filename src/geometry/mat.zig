@@ -172,11 +172,11 @@ pub fn transpose3d(m: [3][3]f64) [3][3]f64 {
 pub fn printMatrix(m: anytype) void {
     std.debug.print("-----------------\n", .{});
 
-    for (m) |row| {
+    for (0..m[0].len) |j| {
         std.debug.print("( ", .{});
 
-        for (row) |val| {
-            std.debug.print("{:.6} ", .{val});
+        for (m) |row| {
+            std.debug.print("{:.6} ", .{row[j]});
         }
 
         std.debug.print(")\n", .{});

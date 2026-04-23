@@ -283,9 +283,8 @@ pub const Parameters = struct {
 
         const nb_triangle: usize = ibo.nb_indices / 3;
 
-        const SSBO_structure = struct { eigenvectors: [3][3]Vec4f, eigenvalues: [3]Vec4f, arap_energy: Vec4f };
+        const SSBO_structure = struct { eigenvectors: [3]Mat2f, eigenvalues: [3]Vec2f, padding: f32, arap_energy: Vec4f };
 
-        // Memory allocation for 3 eigenvectors matrices + 3 eigenvalues diagonales matrices + ARAP energy
         ssbo.memoryAllocationForMapping(@intCast(nb_triangle * (@sizeOf(SSBO_structure))));
 
         gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
@@ -306,23 +305,30 @@ pub const Parameters = struct {
             var eigenvalues_mat: [3]Mat3d = undefined;
             const arap_energy: Vec3f = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &eigenvectorsd, &eigenvalues_mat);
 
-            var eigenvectors: [3][3]Vec4f = undefined;
+            var eigenvectors: [3]Mat2f = undefined;
+            var eigenvalues: [3]Vec2f = undefined;
 
             for (0..3) |j| {
                 const m = eigenvectorsd[j];
-                eigenvectors[j][0] = Vec4f{ @floatCast(m[0][0]), @floatCast(m[0][1]), @floatCast(m[0][2]), 0.0 };
-                eigenvectors[j][1] = Vec4f{ @floatCast(m[1][0]), @floatCast(m[1][1]), @floatCast(m[1][2]), 0.0 };
-                eigenvectors[j][2] = Vec4f{ @floatCast(m[2][0]), @floatCast(m[2][1]), @floatCast(m[2][2]), 0.0 };
+                const d = eigenvalues_mat[j];
+
+                const j0: usize = 1;
+                const j1: usize = 2;
+
+                eigenvectors[j] = Mat2f{
+                    .{ @floatCast(m[0][j0]), @floatCast(m[0][j1]) },
+                    .{ @floatCast(m[1][j0]), @floatCast(m[1][j1]) },
+                };
+
+                eigenvalues[j] = Vec2f{
+                    @floatCast(d[j0][j0]),
+                    @floatCast(d[j1][j1]),
+                };
             }
-
-            var eigenvalues: [3]Vec4f = undefined;
-            eigenvalues[0] = .{ @floatCast(eigenvalues_mat[0][0][0]), @floatCast(eigenvalues_mat[0][1][1]), @floatCast(eigenvalues_mat[0][2][2]), 0 };
-            eigenvalues[1] = .{ @floatCast(eigenvalues_mat[1][0][0]), @floatCast(eigenvalues_mat[1][1][1]), @floatCast(eigenvalues_mat[1][2][2]), 0 };
-            eigenvalues[2] = .{ @floatCast(eigenvalues_mat[2][0][0]), @floatCast(eigenvalues_mat[2][1][1]), @floatCast(eigenvalues_mat[2][2][2]), 0 };
-
             const ssbo_content: SSBO_structure = .{
                 .eigenvectors = eigenvectors,
                 .eigenvalues = eigenvalues,
+                .padding = 0,
                 .arap_energy = Vec4f{ arap_energy[0], arap_energy[1], arap_energy[2], 1 },
             };
             array_ssbo[tri_idx] = ssbo_content;
