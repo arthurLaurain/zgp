@@ -37,10 +37,16 @@ layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
   float vertices_normal[];
 };
 
+// struct SSBO_distorsion
+// {
+//   mat2 eigenvectors[3];
+//   vec2 eigenvalues[3];
+//   vec4 arap_energy;
+// };
+
 struct SSBO_distorsion
 {
-  mat2 eigenvectors[3];
-  vec2 eigenvalues[3];
+  mat2 S[3];
   vec4 arap_energy;
 };
 
@@ -288,34 +294,40 @@ void main() {
 
   SSBO_distorsion distorsion = distorsions[id_triangle];
 
-  mat2 eigenvectors0 = distorsion.eigenvectors[0];
-  mat2 eigenvectors1 = distorsion.eigenvectors[1];
-  mat2 eigenvectors2 = distorsion.eigenvectors[2];
+  // mat2 eigenvectors0 = distorsion.eigenvectors[0];
+  // mat2 eigenvectors1 = distorsion.eigenvectors[1];
+  // mat2 eigenvectors2 = distorsion.eigenvectors[2];
 
-  mat2 eigenvalues0 = mat2(
-    vec2(distorsion.eigenvalues[0].x, 0.0),
-    vec2(0.0, distorsion.eigenvalues[0].y));
+  // mat2 eigenvalues0 = mat2(
+  //   vec2(distorsion.eigenvalues[0].x, 0.0),
+  //   vec2(0.0, distorsion.eigenvalues[0].y));
 
-  mat2 eigenvalues1 = mat2(
-    vec2(distorsion.eigenvalues[1].x, 0.0),
-    vec2(0.0, distorsion.eigenvalues[1].y));
+  // mat2 eigenvalues1 = mat2(
+  //   vec2(distorsion.eigenvalues[1].x, 0.0),
+  //   vec2(0.0, distorsion.eigenvalues[1].y));
 
-  mat2 eigenvalues2 = mat2(
-    vec2(distorsion.eigenvalues[2].x, 0.0),
-    vec2(0.0, distorsion.eigenvalues[2].y));
+  // mat2 eigenvalues2 = mat2(
+  //   vec2(distorsion.eigenvalues[2].x, 0.0),
+  //   vec2(0.0, distorsion.eigenvalues[2].y));
 
-  mat2 eigenvectors_S = mat2(0.);
-  mat2 eigenvalues_S = mat2(0.);
+  // mat2 eigenvectors_S = mat2(0.);
+  // mat2 eigenvalues_S = mat2(0.);
 
-  computeInterpolationBetweenEigenElements(eigenvectors0, eigenvalues0, eigenvectors1, eigenvalues1, eigenvectors2, eigenvalues2, bary, eigenvectors_S, eigenvalues_S);
+  // computeInterpolationBetweenEigenElements(eigenvectors0, eigenvalues0, eigenvectors1, eigenvalues1, eigenvectors2, eigenvalues2, bary, eigenvectors_S, eigenvalues_S);
 
-  mat2 S = inverse(eigenvectors_S * eigenvalues_S * transpose(eigenvectors_S));
+  // mat2 S = eigenvectors_S * eigenvalues_S * transpose(eigenvectors_S);
+
+  // mat2 S0 = eigenvectors0 * eigenvalues0 * transpose(eigenvectors0);
+  // mat2 S1 = eigenvectors1 * eigenvalues1 * transpose(eigenvectors1);
+  // mat2 S2 = eigenvectors2 * eigenvalues2 * transpose(eigenvectors2);
+
+
 
   if(u_compense_distorsions)
   {
-    c1 = texture(u_exemplar_texture, (S * u1.xy) + r1).xyz;
-    c2 = texture(u_exemplar_texture, (S * u2.xy) + r2).xyz;
-    c3 = texture(u_exemplar_texture, (S * u3.xy) + r3).xyz;
+    c1 = texture(u_exemplar_texture, ((inverse(distorsion.S[0] * u_scale_distorsion)) * u1.xy) + r1).xyz;
+    c2 = texture(u_exemplar_texture, ((inverse(distorsion.S[1] * u_scale_distorsion)) * u2.xy) + r2).xyz;
+    c3 = texture(u_exemplar_texture, ((inverse(distorsion.S[2] * u_scale_distorsion)) * u3.xy) + r3).xyz;
   }
   else
   {
