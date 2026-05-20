@@ -42,6 +42,7 @@ program: Shader,
 model_view_matrix_uniform: c_int = undefined,
 projection_matrix_uniform: c_int = undefined,
 ambiant_color_uniform: c_int = undefined,
+min_max_energy_uniform: c_int = undefined,
 light_position_uniform: c_int = undefined,
 id_exemplar_texture: c_int = undefined,
 exemplar_texture_uniform: c_int = undefined,
@@ -75,6 +76,7 @@ fn init() !ProceduralTexturing {
     pt.model_view_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_model_view_matrix");
     pt.projection_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_projection_matrix");
     pt.ambiant_color_uniform = gl.GetUniformLocation(pt.program.index, "u_ambiant_color");
+    pt.min_max_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_minmax_energy");
     pt.light_position_uniform = gl.GetUniformLocation(pt.program.index, "u_light_position");
     pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture");
     pt.scale_tex_coords_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_tex_coords");
@@ -126,6 +128,7 @@ pub const Parameters = struct {
     visu_angle_distorsion: bool = false,
     visu_arap_energy: bool = false,
     compense_distorsions: bool = false,
+    minmax_energy: Vec2f = .{ 0, 0 },
 
     pub fn init() Parameters {
         return .{
@@ -185,10 +188,6 @@ pub const Parameters = struct {
         return mat.squaredFroberniusNorm3d(F) + mat.squaredFroberniusNorm3d(R) - 2 * mat.trace3d(S);
     }
 
-    fn computeAsRigidAsPossibleEnergy(F: Mat2f, R: Mat2f, S: Mat2f) f32 {
-        return mat.squaredFroberniusNorm2d(F) + mat.squaredFroberniusNorm2d(R) - 2 * mat.trace2d(S);
-    }
-
     pub fn computeF(x0: Vec3f, x1: Vec3f, x2: Vec3f, n0: Vec3f) Mat3f {
         const uv01: Vec2f = getTexCoordFromVertexPlane(x1, x0, n0);
         const uv02: Vec2f = getTexCoordFromVertexPlane(x2, x0, n0);
@@ -208,60 +207,6 @@ pub const Parameters = struct {
 
         return mat.mat3fFromMat3d(XUU_1);
     }
-
-    pub fn distorsionsFromTriangleBasis(F: Mat3f, x0: Vec3f, x1: Vec3f, x2: Vec3f) Mat2f {
-        const t1 = vec.normalized3f(vec.sub3f(x1, x0));
-        const n = vec.normalized3f(vec.cross3f(t1, vec.sub3f(x2, x0)));
-        const t2 = vec.cross3f(n, t1);
-        const T: Mat3f = .{ t1, t2, n };
-        const TT: Mat3f = mat.transpose3f(T);
-        const F_local = mat.mul3f(TT, mat.mul3f(F, T));
-        return .{ .{ F_local[0][0], F_local[0][1] }, .{ F_local[1][0], F_local[1][1] } };
-    }
-
-    // pub fn computeDistorsionEigenVectors(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, eigenvectors: *[3]Mat3d, eigenvalues: *[3]Mat3d) Vec3f {
-    //     const x0: Vec3f = vbo_position[id_triangle[0]];
-    //     const x1: Vec3f = vbo_position[id_triangle[1]];
-    //     const x2: Vec3f = vbo_position[id_triangle[2]];
-
-    //     const n0: Vec3f = vbo_normal[id_triangle[0]];
-    //     const n1: Vec3f = vbo_normal[id_triangle[1]];
-    //     const n2: Vec3f = vbo_normal[id_triangle[2]];
-
-    //     const F0 = computeF(x0, x1, x2, n0);
-    //     const F1 = computeF(x1, x2, x0, n1);
-    //     const F2 = computeF(x2, x0, x1, n2);
-
-    //     var U: Mat3d = undefined;
-    //     var S: Mat3d = undefined;
-    //     var V: Mat3d = undefined;
-
-    //     const F0d = mat.mat3dFromMat3f(F0);
-    //     eigen.computeJacobiSVD3D(&F0d, &U, &S, &V);
-    //     const Vt0 = mat.transpose3d(V);
-    //     const R0 = mat.mul3d(U, Vt0);
-    //     const S0 = mat.mul3d(V, mat.mul3d(S, Vt0));
-
-    //     // F1
-    //     const F1d = mat.mat3dFromMat3f(F1);
-    //     eigen.computeJacobiSVD3D(&F1d, &U, &S, &V);
-    //     const Vt1 = mat.transpose3d(V);
-    //     const R1 = mat.mul3d(U, Vt1);
-    //     const S1 = mat.mul3d(V, mat.mul3d(S, Vt1));
-
-    //     // F2
-    //     const F2d = mat.mat3dFromMat3f(F2);
-    //     eigen.computeJacobiSVD3D(&F2d, &U, &S, &V);
-    //     const Vt2 = mat.transpose3d(V);
-    //     const R2 = mat.mul3d(U, Vt2);
-    //     const S2 = mat.mul3d(V, mat.mul3d(S, Vt2));
-
-    //     eigen.computeEigenValuesAndEigenVectors3d(&S0, &eigenvectors.*[0], &eigenvalues.*[0]);
-    //     eigen.computeEigenValuesAndEigenVectors3d(&S1, &eigenvectors.*[1], &eigenvalues.*[1]);
-    //     eigen.computeEigenValuesAndEigenVectors3d(&S2, &eigenvectors.*[2], &eigenvalues.*[2]);
-
-    //     return .{ computeAsRigidAsPossibleEnergy3D(F0, mat.mat3fFromMat3d(R0), mat.mat3fFromMat3d(S0)), computeAsRigidAsPossibleEnergy3D(F1, mat.mat3fFromMat3d(R1), mat.mat3fFromMat3d(S1)), computeAsRigidAsPossibleEnergy3D(F2, mat.mat3fFromMat3d(R2), mat.mat3fFromMat3d(S2)) };
-    // }
 
     pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, scaleMatrix: *[3]Mat3d) Vec3f {
         const x0: Vec3f = vbo_position[id_triangle[0]];
@@ -304,13 +249,6 @@ pub const Parameters = struct {
         scaleMatrix[1] = S1;
         scaleMatrix[2] = S2;
 
-        // std.log.debug("S0\n", .{});
-        // mat.printMatrix(S0);
-        // std.log.debug("S1\n", .{});
-        // mat.printMatrix(S1);
-        // std.log.debug("S2\n", .{});
-        // mat.printMatrix(S2);
-
         return .{ computeAsRigidAsPossibleEnergy3D(F0, mat.mat3fFromMat3d(R0), mat.mat3fFromMat3d(S0)), computeAsRigidAsPossibleEnergy3D(F1, mat.mat3fFromMat3d(R1), mat.mat3fFromMat3d(S1)), computeAsRigidAsPossibleEnergy3D(F2, mat.mat3fFromMat3d(R2), mat.mat3fFromMat3d(S2)) };
     }
 
@@ -338,6 +276,9 @@ pub const Parameters = struct {
         const array_ssbo: [*]SSBO_structure = @ptrCast(@alignCast(ptr_ssbo));
 
         var i: usize = 0;
+        var min_energy = std.math.floatMax(f32);
+        var max_energy = std.math.floatMin(f32);
+
         while (i < nb_triangle) : (i += 1) {
             const tri_idx = i;
 
@@ -347,35 +288,12 @@ pub const Parameters = struct {
                 array_ibo[tri_idx * 3 + 2],
             };
 
-            // var eigenvectorsd: [3]Mat3d = undefined;
-            // var eigenvalues_mat: [3]Mat3d = undefined;
-            // const arap_energy: Vec3f = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &eigenvectorsd, &eigenvalues_mat);
-
-            // var eigenvectors: [3]Mat2f = undefined;
-            // var eigenvalues: [3]Vec2f = undefined;
-
-            // for (0..3) |j| {
-            //     const m = eigenvectorsd[j];
-            //     const d = eigenvalues_mat[j];
-
-            //     eigenvectors[j] = Mat2f{
-            //         .{ @floatCast(m[1][0]), @floatCast(m[1][1]) },
-            //         .{ @floatCast(m[2][0]), @floatCast(m[2][1]) },
-            //     };
-            //     eigenvalues[j] = Vec2f{
-            //         @floatCast(d[1][1]),
-            //         @floatCast(d[2][2]),
-            //     };
-            // }
-            // const ssbo_content: SSBO_structure = .{
-            //     .eigenvectors = eigenvectors,
-            //     .eigenvalues = eigenvalues,
-            //     .padding = .{ 0, 0 },
-            //     .arap_energy = Vec4f{ arap_energy[0], arap_energy[1], arap_energy[2], 1 },
-            // };
-
             var S_d: [3]Mat3d = undefined;
             const arap_energy: Vec3f = p.computeDistorsion(id_triangle, array_vbo_position, array_vbo_normal, &S_d);
+
+            for (0..3) |value| {
+                if (arap_energy[value] > max_energy) max_energy = arap_energy[value] else if (arap_energy[value] < min_energy) min_energy = arap_energy[value];
+            }
 
             var S: [3]Mat2f = undefined;
 
@@ -390,8 +308,11 @@ pub const Parameters = struct {
                 .S = S,
                 .arap_energy = Vec4f{ arap_energy[0], arap_energy[1], arap_energy[2], 1 },
             };
+
             array_ssbo[tri_idx] = ssbo_content;
         }
+
+        p.minmax_energy = .{ min_energy, max_energy };
 
         gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.index);
         _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
@@ -425,6 +346,7 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
+        gl.Uniform2fv(p.shader.min_max_energy_uniform, 1, @ptrCast(&p.minmax_energy));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
         gl.UniformMatrix4fv(p.shader.model_view_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.model_view_matrix));
         gl.UniformMatrix4fv(p.shader.projection_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.projection_matrix));

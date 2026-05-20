@@ -53,22 +53,14 @@ pub const zero4f: Mat4f = .{ vec.zero4f, vec.zero4f, vec.zero4f, vec.zero4f };
 pub const zero3d: Mat3d = .{ vec.zero3d, vec.zero3d, vec.zero3d };
 pub const zero4d: Mat4d = .{ vec.zero4d, vec.zero4d, vec.zero4d, vec.zero4d };
 
-pub fn squaredFroberniusNorm2d(m: Mat2f) f32 {
-    return m[0][0] * m[0][0] + m[0][1] * m[0][1] + m[1][0] * m[1][0] + m[1][1] * m[1][1];
-}
-
 pub fn squaredFroberniusNorm3d(m: Mat3f) f32 {
     var n: f32 = 0;
-    for (0..2) |c| {
-        for (0..2) |r| {
+    for (0..3) |c| {
+        for (0..3) |r| {
             n += m[c][r] * m[c][r];
         }
     }
     return n;
-}
-
-pub fn trace2d(m: Mat2f) f32 {
-    return m[0][0] + m[1][1];
 }
 
 pub fn trace3d(m: Mat3f) f32 {
