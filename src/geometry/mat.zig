@@ -237,8 +237,8 @@ pub fn mul2d(a: Mat2d, b: Mat2d) Mat2d {
 
 pub fn mul3d(a: Mat3d, b: Mat3d) Mat3d {
     var result: Mat3d = undefined;
-    for (0..2) |i| {
-        for (0..2) |j| {
+    for (0..3) |i| {
+        for (0..3) |j| {
             result[i][j] = a[0][j] * b[i][0] + a[1][j] * b[i][1] + a[2][j] * b[i][2];
         }
     }

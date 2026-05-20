@@ -169,8 +169,10 @@ pub const Parameters = struct {
     pub fn getTexCoordFromVertexPlane(P: Vec3f, A: Vec3f, N: Vec3f) Vec2f {
         const projPoint: Vec3f = vec.sub3f(P, vec.mulScalar3f(N, vec.dot3f(vec.sub3f(P, A), N)));
 
-        const up: Vec3f = .{ 0, 1, 0 };
-        var T: Vec3f = vec.cross3f(N, up);
+        var d: Vec3f = .{ 0, 1, 0 };
+        if (@abs(N[1]) >= 0.99)
+            d = .{ 1, 0, 0 };
+        var T: Vec3f = vec.cross3f(N, d);
         T = vec.normalized3f(T);
         const BT: Vec3f = vec.cross3f(N, T);
 
@@ -197,7 +199,8 @@ pub const Parameters = struct {
         const x01: Vec3f = vec.sub3f(x1, x0);
         const x02: Vec3f = vec.sub3f(x2, x0);
 
-        const X: Mat3d = .{ vec.vec3fToVec3d(x01), vec.vec3fToVec3d(x02), vec.vec3fToVec3d(n0) };
+        const n: Vec3f = vec.normalized3f(vec.cross3f(x01, x02));
+        const X: Mat3d = .{ vec.vec3fToVec3d(x01), vec.vec3fToVec3d(x02), vec.vec3fToVec3d(n) };
         const U: Mat3d = .{ vec.vec3fToVec3d(uv01_extended), vec.vec3fToVec3d(uv02_extended), .{ 0.0, 0.0, 1.0 } };
         const U_1: Mat3d = eigen.computeInverse3d(U).?;
 
@@ -216,49 +219,49 @@ pub const Parameters = struct {
         return .{ .{ F_local[0][0], F_local[0][1] }, .{ F_local[1][0], F_local[1][1] } };
     }
 
-    pub fn computeDistorsionEigenVectors(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, eigenvectors: *[3]Mat3d, eigenvalues: *[3]Mat3d) Vec3f {
-        const x0: Vec3f = vbo_position[id_triangle[0]];
-        const x1: Vec3f = vbo_position[id_triangle[1]];
-        const x2: Vec3f = vbo_position[id_triangle[2]];
+    // pub fn computeDistorsionEigenVectors(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, eigenvectors: *[3]Mat3d, eigenvalues: *[3]Mat3d) Vec3f {
+    //     const x0: Vec3f = vbo_position[id_triangle[0]];
+    //     const x1: Vec3f = vbo_position[id_triangle[1]];
+    //     const x2: Vec3f = vbo_position[id_triangle[2]];
 
-        const n0: Vec3f = vbo_normal[id_triangle[0]];
-        const n1: Vec3f = vbo_normal[id_triangle[1]];
-        const n2: Vec3f = vbo_normal[id_triangle[2]];
+    //     const n0: Vec3f = vbo_normal[id_triangle[0]];
+    //     const n1: Vec3f = vbo_normal[id_triangle[1]];
+    //     const n2: Vec3f = vbo_normal[id_triangle[2]];
 
-        const F0 = computeF(x0, x1, x2, n0);
-        const F1 = computeF(x1, x2, x0, n1);
-        const F2 = computeF(x2, x0, x1, n2);
+    //     const F0 = computeF(x0, x1, x2, n0);
+    //     const F1 = computeF(x1, x2, x0, n1);
+    //     const F2 = computeF(x2, x0, x1, n2);
 
-        var U: Mat3d = undefined;
-        var S: Mat3d = undefined;
-        var V: Mat3d = undefined;
+    //     var U: Mat3d = undefined;
+    //     var S: Mat3d = undefined;
+    //     var V: Mat3d = undefined;
 
-        const F0d = mat.mat3dFromMat3f(F0);
-        eigen.computeJacobiSVD3D(&F0d, &U, &S, &V);
-        const Vt0 = mat.transpose3d(V);
-        const R0 = mat.mul3d(U, Vt0);
-        const S0 = mat.mul3d(V, mat.mul3d(S, Vt0));
+    //     const F0d = mat.mat3dFromMat3f(F0);
+    //     eigen.computeJacobiSVD3D(&F0d, &U, &S, &V);
+    //     const Vt0 = mat.transpose3d(V);
+    //     const R0 = mat.mul3d(U, Vt0);
+    //     const S0 = mat.mul3d(V, mat.mul3d(S, Vt0));
 
-        // F1
-        const F1d = mat.mat3dFromMat3f(F1);
-        eigen.computeJacobiSVD3D(&F1d, &U, &S, &V);
-        const Vt1 = mat.transpose3d(V);
-        const R1 = mat.mul3d(U, Vt1);
-        const S1 = mat.mul3d(V, mat.mul3d(S, Vt1));
+    //     // F1
+    //     const F1d = mat.mat3dFromMat3f(F1);
+    //     eigen.computeJacobiSVD3D(&F1d, &U, &S, &V);
+    //     const Vt1 = mat.transpose3d(V);
+    //     const R1 = mat.mul3d(U, Vt1);
+    //     const S1 = mat.mul3d(V, mat.mul3d(S, Vt1));
 
-        // F2
-        const F2d = mat.mat3dFromMat3f(F2);
-        eigen.computeJacobiSVD3D(&F2d, &U, &S, &V);
-        const Vt2 = mat.transpose3d(V);
-        const R2 = mat.mul3d(U, Vt2);
-        const S2 = mat.mul3d(V, mat.mul3d(S, Vt2));
+    //     // F2
+    //     const F2d = mat.mat3dFromMat3f(F2);
+    //     eigen.computeJacobiSVD3D(&F2d, &U, &S, &V);
+    //     const Vt2 = mat.transpose3d(V);
+    //     const R2 = mat.mul3d(U, Vt2);
+    //     const S2 = mat.mul3d(V, mat.mul3d(S, Vt2));
 
-        eigen.computeEigenValuesAndEigenVectors3d(&S0, &eigenvectors.*[0], &eigenvalues.*[0]);
-        eigen.computeEigenValuesAndEigenVectors3d(&S1, &eigenvectors.*[1], &eigenvalues.*[1]);
-        eigen.computeEigenValuesAndEigenVectors3d(&S2, &eigenvectors.*[2], &eigenvalues.*[2]);
+    //     eigen.computeEigenValuesAndEigenVectors3d(&S0, &eigenvectors.*[0], &eigenvalues.*[0]);
+    //     eigen.computeEigenValuesAndEigenVectors3d(&S1, &eigenvectors.*[1], &eigenvalues.*[1]);
+    //     eigen.computeEigenValuesAndEigenVectors3d(&S2, &eigenvectors.*[2], &eigenvalues.*[2]);
 
-        return .{ computeAsRigidAsPossibleEnergy3D(F0, mat.mat3fFromMat3d(R0), mat.mat3fFromMat3d(S0)), computeAsRigidAsPossibleEnergy3D(F1, mat.mat3fFromMat3d(R1), mat.mat3fFromMat3d(S1)), computeAsRigidAsPossibleEnergy3D(F2, mat.mat3fFromMat3d(R2), mat.mat3fFromMat3d(S2)) };
-    }
+    //     return .{ computeAsRigidAsPossibleEnergy3D(F0, mat.mat3fFromMat3d(R0), mat.mat3fFromMat3d(S0)), computeAsRigidAsPossibleEnergy3D(F1, mat.mat3fFromMat3d(R1), mat.mat3fFromMat3d(S1)), computeAsRigidAsPossibleEnergy3D(F2, mat.mat3fFromMat3d(R2), mat.mat3fFromMat3d(S2)) };
+    // }
 
     pub fn computeDistorsion(_: *Parameters, id_triangle: [3]u32, vbo_position: [*]Vec3f, vbo_normal: [*]Vec3f, scaleMatrix: *[3]Mat3d) Vec3f {
         const x0: Vec3f = vbo_position[id_triangle[0]];
@@ -301,12 +304,12 @@ pub const Parameters = struct {
         scaleMatrix[1] = S1;
         scaleMatrix[2] = S2;
 
-        std.log.debug("S0\n", .{});
-        mat.printMatrix(S0);
-        std.log.debug("S1\n", .{});
-        mat.printMatrix(S1);
-        std.log.debug("S2\n", .{});
-        mat.printMatrix(S2);
+        // std.log.debug("S0\n", .{});
+        // mat.printMatrix(S0);
+        // std.log.debug("S1\n", .{});
+        // mat.printMatrix(S1);
+        // std.log.debug("S2\n", .{});
+        // mat.printMatrix(S2);
 
         return .{ computeAsRigidAsPossibleEnergy3D(F0, mat.mat3fFromMat3d(R0), mat.mat3fFromMat3d(S0)), computeAsRigidAsPossibleEnergy3D(F1, mat.mat3fFromMat3d(R1), mat.mat3fFromMat3d(S1)), computeAsRigidAsPossibleEnergy3D(F2, mat.mat3fFromMat3d(R2), mat.mat3fFromMat3d(S2)) };
     }

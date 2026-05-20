@@ -114,8 +114,9 @@ vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
 {
     vec3 projPoint = P - dot(P - A, N) * N;
 
-    vec3 up = vec3(0,1,0);
-    vec3 T = normalize(cross(N, up));
+    vec3 d = vec3(0,1,0);
+    if(abs(N.y) >= 0.99) d = vec3(1,0,0);
+    vec3 T = normalize(cross(N, d));
     vec3 BT = cross(N, T);
 
     vec3 AP = projPoint - A;
@@ -321,13 +322,11 @@ void main() {
   // mat2 S1 = eigenvectors1 * eigenvalues1 * transpose(eigenvectors1);
   // mat2 S2 = eigenvectors2 * eigenvalues2 * transpose(eigenvectors2);
 
-
-
   if(u_compense_distorsions)
   {
-    c1 = texture(u_exemplar_texture, ((inverse(distorsion.S[0] * u_scale_distorsion)) * u1.xy) + r1).xyz;
-    c2 = texture(u_exemplar_texture, ((inverse(distorsion.S[1] * u_scale_distorsion)) * u2.xy) + r2).xyz;
-    c3 = texture(u_exemplar_texture, ((inverse(distorsion.S[2] * u_scale_distorsion)) * u3.xy) + r3).xyz;
+    c1 = texture(u_exemplar_texture, distorsion.S[0] * u1.xy + r1).xyz;
+    c2 = texture(u_exemplar_texture, distorsion.S[1] * u2.xy + r2).xyz;
+    c3 = texture(u_exemplar_texture, distorsion.S[2] * u3.xy + r3).xyz;
   }
   else
   {
@@ -342,7 +341,7 @@ void main() {
   {
     float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
     
-    f_color = vec4(energy * u_scale_distorsion, 0., 0., 1.);
+    f_color = vec4(energy * u_scale_distorsion, 0., 0.  , 1.);
   }
   else
     f_color = vec4(result);
