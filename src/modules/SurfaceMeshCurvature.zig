@@ -6,7 +6,7 @@ const assert = std.debug.assert;
 const imgui_utils = @import("../ui/imgui.zig");
 const zgp_log = std.log.scoped(.zgp);
 
-const c = @import("../main.zig").c;
+const c = @import("c");
 
 const AppContext = @import("../main.zig").AppContext;
 const Module = @import("Module.zig");
@@ -27,17 +27,16 @@ module: Module = .{
         .rightClickMenu = rightClickMenu,
     },
 },
-surface_meshes_curvature_datas: std.AutoHashMap(*SurfaceMesh, curvature.SurfaceMeshCurvatureDatas),
+surface_meshes_curvature_datas: std.AutoHashMapUnmanaged(*SurfaceMesh, curvature.SurfaceMeshCurvatureDatas) = .empty,
 
 pub fn init(app_ctx: *AppContext) SurfaceMeshCurvature {
     return .{
         .app_ctx = app_ctx,
-        .surface_meshes_curvature_datas = .init(app_ctx.allocator),
     };
 }
 
 pub fn deinit(smc: *SurfaceMeshCurvature) void {
-    smc.surface_meshes_curvature_datas.deinit();
+    smc.surface_meshes_curvature_datas.deinit(smc.app_ctx.allocator);
 }
 
 fn computeVertexCurvatures(
@@ -50,7 +49,7 @@ fn computeVertexCurvatures(
     face_area: SurfaceMesh.CellData(.face, f32),
     vertex_curvature: curvature.SurfaceMeshCurvatureDatas,
 ) !void {
-    var timer = try std.time.Timer.start();
+    const t = std.Io.Timestamp.now(smc.app_ctx.io, .real);
 
     try curvature.computeVertexCurvatures(
         smc.app_ctx,
@@ -68,7 +67,7 @@ fn computeVertexCurvatures(
     smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_curvature.vertex_Kmax.?);
     smc.app_ctx.requestRedraw();
 
-    const elapsed: f64 = @floatFromInt(timer.read());
+    const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, smc.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Curvatures computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
 }
 
@@ -80,7 +79,7 @@ pub fn surfaceMeshCurvatureDatas(smc: *SurfaceMeshCurvature, surface_mesh: *Surf
 /// Create and store a CurvatureDatas for the created SurfaceMesh.
 pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const smc: *SurfaceMeshCurvature = @alignCast(@fieldParentPtr("module", m));
-    _ = smc.surface_meshes_curvature_datas.put(surface_mesh, .{}) catch {
+    _ = smc.surface_meshes_curvature_datas.put(smc.app_ctx.allocator, surface_mesh, .{}) catch {
         zgp_log.err("Error creating CurvatureDatas for new SurfaceMesh", .{});
     };
 }
@@ -147,7 +146,7 @@ pub fn rightClickMenu(m: *Module) void {
             }
             c.ImGui_PopID();
 
-            if (c.ImGui_ButtonEx(c.ICON_FA_DATABASE ++ " Create missing datas", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            if (c.ImGui_ButtonEx(c.ICON_FA_DATABASE ++ " Create curvature datas", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
                 inline for (@typeInfo(curvature.SurfaceMeshCurvatureDatas).@"struct".fields) |*field| {
                     if (@field(curvature_datas, field.name) == null) {
                         const maybe_data = sm.addData(@typeInfo(field.type).optional.child.CellType, @typeInfo(field.type).optional.child.DataType, field.name);
@@ -187,14 +186,13 @@ pub fn rightClickMenu(m: *Module) void {
                 };
             }
             imgui_utils.tooltip(
-                \\ Read:
+                \\ Following data should be available:
                 \\ - std vertex_position
                 \\ - std vertex_normal
                 \\ - std edge_dihedral_angle
                 \\ - std edge_length
                 \\ - std face_area
-                \\ Write:
-                \\ - given curvature data (kmin, Kmin, kmax, Kmax)
+                \\ - selected curvature data (kmin, Kmin, kmax, Kmax)
             );
             if (disabled) {
                 c.ImGui_EndDisabled();

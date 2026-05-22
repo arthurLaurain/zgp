@@ -1,10 +1,14 @@
 const SurfacePoint = @This();
 
+const std = @import("std");
+const assert = std.debug.assert;
+
 const SurfaceMesh = @import("SurfaceMesh.zig");
 const Cell = SurfaceMesh.Cell;
 
 const vec = @import("../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
+const geometry_utils = @import("../../geometry/utils.zig");
 
 // TODO: this code assumes that faces are triangles
 
@@ -17,28 +21,107 @@ pub const SurfacePointType = union(enum) {
 surface_mesh: *SurfaceMesh,
 type: SurfacePointType,
 
-pub fn interpolate(sp: *const SurfacePoint, comptime T: type, data: SurfaceMesh.CellData(.vertex, T)) T {
+// Read values from the given data in the underlying SurfaceMesh.
+// Value is interpolated depending on the type of the SurfacePoint and the CellType on which the data is defined.
+pub fn readData(sp: *const SurfacePoint, comptime T: type, comptime cell_type: SurfaceMesh.CellType, data: SurfaceMesh.CellData(cell_type, T)) T {
+    assert(sp.surface_mesh == data.surface_mesh);
     return switch (sp.type) {
-        .vertex => |v| data.value(v),
-        .edge => |e| {
-            const v0 = data.value(.{ .vertex = e.cell.dart() });
-            const v1 = data.value(.{ .vertex = sp.surface_mesh.phi1(e.cell.dart()) });
-            return vec.add3f(
-                vec.mulScalar3f(v0, 1.0 - e.t),
-                vec.mulScalar3f(v1, e.t),
-            );
+        // the SurfacePoint sits on a vertex
+        .vertex => |v| switch (cell_type) {
+            // if the data is defined on vertices, simply take the value of the vertex
+            // if the data is defined on edges or faces, take the value of the first edge or face incident to the vertex
+            .vertex, .edge, .face => data.value(@unionInit(Cell, @tagName(cell_type), sp.surface_mesh.cellNonBoundaryDart(v))),
+            else => unreachable,
         },
-        .face => |f| {
-            const v0 = data.value(.{ .vertex = f.cell.dart() });
-            const v1 = data.value(.{ .vertex = sp.surface_mesh.phi1(f.cell.dart()) });
-            const v2 = data.value(.{ .vertex = sp.surface_mesh.phi_1(f.cell.dart()) });
-            return vec.add3f(
-                vec.mulScalar3f(v0, f.bcoords[0]),
-                vec.add3f(
-                    vec.mulScalar3f(v1, f.bcoords[1]),
-                    vec.mulScalar3f(v2, f.bcoords[2]),
-                ),
-            );
+        // the SurfacePoint sits on an edge
+        .edge => |e| switch (cell_type) {
+            // if the data is defined on vertices, interpolate using the edge parameter t
+            .vertex => interpolate2(
+                data.value(.{ .vertex = e.cell.dart() }),
+                data.value(.{ .vertex = sp.surface_mesh.phi1(e.cell.dart()) }),
+                e.t,
+            ),
+            // if the data is defined on edges, simply take the value of the edge
+            // if the data is defined on faces, take the value of the first face incident to the edge
+            .edge, .face => data.value(@unionInit(Cell, @tagName(cell_type), sp.surface_mesh.cellNonBoundaryDart(e.cell))),
+            else => unreachable,
         },
+        // the SurfacePoint sits on a face
+        .face => |f| switch (cell_type) {
+            // if the data is defined on vertices, interpolate using the face barycentric coordinates
+            .vertex => interpolate3(
+                data.value(.{ .vertex = f.cell.dart() }),
+                data.value(.{ .vertex = sp.surface_mesh.phi1(f.cell.dart()) }),
+                data.value(.{ .vertex = sp.surface_mesh.phi_1(f.cell.dart()) }),
+                f.bcoords[0],
+                f.bcoords[1],
+                f.bcoords[2],
+            ),
+            // if the data is defined on edges, interpolate using the face barycentric coordinates
+            .edge => blk: {
+                const wa = f.bcoords[1] * f.bcoords[2];
+                const wb = f.bcoords[0] * f.bcoords[2];
+                const wc = f.bcoords[0] * f.bcoords[1];
+                break :blk interpolate3(
+                    data.value(.{ .edge = sp.surface_mesh.phi1(f.cell.dart()) }), // opposite edge of v0 in the triangle
+                    data.value(.{ .edge = sp.surface_mesh.phi_1(f.cell.dart()) }), // opposite edge of v1 in the triangle
+                    data.value(.{ .edge = f.cell.dart() }), // opposite edge of v2 in the triangle
+                    wa / @max((wa + wb + wc), geometry_utils.epsilon),
+                    wb / @max((wa + wb + wc), geometry_utils.epsilon),
+                    wc / @max((wa + wb + wc), geometry_utils.epsilon),
+                );
+            },
+            // if the data is defined on faces, simply take the value
+            .face => data.value(f.cell),
+            else => unreachable,
+        },
+    };
+}
+
+fn interpolate2(a: anytype, b: @TypeOf(a), t: f32) @TypeOf(a) {
+    const T = @TypeOf(a);
+    const t_info = @typeInfo(T);
+    return switch (t_info) {
+        .int => @as(T, @intFromFloat(@as(f32, @floatFromInt(a)) * (1.0 - t) + @as(f32, @floatFromInt(b)) * t)),
+        .float => a * (1.0 - t) + b * t,
+        .array => blk: {
+            const t_info_array_child = @typeInfo(t_info.array.child);
+            // if (t_info_array_child != .int and t_info_array_child != .float) {
+            if (t_info_array_child != .float) {
+                @compileError("interpolate2 only supports float, int, or array of float/int types");
+            }
+            break :blk switch (t_info.array.len) {
+                1 => .{a[0] * (1.0 - t) + b[0] * t},
+                2 => vec.add2f(vec.mulScalar2f(a, 1.0 - t), vec.mulScalar2f(b, t)),
+                3 => vec.add3f(vec.mulScalar3f(a, 1.0 - t), vec.mulScalar3f(b, t)),
+                4 => vec.add4f(vec.mulScalar4f(a, 1.0 - t), vec.mulScalar4f(b, t)),
+                else => @compileError("interpolate2 only supports float, int, or array of float/int types"),
+            };
+        },
+        else => @compileError("interpolate2 only supports float, int, or array of float/int types"),
+    };
+}
+
+fn interpolate3(a: anytype, b: @TypeOf(a), c: @TypeOf(a), t0: f32, t1: f32, t2: f32) @TypeOf(a) {
+    const T = @TypeOf(a);
+    const t_info = @typeInfo(T);
+    return switch (t_info) {
+        .int => @as(T, @intFromFloat(@as(f32, @floatFromInt(a)) * t0 + @as(f32, @floatFromInt(b)) * t1 + @as(f32, @floatFromInt(c)) * t2)),
+        .float => a * t0 + b * t1 + c * t2,
+        .array => blk: {
+            const t_info_array_child = @typeInfo(t_info.array.child);
+            // if (t_info_array_child != .int and t_info_array_child != .float) {
+            if (t_info_array_child != .float) {
+                @compileError("interpolate3 only supports float, int, or array of float/int types");
+            }
+            break :blk switch (t_info.array.len) {
+                1 => .{a[0] * t0 + b[0] * t1 + c[0] * t2},
+                2 => vec.add2f(vec.mulScalar2f(a, t0), vec.add2f(vec.mulScalar2f(b, t1), vec.mulScalar2f(c, t2))),
+                3 => vec.add3f(vec.mulScalar3f(a, t0), vec.add3f(vec.mulScalar3f(b, t1), vec.mulScalar3f(c, t2))),
+                4 => vec.add4f(vec.mulScalar4f(a, t0), vec.add4f(vec.mulScalar4f(b, t1), vec.mulScalar4f(c, t2))),
+                else => @compileError("interpolate3 only supports float, int, or array of float/int types"),
+            };
+        },
+        else => @compileError("interpolate3 only supports float, int, or array of float/int types"),
     };
 }

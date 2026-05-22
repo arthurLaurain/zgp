@@ -10,15 +10,16 @@ const Vec4f = vec.Vec4f;
 const mat = @import("../../geometry/mat.zig");
 const Mat4f = mat.Mat4f;
 const Mat4d = mat.Mat4d;
-
-const eigen = @import("../../geometry/eigen.zig");
 const geometry_utils = @import("../../geometry/utils.zig");
+const eigen = @import("../../geometry/eigen.zig");
+
+const line_quadric_epsilon = 1e-4;
 
 /// Compute and return the QEM of the given vertex.
-/// The QEM of a vertex is defined as the sum of the outer products of the planes of its incident faces.
+/// The QEM of a vertex is defined as the weighted sum of the outer products of the planes of its incident faces.
 /// The plane of a face is defined by its normal n and a point p on the face as the 4D vector (n, -p.n).
 /// Face normals are assumed to be normalized.
-/// A regularization term is added to ensure QEM is well-conditioned by adding a small contribution of the vertices tangent basis planes.
+/// A regularization term is added to ensure QEM is well-conditioned by adding a small contribution of the vertices normal line quadric.
 /// SGP2025: Controlling Quadric Error Simplification with Line Quadrics
 /// https://www.dgp.toronto.edu/~hsuehtil/pdf/lineQuadric.pdf
 pub fn vertexQEM(
@@ -46,7 +47,6 @@ pub fn vertexQEM(
             vq = mat.add4f(vq, fq);
         }
     }
-    const line_quadric_epsilon = 1e-4;
     const tb = vertex_tangent_basis.value(vertex);
     const plane_tb1 = Vec4f{ tb[0][0], tb[0][1], tb[0][2], -vec.dot3f(p, tb[0]) };
     const plane_tb2 = Vec4f{ tb[1][0], tb[1][1], tb[1][2], -vec.dot3f(p, tb[1]) };
@@ -57,16 +57,17 @@ pub fn vertexQEM(
         ),
         line_quadric_epsilon * vertex_area.value(vertex),
     );
+
     vq = mat.add4f(vq, reg);
     return vq;
 }
 
 /// Compute the QEMs of all vertices of the given SurfaceMesh
 /// and store them in the given vertex_qem data.
-/// The QEM of a vertex is defined as the sum of the outer products of the planes of its incident faces.
+/// The QEM of a vertex is defined as the weighted sum of the outer products of the planes of its incident faces.
 /// The plane of a face is defined by its normal n and a point p on the face as the 4D vector (n, -p.n).
 /// Face normals are assumed to be normalized.
-/// A regularization term is added to ensure QEM is well-conditioned by adding a small contribution of the vertices tangent basis planes.
+/// A regularization term is added to ensure QEM is well-conditioned by adding a small contribution of the vertices normal line quadrics.
 /// SGP2025: Controlling Quadric Error Simplification with Line Quadrics
 /// https://www.dgp.toronto.edu/~hsuehtil/pdf/lineQuadric.pdf
 /// Face contributions to vertices quadrics are computed here in a face-centric manner => nice but do not allow for parallelization (TODO: measure performance)
@@ -81,7 +82,7 @@ pub fn computeVertexQEMs(
     vertex_qem: SurfaceMesh.CellData(.vertex, Mat4f),
 ) !void {
     vertex_qem.data.fill(mat.zero4f);
-    var face_it = try SurfaceMesh.CellIterator(.face).init(sm);
+    var face_it: SurfaceMesh.CellIterator = try .init(sm, .face);
     defer face_it.deinit();
     while (face_it.next()) |face| {
         const n = face_normal.value(face);
@@ -100,8 +101,7 @@ pub fn computeVertexQEMs(
             );
         }
     }
-    const line_quadric_epsilon = 1e-4;
-    var vertex_it = try SurfaceMesh.CellIterator(.vertex).init(sm);
+    var vertex_it: SurfaceMesh.CellIterator = try .init(sm, .vertex);
     defer vertex_it.deinit();
     while (vertex_it.next()) |vertex| {
         const p = vertex_position.value(vertex);

@@ -4,11 +4,10 @@ const std = @import("std");
 const gl = @import("gl");
 const gl_log = std.log.scoped(.gl);
 
-const c = @import("../main.zig").c;
+const c = @import("c");
 
 const Module = @import("../modules/Module.zig");
 
-const eigen = @import("../geometry/eigen.zig");
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 const Vec4f = vec.Vec4f;
@@ -23,6 +22,7 @@ const Camera = @import("Camera.zig");
 const FBO = @import("FBO.zig");
 const Texture2D = @import("Texture2D.zig");
 const FullscreenTexture = @import("shaders/fullscreen_texture/FullscreenTexture.zig");
+const InfiniteGrid = @import("shaders/infinite_grid/InfiniteGrid.zig");
 
 camera: Camera = undefined,
 
@@ -34,15 +34,16 @@ screen_depth_tex: Texture2D = undefined,
 
 fbo: FBO = undefined,
 fullscreen_texture_shader_parameters: FullscreenTexture.Parameters = undefined,
+infinite_grid_parameters: InfiniteGrid.Parameters = undefined,
 
-background_color: Vec4f = .{ 0.48, 0.48, 0.48, 1 },
+background_color: Vec4f = .{ 0.35, 0.35, 0.35, 1 },
+show_grid: bool = true,
 
 needs_redraw: bool = true,
 
 pub fn init(view: *View) void {
-    view.camera = Camera.init(
-        .{ 0.0, 0.0, 2.0 },
-        .{ 0.0, 0.0, -1.0 },
+    view.camera = .init(
+        .{ -0.5, 0.5, 2.0 },
         .{ 0.0, 1.0, 0.0 },
         .{ 0.0, 0.0, 0.0 },
         1.0,
@@ -68,11 +69,13 @@ pub fn init(view: *View) void {
         gl_log.err("Framebuffer not complete: {d}", .{status});
     }
 
-    view.fullscreen_texture_shader_parameters = FullscreenTexture.Parameters.init();
+    view.fullscreen_texture_shader_parameters = .init();
     view.fullscreen_texture_shader_parameters.setTexture(view.screen_color_tex);
+    view.infinite_grid_parameters = .init();
 }
 
 pub fn deinit(view: *View) void {
+    view.infinite_grid_parameters.deinit();
     view.fullscreen_texture_shader_parameters.deinit();
     view.fbo.deinit();
     view.screen_depth_tex.deinit();
@@ -90,6 +93,12 @@ pub fn resize(view: *View, width: c_int, height: c_int) void {
 }
 
 pub fn draw(view: *View, modules: []*Module) void {
+    gl.ClearColor(
+        view.background_color[0],
+        view.background_color[1],
+        view.background_color[2],
+        view.background_color[3],
+    );
     gl.Viewport(0, 0, view.width, view.height);
     if (view.needs_redraw) {
         gl.BindFramebuffer(gl.FRAMEBUFFER, view.fbo.index);
@@ -101,7 +110,13 @@ pub fn draw(view: *View, modules: []*Module) void {
         for (modules) |module| {
             module.draw(view.camera.view_matrix, view.camera.projection_matrix);
         }
+        if (view.show_grid) {
+            gl.DepthMask(gl.FALSE);
+            view.infinite_grid_parameters.draw(view.camera.view_matrix, view.camera.projection_matrix);
+            gl.DepthMask(gl.TRUE);
+        }
         gl.Disable(gl.DEPTH_TEST);
+
         view.needs_redraw = false;
     }
     gl.Clear(gl.COLOR_BUFFER_BIT);
@@ -115,31 +130,37 @@ pub fn menuBar(view: *View) void {
         if (c.ImGui_ColorEdit3("Background color", &view.background_color, c.ImGuiColorEditFlags_NoInputs)) {
             view.needs_redraw = true;
         }
+        if (c.ImGui_MenuItemEx("Show grid", null, view.show_grid, true)) {
+            view.show_grid = !view.show_grid;
+            view.needs_redraw = true;
+        }
         c.ImGui_Separator();
         if (c.ImGui_MenuItemEx("Perspective", null, view.camera.projection_type == .perspective, true)) {
             view.camera.projection_type = .perspective;
             view.camera.updateProjectionMatrix();
+            view.needs_redraw = true;
         }
         if (c.ImGui_MenuItemEx("Orthographic", null, view.camera.projection_type == .orthographic, true)) {
             view.camera.projection_type = .orthographic;
             view.camera.updateProjectionMatrix();
+            view.needs_redraw = true;
         }
         c.ImGui_Separator();
         if (c.ImGui_Button("Pivot around world origin")) {
             view.camera.pivot_position = .{ 0.0, 0.0, 0.0 };
-            view.camera.look_dir = vec.normalized3f(vec.sub3f(view.camera.pivot_position, view.camera.position));
-            view.camera.updateViewMatrix();
+            view.camera.lookAtPivotPosition();
+            view.needs_redraw = true;
         }
         if (c.ImGui_Button("Look at pivot point")) {
-            view.camera.look_dir = vec.normalized3f(vec.sub3f(view.camera.pivot_position, view.camera.position));
-            view.camera.updateViewMatrix();
+            view.camera.lookAtPivotPosition();
+            view.needs_redraw = true;
         }
     }
 }
 
 pub fn sdlEvent(view: *View, event: *const c.SDL_Event) void {
     switch (event.type) {
-        c.SDL_EVENT_MOUSE_BUTTON_UP => {
+        c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
             switch (event.button.button) {
                 c.SDL_BUTTON_LEFT => {
                     const modState = c.SDL_GetModState();
@@ -190,33 +211,23 @@ pub fn sdlEvent(view: *View, event: *const c.SDL_Event) void {
 
 /// Reconstruct the world position of the pixel at (x, y) in the view with given depth value z.
 /// z is expected to be in [0, 1], as read from the depth buffer.
-/// Returns null if the world position cannot be reconstructed (e.g. if the camera is not set or if the projection/view matrix cannot be inverted).
+/// Returns null if the world position cannot be reconstructed
 pub fn viewToWorldZ(view: *const View, x: f32, y: f32, z: f32) ?Vec3f {
-    // reconstruct the world position from the depth value
-    // warning: Eigen (via ceigen) uses double precision
-    const p_ndc: Vec4d = .{
-        2.0 * (x / @as(f64, @floatFromInt(view.width))) - 1.0,
-        1.0 - (2.0 * y) / @as(f64, @floatFromInt(view.height)),
+    // reconstruct the world position from the depth value by unprojecting the clip-space position
+    // corresponding to the pixel coordinates and depth value using the inverse projection/view matrices
+    const p_ndc: Vec4f = .{
+        2.0 * (x / @as(f32, @floatFromInt(view.width))) - 1.0,
+        1.0 - (2.0 * y) / @as(f32, @floatFromInt(view.height)),
         z * 2.0 - 1.0,
         1.0,
     };
-    const m_proj = mat.mat4dFromMat4f(view.camera.projection_matrix);
-    const m_proj_inv = eigen.computeInverse4d(m_proj) orelse {
-        gl_log.err("Cannot invert projection matrix", .{});
-        return null;
-    };
-    var p_view = mat.mulVec4d(m_proj_inv, p_ndc);
+    var p_view = mat.mulVec4f(view.camera.projection_matrix_inv, p_ndc);
     if (p_view[3] == 0.0) {
         gl_log.err("Cannot divide by zero w component", .{});
         return null;
     }
-    p_view = vec.divScalar4d(p_view, p_view[3]);
-    const m_view = mat.mat4dFromMat4f(view.camera.view_matrix);
-    const m_view_inv = eigen.computeInverse4d(m_view) orelse {
-        gl_log.err("Cannot invert view matrix", .{});
-        return null;
-    };
-    const p_world_f = vec.vec4fFromVec4d(mat.mulVec4d(m_view_inv, p_view));
+    p_view = vec.divScalar4f(p_view, p_view[3]);
+    const p_world_f = mat.mulVec4f(view.camera.view_matrix_inv, p_view);
     return .{ p_world_f[0], p_world_f[1], p_world_f[2] };
 }
 
@@ -250,6 +261,33 @@ pub fn viewToWorldRayIfGeometry(view: *const View, x: f32, y: f32) ?Ray {
     return if (pwp == null) null else .{
         .origin = view.camera.position,
         .direction = vec.normalized3f(vec.sub3f(pwp.?, view.camera.position)),
+    };
+}
+
+/// Reconstruct a ray in world space from the camera position through the pixel at (x, y) in the view.
+pub fn viewToWorldRay(view: *const View, x: f32, y: f32) Ray {
+    // Build the ray by unprojecting near/far clip-space points using the current projection/view matrices.
+    const near_world = view.viewToWorldZ(x, y, 0.0) orelse .{
+        view.camera.position[0],
+        view.camera.position[1],
+        view.camera.position[2],
+    };
+    const far_world = view.viewToWorldZ(x, y, 1.0) orelse .{
+        view.camera.position[0] + view.camera.look_dir[0],
+        view.camera.position[1] + view.camera.look_dir[1],
+        view.camera.position[2] + view.camera.look_dir[2],
+    };
+    const direction = vec.normalized3f(vec.sub3f(far_world, near_world));
+
+    return switch (view.camera.projection_type) {
+        .perspective => .{
+            .origin = view.camera.position,
+            .direction = direction,
+        },
+        .orthographic => .{
+            .origin = near_world,
+            .direction = direction,
+        },
     };
 }
 

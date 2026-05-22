@@ -9,15 +9,15 @@ const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 
-var global_instance: PointSphereScalarPerVertex = undefined;
-var init_global_once = std.once(init_global);
+var global_instance: ?PointSphereScalarPerVertex = null;
 fn init_global() void {
+    if (global_instance) |_| return;
     global_instance = init() catch unreachable;
-    Shader.register(&global_instance.program);
+    Shader.register(&global_instance.?.program);
 }
 pub fn instance() *PointSphereScalarPerVertex {
-    init_global_once.call();
-    return &global_instance;
+    init_global();
+    return &global_instance.?;
 }
 
 program: Shader,
@@ -78,7 +78,7 @@ pub const Parameters = struct {
     model_view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
-    light_position: [3]f32 = .{ -100, 0, 100 },
+    light_position: [3]f32 = .{ -10, 0, 100 },
     sphere_radius: f32 = 0.001,
     min_value: f32 = 0.0,
     max_value: f32 = 1.0,

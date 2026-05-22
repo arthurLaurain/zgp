@@ -3,9 +3,9 @@ const assert = std.debug.assert;
 
 const AppContext = @import("../../main.zig").AppContext;
 const SurfaceMesh = @import("SurfaceMesh.zig");
+
 const vec = @import("../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
-
 const geometry_utils = @import("../../geometry/utils.zig");
 
 /// Compute and return the normal of the given face.
@@ -52,7 +52,7 @@ pub fn computeFaceNormals(
         vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
         face_normal: SurfaceMesh.CellData(.face, Vec3f),
 
-        pub inline fn run(t: *const Task, face: SurfaceMesh.Cell) void {
+        pub fn run(t: *const Task, face: SurfaceMesh.Cell) void {
             t.face_normal.valuePtr(face).* = faceNormal(
                 t.surface_mesh,
                 face,
@@ -61,7 +61,7 @@ pub fn computeFaceNormals(
         }
     };
 
-    var pctr = try SurfaceMesh.ParallelCellTaskRunner(.face).init(sm);
+    var pctr: SurfaceMesh.ParallelCellTaskRunner = try .init(sm, .face);
     defer pctr.deinit();
     try pctr.run(app_ctx, Task{
         .surface_mesh = sm,
@@ -109,7 +109,7 @@ pub fn computeVertexNormals(
     vertex_normal: SurfaceMesh.CellData(.vertex, Vec3f),
 ) !void {
     vertex_normal.data.fill(vec.zero3f);
-    var face_it = try SurfaceMesh.CellIterator(.face).init(sm);
+    var face_it: SurfaceMesh.CellIterator = try .init(sm, .face);
     defer face_it.deinit();
     while (face_it.next()) |face| {
         const n = face_normal.value(face);
@@ -138,7 +138,7 @@ pub fn computeVertexNormals(
     //     face_normal: SurfaceMesh.CellData(.face, Vec3f),
     //     vertex_normal: SurfaceMesh.CellData(.vertex, Vec3f),
 
-    //     pub inline fn run(t: *const Task, vertex: SurfaceMesh.Cell) void {
+    //     pub fn run(t: *const Task, vertex: SurfaceMesh.Cell) void {
     //         t.vertex_normal.valuePtr(vertex).* = vertexNormal(
     //             t.surface_mesh,
     //             vertex,
@@ -148,7 +148,7 @@ pub fn computeVertexNormals(
     //     }
     // };
 
-    // var pctr = try SurfaceMesh.ParallelCellTaskRunner(.vertex).init(sm);
+    // var pctr: SurfaceMesh.ParallelCellTaskRunner = try .init(sm, .vertex);
     // defer pctr.deinit();
     // try pctr.run(app_ctx, Task{
     //     .surface_mesh = sm,

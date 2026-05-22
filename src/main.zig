@@ -1,36 +1,27 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const gl = @import("gl");
 const zstbi = @import("zstbi");
-
-pub const c = @cImport({
-    @cDefine("SDL_DISABLE_OLD_NAMES", {});
-    @cInclude("SDL3/SDL.h");
-    @cInclude("SDL3/SDL_revision.h");
-    @cDefine("SDL_MAIN_HANDLED", {});
-    @cInclude("SDL3/SDL_main.h");
-    // @cInclude("SDL3/SDL_opengl.h");
-    @cInclude("dcimgui.h");
-    @cInclude("backends/dcimgui_impl_sdl3.h");
-    @cInclude("backends/dcimgui_impl_opengl3.h");
-    @cInclude("utils/IconsFontAwesome7.h");
-    @cInclude("ceigen/small.h");
-    @cInclude("ceigen/sparse.h");
-    @cInclude("ceigen/dense.h");
-    @cInclude("clibacc/bvh.h");
-});
+const c = @import("c");
 
 const SurfaceMesh = @import("models/surface/SurfaceMesh.zig");
 const PointCloud = @import("models/point/PointCloud.zig");
+const IncidenceGraph = @import("models/incidenceGraph/IncidenceGraph.zig");
+
 const SurfaceMeshStore = @import("models/SurfaceMeshStore.zig");
 const PointCloudStore = @import("models/PointCloudStore.zig");
+const IncidenceGraphStore = @import("models/IncidenceGraphStore.zig");
 
 const Module = @import("modules/Module.zig");
+
 const PointCloudStdDatas = @import("modules/PointCloudStdDatas.zig");
 const SurfaceMeshStdDatas = @import("modules/SurfaceMeshStdDatas.zig");
+const IncidenceGraphStdDatas = @import("modules/IncidenceGraphStdDatas.zig");
+
 const PointCloudRenderer = @import("modules/PointCloudRenderer.zig");
 const SurfaceMeshRenderer = @import("modules/SurfaceMeshRenderer.zig");
+const IncidenceGraphRenderer = @import("modules/IncidenceGraphRenderer.zig");
 const VectorPerVertexRenderer = @import("modules/VectorPerVertexRenderer.zig");
+
 const SurfaceMeshDistance = @import("modules/SurfaceMeshDistance.zig");
 const SurfaceMeshCurvature = @import("modules/SurfaceMeshCurvature.zig");
 const SurfaceMeshSelection = @import("modules/SurfaceMeshSelection.zig");
@@ -38,6 +29,8 @@ const SurfaceMeshDeformation = @import("modules/SurfaceMeshDeformation.zig");
 const SurfaceMeshConnectivity = @import("modules/SurfaceMeshConnectivity.zig");
 const SurfaceMeshSampling = @import("modules/SurfaceMeshSampling.zig");
 const SurfaceMeshMedialAxis = @import("modules/SurfaceMeshMedialAxis.zig");
+const SurfaceMeshIntrinsicTriangulation = @import("modules/SurfaceMeshIntrinsicTriangulation.zig");
+const PointCloudMedialAxis = @import("modules/PointCloudMedialAxis.zig");
 const SurfaceMeshProceduralTexturing = @import("modules/SurfaceMeshProceduralTexturing.zig");
 
 const geometry_utils = @import("geometry/utils.zig");
@@ -60,6 +53,7 @@ const zgp_log = std.log.scoped(.zgp);
 // TODO: use a lib like:
 // https://github.com/joegm/flags
 // https://github.com/Hejsil/zig-clap
+// https://github.com/zig-utils/zig-cli
 const CLIArgs = @import("utils/CLIArgs.zig");
 var cli_args: CLIArgs = undefined;
 
@@ -68,41 +62,47 @@ var cli_args: CLIArgs = undefined;
 // Should benchmark and switch between parallel and sequential execution based on the mesh size and the type of quantity computed.
 
 /// Application Context:
-/// - allocator
+/// - io instance
+/// - allocator instance
 /// - PointCloud / SurfaceMesh / VolumeMesh stores
 /// - current selected model
 /// - random number generator
 /// - window
 /// - view
-/// - thread pool
 pub const AppContext = struct {
+    io: std.Io,
     allocator: std.mem.Allocator,
     point_cloud_store: PointCloudStore,
     surface_mesh_store: SurfaceMeshStore,
+    incidence_graph_store: IncidenceGraphStore,
     selected_model: ModelSelection = .none,
     rng: std.Random.DefaultPrng,
     window: Window = .{},
     view: View = .{},
-    thread_pool: std.Thread.Pool = undefined,
 
-    pub fn init(allocator: std.mem.Allocator) !AppContext {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator) !AppContext {
+        var seed: u64 = undefined;
+        io.random(std.mem.asBytes(&seed));
         return .{
+            .io = io,
             .allocator = allocator,
-            .point_cloud_store = try .init(allocator),
-            .surface_mesh_store = try .init(allocator),
-            .rng = .init(@intCast(std.time.timestamp())),
+            .point_cloud_store = try .init(io, allocator),
+            .surface_mesh_store = try .init(io, allocator),
+            .incidence_graph_store = try .init(io, allocator),
+            .rng = .init(seed),
         };
     }
 
     pub fn wireUp(self: *AppContext) void {
         self.point_cloud_store.selected_model = &self.selected_model;
         self.surface_mesh_store.selected_model = &self.selected_model;
+        self.incidence_graph_store.selected_model = &self.selected_model;
     }
 
     pub fn deinit(self: *AppContext) void {
         self.surface_mesh_store.deinit();
         self.point_cloud_store.deinit();
-        self.thread_pool.deinit();
+        self.incidence_graph_store.deinit();
         self.view.deinit();
         self.window.deinit();
     }
@@ -116,6 +116,7 @@ pub const ModelSelection = union(enum) {
     none,
     surface_mesh: *SurfaceMesh,
     point_cloud: *PointCloud,
+    incidence_graph: *IncidenceGraph,
 
     pub fn modelType(self: ModelSelection) ModelType {
         return std.meta.activeTag(self);
@@ -132,10 +133,13 @@ var modules: std.ArrayList(*Module) = .empty;
 
 /// ZGP modules
 /// TODO: could be declared in a config file and loaded at runtime
+/// https://github.com/zig-utils/zig-config
 var point_cloud_std_datas: PointCloudStdDatas = undefined;
 var surface_mesh_std_datas: SurfaceMeshStdDatas = undefined;
+var incidence_graph_std_datas: IncidenceGraphStdDatas = undefined;
 var point_cloud_renderer: PointCloudRenderer = undefined;
 var surface_mesh_renderer: SurfaceMeshRenderer = undefined;
+var incidence_graph_renderer: IncidenceGraphRenderer = undefined;
 var vector_per_vertex_renderer: VectorPerVertexRenderer = undefined;
 var surface_mesh_distance: SurfaceMeshDistance = undefined;
 var surface_mesh_curvature: SurfaceMeshCurvature = undefined;
@@ -144,6 +148,8 @@ var surface_mesh_deformation: SurfaceMeshDeformation = undefined;
 var surface_mesh_connectivity: SurfaceMeshConnectivity = undefined;
 var surface_mesh_sampling: SurfaceMeshSampling = undefined;
 var surface_mesh_medial_axis: SurfaceMeshMedialAxis = undefined;
+var surface_mesh_intrinsic_triangulation: SurfaceMeshIntrinsicTriangulation = undefined;
+var point_cloud_medial_axis: PointCloudMedialAxis = undefined;
 var surface_mesh_procedural_texturing: SurfaceMeshProceduralTexturing = undefined;
 
 // TODO: add a console bar at the bottom of the window to display logs & info messages
@@ -162,30 +168,33 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
 
     imgui.init(app_ctx.window.sdl_window, app_ctx.window.gl_context);
 
-    std.debug.print("GL version: {s}\n", .{gl.GetString(gl.VERSION).?});
-    std.debug.print("GLSL: {s}\n", .{gl.GetString(gl.SHADING_LANGUAGE_VERSION).?});
-
     // Modules initialization
     // **********************
 
     point_cloud_std_datas = .init(&app_ctx);
     surface_mesh_std_datas = .init(&app_ctx);
+    incidence_graph_std_datas = .init(&app_ctx);
     point_cloud_renderer = .init(&app_ctx);
     surface_mesh_renderer = .init(&app_ctx);
+    incidence_graph_renderer = .init(&app_ctx);
     vector_per_vertex_renderer = .init(&app_ctx);
     surface_mesh_distance = .init(&app_ctx);
+    surface_mesh_connectivity = .init(&app_ctx, &surface_mesh_curvature);
     surface_mesh_curvature = .init(&app_ctx);
     surface_mesh_selection = .init(&app_ctx);
     surface_mesh_deformation = .init(&app_ctx);
-    surface_mesh_connectivity = .init(&app_ctx, &surface_mesh_curvature);
     surface_mesh_sampling = .init(&app_ctx);
     surface_mesh_medial_axis = .init(&app_ctx);
+    point_cloud_medial_axis = .init(&app_ctx);
+    surface_mesh_intrinsic_triangulation = .init(&app_ctx);
     surface_mesh_procedural_texturing = .init(&app_ctx);
 
     errdefer point_cloud_std_datas.deinit();
     errdefer surface_mesh_std_datas.deinit();
+    errdefer incidence_graph_std_datas.deinit();
     errdefer point_cloud_renderer.deinit();
     errdefer surface_mesh_renderer.deinit();
+    errdefer incidence_graph_renderer.deinit();
     errdefer vector_per_vertex_renderer.deinit();
     errdefer surface_mesh_distance.deinit();
     errdefer surface_mesh_curvature.deinit();
@@ -194,12 +203,16 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     errdefer surface_mesh_connectivity.deinit();
     errdefer surface_mesh_sampling.deinit();
     errdefer surface_mesh_medial_axis.deinit();
+    errdefer surface_mesh_intrinsic_triangulation.deinit();
+    errdefer point_cloud_medial_axis.deinit();
     errdefer surface_mesh_procedural_texturing.deinit();
 
     try modules.append(app_ctx.allocator, &point_cloud_std_datas.module);
     try modules.append(app_ctx.allocator, &surface_mesh_std_datas.module);
+    try modules.append(app_ctx.allocator, &incidence_graph_std_datas.module);
     try modules.append(app_ctx.allocator, &point_cloud_renderer.module);
     try modules.append(app_ctx.allocator, &surface_mesh_renderer.module);
+    try modules.append(app_ctx.allocator, &incidence_graph_renderer.module);
     try modules.append(app_ctx.allocator, &vector_per_vertex_renderer.module);
     try modules.append(app_ctx.allocator, &surface_mesh_distance.module);
     try modules.append(app_ctx.allocator, &surface_mesh_curvature.module);
@@ -208,6 +221,8 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     try modules.append(app_ctx.allocator, &surface_mesh_connectivity.module);
     try modules.append(app_ctx.allocator, &surface_mesh_sampling.module);
     try modules.append(app_ctx.allocator, &surface_mesh_medial_axis.module);
+    try modules.append(app_ctx.allocator, &surface_mesh_intrinsic_triangulation.module);
+    try modules.append(app_ctx.allocator, &point_cloud_medial_axis.module);
     try modules.append(app_ctx.allocator, &surface_mesh_procedural_texturing.module);
     errdefer modules.deinit(app_ctx.allocator);
 
@@ -215,6 +230,9 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
 
     try app_ctx.point_cloud_store.addListener(&point_cloud_std_datas.module);
     try app_ctx.point_cloud_store.addListener(&point_cloud_renderer.module);
+    try app_ctx.point_cloud_store.addListener(&vector_per_vertex_renderer.module);
+    try app_ctx.point_cloud_store.addListener(&surface_mesh_sampling.module);
+    try app_ctx.point_cloud_store.addListener(&point_cloud_medial_axis.module);
 
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_std_datas.module);
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_renderer.module);
@@ -226,13 +244,17 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_connectivity.module);
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_sampling.module);
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_medial_axis.module);
+    try app_ctx.surface_mesh_store.addListener(&surface_mesh_intrinsic_triangulation.module);
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_procedural_texturing.module);
+
+    try app_ctx.incidence_graph_store.addListener(&incidence_graph_std_datas.module);
+    try app_ctx.incidence_graph_store.addListener(&incidence_graph_renderer.module);
 
     // CLI arguments parsing
     // *********************
 
     for (cli_args.mesh_files) |mesh_file| {
-        var timer = try std.time.Timer.start();
+        const t = std.Io.Timestamp.now(app_ctx.io, .real);
 
         const sm = try app_ctx.surface_mesh_store.loadSurfaceMeshFromFile(mesh_file);
         errdefer sm.deinit();
@@ -254,7 +276,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
         app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_position);
         app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sm);
 
-        const elapsed: f64 = @floatFromInt(timer.read());
+        const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, app_ctx.io, .real).nanoseconds);
         zgp_log.info("Mesh loaded in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
     }
 
@@ -267,12 +289,18 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
 ///  - the module declares supported model types and the currently selected model is of one of those types
 fn shouldCallOnModule(module: *Module, ctx: *AppContext) bool {
     // Fast path: if no models are exclusively supported, it's a global module
-    if (!module.supported_models.point_cloud and !module.supported_models.surface_mesh) return true;
+    if (!module.supported_models.point_cloud and
+        !module.supported_models.surface_mesh and
+        !module.supported_models.incidence_graph)
+    {
+        return true;
+    }
 
     // Check specific capabilities against currently selected models
     return switch (ctx.selected_model) {
         .point_cloud => module.supported_models.point_cloud,
         .surface_mesh => module.supported_models.surface_mesh,
+        .incidence_graph => module.supported_models.incidence_graph,
         .none => false,
     };
 }
@@ -280,12 +308,7 @@ fn shouldCallOnModule(module: *Module, ctx: *AppContext) bool {
 fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
     _ = appstate;
 
-    gl.ClearColor(
-        app_ctx.view.background_color[0],
-        app_ctx.view.background_color[1],
-        app_ctx.view.background_color[2],
-        app_ctx.view.background_color[3],
-    );
+    const style = c.ImGui_GetStyle();
 
     // Draw the main view
     // ******************
@@ -305,11 +328,29 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
     // ************************
 
     const imgui_io = c.ImGui_GetIO();
-    if (imgui_io.*.MouseClicked[1] and !(imgui_io.*.WantCaptureMouse or c.ImGui_IsWindowHovered(c.ImGuiHoveredFlags_AnyWindow))) {
+    if (c.ImGui_IsMouseClicked(1) and !(imgui_io.*.WantCaptureMouse or c.ImGui_IsWindowHovered(c.ImGuiHoveredFlags_AnyWindow))) {
         c.ImGui_OpenPopup("RightClickMenu", 0);
     }
     if (c.ImGui_BeginPopup("RightClickMenu", 0)) {
         defer c.ImGui_EndPopup();
+        switch (app_ctx.selected_model) {
+            .point_cloud => {
+                c.ImGui_TextDisabled("Point Cloud:");
+                c.ImGui_SameLine();
+                c.ImGui_TextDisabled(app_ctx.point_cloud_store.pointCloudName(app_ctx.selected_model.point_cloud).?);
+            },
+            .surface_mesh => {
+                c.ImGui_TextDisabled("Surface Mesh:");
+                c.ImGui_SameLine();
+                c.ImGui_TextDisabled(app_ctx.surface_mesh_store.surfaceMeshName(app_ctx.selected_model.surface_mesh).?);
+            },
+            .incidence_graph => {
+                c.ImGui_TextDisabled("Incidence Graph:");
+                c.ImGui_SameLine();
+                c.ImGui_TextDisabled(app_ctx.incidence_graph_store.incidenceGraphName(app_ctx.selected_model.incidence_graph).?);
+            },
+            .none => c.ImGui_TextDisabled("No selected model"),
+        }
         for (modules.items) |module| {
             if (shouldCallOnModule(module, &app_ctx)) {
                 module.rightClickMenu();
@@ -375,22 +416,73 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
         c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoBringToFrontOnFocus | c.ImGuiWindowFlags_NoNavFocus | c.ImGuiWindowFlags_NoScrollbar))
     {
         defer c.ImGui_End();
-        app_ctx.point_cloud_store.leftPanel();
-        app_ctx.surface_mesh_store.leftPanel();
+
+        {
+            c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
+            defer c.ImGui_PopItemWidth();
+
+            c.ImGui_SeparatorText("Point Clouds");
+            const nb_point_clouds_f = @as(f32, @floatFromInt(app_ctx.point_cloud_store.point_clouds.count() + 1));
+            switch (imgui.pointCloudListBox(
+                &app_ctx.point_cloud_store,
+                style.*.FontSizeBase * nb_point_clouds_f + style.*.ItemSpacing.y * nb_point_clouds_f,
+            )) {
+                .unchanged => {},
+                .cleared => app_ctx.selected_model = .none,
+                .changed => |new_pc| app_ctx.selected_model = .{ .point_cloud = new_pc },
+            }
+
+            c.ImGui_SeparatorText("Surface Meshes");
+            const nb_surface_meshes_f = @as(f32, @floatFromInt(app_ctx.surface_mesh_store.surface_meshes.count() + 1));
+            switch (imgui.surfaceMeshListBox(
+                &app_ctx.surface_mesh_store,
+                style.*.FontSizeBase * nb_surface_meshes_f + style.*.ItemSpacing.y * nb_surface_meshes_f,
+            )) {
+                .unchanged => {},
+                .cleared => app_ctx.selected_model = .none,
+                .changed => |new_sm| app_ctx.selected_model = .{ .surface_mesh = new_sm },
+            }
+
+            c.ImGui_SeparatorText("Incidence Graphs");
+            const nb_incidence_graphs_f = @as(f32, @floatFromInt(app_ctx.incidence_graph_store.incidence_graphs.count() + 1));
+            switch (imgui.incidenceGraphListBox(
+                &app_ctx.incidence_graph_store,
+                style.*.FontSizeBase * nb_incidence_graphs_f + style.*.ItemSpacing.y * nb_incidence_graphs_f,
+            )) {
+                .unchanged => {},
+                .cleared => app_ctx.selected_model = .none,
+                .changed => |new_ig| app_ctx.selected_model = .{ .incidence_graph = new_ig },
+            }
+        }
+
+        c.ImGui_Separator();
+
+        switch (app_ctx.selected_model) {
+            .point_cloud => {
+                c.ImGui_PushIDPtr(&app_ctx.point_cloud_store);
+                app_ctx.point_cloud_store.leftPanel();
+                c.ImGui_PopID();
+            },
+            .surface_mesh => {
+                c.ImGui_PushIDPtr(&app_ctx.surface_mesh_store);
+                app_ctx.surface_mesh_store.leftPanel();
+                c.ImGui_PopID();
+            },
+            .incidence_graph => {
+                c.ImGui_PushIDPtr(&app_ctx.incidence_graph_store);
+                app_ctx.incidence_graph_store.leftPanel();
+                c.ImGui_PopID();
+            },
+            .none => {},
+        }
+
+        c.ImGui_Separator();
+
         for (modules.items) |module| {
             if (!shouldCallOnModule(module, &app_ctx)) continue;
-            if (module.vtable.leftPanel == null) continue; // check if the module has a leftPanel function
             c.ImGui_PushIDPtr(module);
-            defer c.ImGui_PopID();
-            c.ImGui_PushStyleColor(c.ImGuiCol_Header, c.IM_COL32(255, 128, 0, 200));
-            c.ImGui_PushStyleColor(c.ImGuiCol_HeaderActive, c.IM_COL32(255, 128, 0, 255));
-            c.ImGui_PushStyleColor(c.ImGuiCol_HeaderHovered, c.IM_COL32(255, 128, 0, 128));
-            if (c.ImGui_CollapsingHeader(module.name.ptr, c.ImGuiTreeNodeFlags_DefaultOpen)) {
-                c.ImGui_PopStyleColorEx(3);
-                module.leftPanel();
-            } else {
-                c.ImGui_PopStyleColorEx(3);
-            }
+            module.leftPanel();
+            c.ImGui_PopID();
         }
     }
 
@@ -410,19 +502,39 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
         c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoBringToFrontOnFocus | c.ImGuiWindowFlags_NoNavFocus | c.ImGuiWindowFlags_NoScrollbar))
     {
         defer c.ImGui_End();
+        switch (app_ctx.selected_model) {
+            .point_cloud => {
+                c.ImGui_TextDisabled("Point Cloud: ");
+                c.ImGui_SameLine();
+                c.ImGui_Text(app_ctx.point_cloud_store.pointCloudName(app_ctx.selected_model.point_cloud).?);
+            },
+            .surface_mesh => {
+                c.ImGui_TextDisabled("Surface Mesh: ");
+                c.ImGui_SameLine();
+                c.ImGui_Text(app_ctx.surface_mesh_store.surfaceMeshName(app_ctx.selected_model.surface_mesh).?);
+            },
+            .incidence_graph => {
+                c.ImGui_TextDisabled("Incidence Graph: ");
+                c.ImGui_SameLine();
+                c.ImGui_Text(app_ctx.incidence_graph_store.incidenceGraphName(app_ctx.selected_model.incidence_graph).?);
+            },
+            .none => c.ImGui_TextDisabled("No selected model"),
+        }
+        c.ImGui_Separator();
         for (modules.items) |module| {
             if (!shouldCallOnModule(module, &app_ctx)) continue;
             if (module.vtable.rightPanel == null) continue; // check if the module has a rightPanel function
             c.ImGui_PushIDPtr(module);
             defer c.ImGui_PopID();
-            c.ImGui_PushStyleColor(c.ImGuiCol_Header, c.IM_COL32(255, 128, 0, 200));
-            c.ImGui_PushStyleColor(c.ImGuiCol_HeaderActive, c.IM_COL32(255, 128, 0, 255));
-            c.ImGui_PushStyleColor(c.ImGuiCol_HeaderHovered, c.IM_COL32(255, 128, 0, 128));
+            c.ImGui_PushStyleColor(c.ImGuiCol_Text, c.IM_COL32(25, 25, 25, 255));
+            c.ImGui_PushStyleColor(c.ImGuiCol_Header, c.IM_COL32(65, 255, 130, 200));
+            c.ImGui_PushStyleColor(c.ImGuiCol_HeaderActive, c.IM_COL32(65, 255, 130, 255));
+            c.ImGui_PushStyleColor(c.ImGuiCol_HeaderHovered, c.IM_COL32(65, 255, 130, 128));
             if (c.ImGui_CollapsingHeader(module.name.ptr, 0)) {
-                c.ImGui_PopStyleColorEx(3);
+                c.ImGui_PopStyleColorEx(4);
                 module.rightPanel();
             } else {
-                c.ImGui_PopStyleColorEx(3);
+                c.ImGui_PopStyleColorEx(4);
             }
         }
     }
@@ -473,15 +585,17 @@ fn sdlAppEvent(appstate: ?*anyopaque, event: *c.SDL_Event) !c.SDL_AppResult {
         return c.SDL_APP_CONTINUE;
     }
 
-    // dispatch event to view
-    app_ctx.view.sdlEvent(event);
-
     // dispatch event to modules
     for (modules.items) |module| {
         if (shouldCallOnModule(module, &app_ctx)) {
-            module.sdlEvent(event);
+            if (module.sdlEvent(event)) { // if the module handled the event,
+                return c.SDL_APP_CONTINUE; // do not pass it further
+            }
         }
     }
+
+    // dispatch event to view
+    app_ctx.view.sdlEvent(event);
 
     return c.SDL_APP_CONTINUE;
 }
@@ -495,14 +609,18 @@ fn sdlAppQuit(appstate: ?*anyopaque, result: anyerror!c.SDL_AppResult) void {
 
     imgui.deinit();
 
-    // clear the list of modules before deinitializing them
+    // clear the list of modules and store listeners before deinitializing modules
     // to avoid potential inter-dependencies issues
     modules.clearRetainingCapacity();
+    app_ctx.surface_mesh_store.listeners.clearRetainingCapacity();
+    app_ctx.point_cloud_store.listeners.clearRetainingCapacity();
 
     point_cloud_std_datas.deinit();
     surface_mesh_std_datas.deinit();
+    incidence_graph_std_datas.deinit();
     point_cloud_renderer.deinit();
     surface_mesh_renderer.deinit();
+    incidence_graph_renderer.deinit();
     vector_per_vertex_renderer.deinit();
     surface_mesh_distance.deinit();
     surface_mesh_curvature.deinit();
@@ -511,6 +629,8 @@ fn sdlAppQuit(appstate: ?*anyopaque, result: anyerror!c.SDL_AppResult) void {
     surface_mesh_connectivity.deinit();
     surface_mesh_sampling.deinit();
     surface_mesh_medial_axis.deinit();
+    surface_mesh_intrinsic_triangulation.deinit();
+    point_cloud_medial_axis.deinit();
     surface_mesh_procedural_texturing.deinit();
 
     modules.deinit(app_ctx.allocator);
@@ -518,26 +638,14 @@ fn sdlAppQuit(appstate: ?*anyopaque, result: anyerror!c.SDL_AppResult) void {
     Shader.deinitRegistry();
 }
 
-pub fn main() !u8 {
+pub fn main(init: std.process.Init) !u8 {
     app_err.reset();
     var empty_argv: [0:null]?[*:0]u8 = .{};
 
-    var allocator: std.mem.Allocator = undefined;
+    const io = init.io;
+    const allocator = init.gpa;
 
-    var da: std.heap.DebugAllocator(.{}) = .init;
-    if (builtin.mode == .Debug) {
-        allocator = da.allocator();
-        zgp_log.info("Using DebugAllocator", .{});
-    } else {
-        allocator = std.heap.smp_allocator; // use the SmpAllocator in release mode for better performance
-        zgp_log.info("Using SmpAllocator", .{});
-    }
-    defer if (builtin.mode == .Debug) {
-        _ = da.detectLeaks();
-        _ = da.deinit();
-    };
-
-    app_ctx = try .init(allocator);
+    app_ctx = try .init(io, allocator);
     app_ctx.wireUp();
     defer app_ctx.deinit();
 
@@ -546,21 +654,16 @@ pub fn main() !u8 {
     app_ctx.view.init();
 
     zgp_log.info("Thread mode: {s}", .{if (builtin.single_threaded) "single-threaded" else "multi-threaded"});
-    try app_ctx.thread_pool.init(.{ .allocator = app_ctx.allocator });
 
-    const argv = std.process.argsAlloc(allocator) catch {
-        zgp_log.err("Failed to get command line arguments", .{});
-        return 1;
-    };
-    defer std.process.argsFree(allocator, argv);
-    cli_args = CLIArgs.init(argv) catch |err| {
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    cli_args = CLIArgs.init(args) catch |err| {
         switch (err) {
             error.MissingArgs => return c.SDL_APP_FAILURE,
             error.InvalidArgs => return c.SDL_APP_FAILURE,
         }
     };
 
-    zstbi.init(allocator);
+    zstbi.init(io, allocator);
 
     const status: u8 = @truncate(@as(c_uint, @bitCast(c.SDL_RunApp(@intCast(empty_argv.len), @ptrCast(&empty_argv), sdlMainC, null))));
     return app_err.load() orelse status;

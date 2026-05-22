@@ -1,6 +1,6 @@
 const std = @import("std");
 const gl = @import("gl");
-const c = @import("../main.zig").c;
+const c = @import("c");
 
 const PointCloudStore = @import("../models/PointCloudStore.zig");
 const PointCloud = @import("../models/point/PointCloud.zig");
@@ -8,17 +8,34 @@ const PointCloud = @import("../models/point/PointCloud.zig");
 const SurfaceMeshStore = @import("../models/SurfaceMeshStore.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 
-const Data = @import("../utils/Data.zig").Data;
+const IncidenceGraphStore = @import("../models/IncidenceGraphStore.zig");
+const IncidenceGraph = @import("../models/incidenceGraph/IncidenceGraph.zig");
+
+const Data = @import("../utils/data.zig").Data;
+
+// const icons_glyph_ranges = [_]c.ImWchar{ c.ICON_MIN_FA, c.ICON_MAX_FA, 0 };
 
 pub fn init(sdl_window: *c.SDL_Window, gl_context: c.SDL_GLContext) void {
     _ = c.CIMGUI_CHECKVERSION();
     _ = c.ImGui_CreateContext(null);
+    c.ImGui_StyleColorsDark(null);
 
     const font_size: f32 = 16.0;
+
+    const imstyle = c.ImGui_GetStyle();
+    imstyle.*.FontSizeBase = font_size;
+    imstyle.*.SeparatorTextAlign = c.ImVec2{ .x = 1.0, .y = 0.0 };
+    imstyle.*.FrameRounding = 2;
+    imstyle.*.WindowPadding = c.ImVec2{ .x = 4.0, .y = 4.0 };
+    imstyle.*.FramePadding = c.ImVec2{ .x = 4.0, .y = 2.0 };
+    imstyle.*.ItemSpacing = c.ImVec2{ .x = 6.0, .y = 2.0 };
+    imstyle.*.CellPadding = c.ImVec2{ .x = 4.0, .y = 1.0 };
+
     const imio = c.ImGui_GetIO();
     imio.*.ConfigFlags = c.ImGuiConfigFlags_NavEnableKeyboard | c.ImGuiConfigFlags_DockingEnable | c.ImGuiConfigFlags_ViewportsEnable;
+
+    // _ = c.ImFontAtlas_AddFontDefaultVector(imio.*.Fonts, null);
     _ = c.ImFontAtlas_AddFontFromFileTTF(imio.*.Fonts, "src/ui/DroidSans.ttf", font_size, null, null);
-    // _ = c.ImFontAtlas_AddFontDefault(imio.*.Fonts, null);
     var font_config: c.ImFontConfig = .{};
     font_config.MergeMode = true;
     font_config.SizePixels = font_size;
@@ -26,16 +43,9 @@ pub fn init(sdl_window: *c.SDL_Window, gl_context: c.SDL_GLContext) void {
     font_config.GlyphMaxAdvanceX = font_size;
     font_config.RasterizerMultiply = 1.0;
     font_config.RasterizerDensity = 1.0;
+    font_config.ExtraSizeScale = 1.0;
     _ = c.ImFontAtlas_AddFontFromFileTTF(imio.*.Fonts, "src/ui/fa-regular-400.ttf", font_size, &font_config, null);
     _ = c.ImFontAtlas_AddFontFromFileTTF(imio.*.Fonts, "src/ui/fa-solid-900.ttf", font_size, &font_config, null);
-
-    c.ImGui_StyleColorsDark(null);
-    const imstyle = c.ImGui_GetStyle();
-    imstyle.*.Colors[c.ImGuiCol_Header] = c.ImVec4_t{ .x = 65.0 / 255.0, .y = 255.0 / 255.0, .z = 255.0 / 255.0, .w = 120.0 / 255.0 };
-    imstyle.*.Colors[c.ImGuiCol_HeaderActive] = c.ImVec4_t{ .x = 65.0 / 255.0, .y = 255.0 / 255.0, .z = 255.0 / 255.0, .w = 200.0 / 255.0 };
-    imstyle.*.Colors[c.ImGuiCol_HeaderHovered] = c.ImVec4_t{ .x = 65.0 / 255.0, .y = 255.0 / 255.0, .z = 255.0 / 255.0, .w = 80.0 / 255.0 };
-    imstyle.*.SeparatorTextAlign = c.ImVec2{ .x = 1.0, .y = 0.0 };
-    imstyle.*.FrameRounding = 3;
 
     const shader_version = switch (gl.info.api) {
         .gl => (
@@ -101,34 +111,8 @@ pub fn SelectionResult(comptime T: type) type {
     };
 }
 
-pub fn surfaceMeshListBox(
-    sm_store: *SurfaceMeshStore,
-    height: f32,
-) SelectionResult(*SurfaceMesh) {
-    if (c.ImGui_BeginListBox("##Surface Meshes", c.ImVec2{ .x = 0, .y = height })) {
-        defer c.ImGui_EndListBox();
-        var sm_it = sm_store.surface_meshes.iterator();
-        while (sm_it.next()) |entry| {
-            const sm = entry.value_ptr.*;
-            const name = entry.key_ptr.*;
-            const is_selected = sm_store.selected_model.modelType() == .surface_mesh and sm_store.selected_model.surface_mesh == sm;
-            if (c.ImGui_SelectableEx(name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                if (!is_selected) {
-                    return .{ .changed = sm }; // only return if it was not previously selected
-                } else {
-                    return .cleared; // clicking on the currently selected item clears the selection
-                }
-            }
-            if (is_selected) {
-                c.ImGui_SetItemDefaultFocus();
-            }
-        }
-    }
-    return .unchanged;
-}
-
 pub fn pointCloudListBox(
-    pc_store: *PointCloudStore,
+    pc_store: *const PointCloudStore,
     height: f32,
 ) SelectionResult(*PointCloud) {
     if (c.ImGui_BeginListBox("##Point Clouds", c.ImVec2{ .x = 0, .y = height })) {
@@ -153,45 +137,8 @@ pub fn pointCloudListBox(
     return .unchanged;
 }
 
-pub fn surfaceMeshCellDataComboBox(
-    surface_mesh: *SurfaceMesh,
-    comptime cell_type: SurfaceMesh.CellType,
-    comptime T: type,
-    selected_data: ?SurfaceMesh.CellData(cell_type, T),
-) SelectionResult(SurfaceMesh.CellData(cell_type, T)) {
-    if (c.ImGui_BeginCombo("", if (selected_data) |data| data.name().ptr else "-- none --", 0)) {
-        defer c.ImGui_EndCombo();
-        const is_none_selected = selected_data == null;
-        if (c.ImGui_SelectableEx("-- none --", is_none_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-            return .cleared;
-        }
-        if (is_none_selected) {
-            c.ImGui_SetItemDefaultFocus();
-        }
-
-        var data_container = switch (cell_type) {
-            .halfedge, .corner => surface_mesh.dart_data,
-            .vertex => surface_mesh.vertex_data,
-            .edge => surface_mesh.edge_data,
-            .face => surface_mesh.face_data,
-            else => unreachable,
-        };
-        var data_it = data_container.typedIterator(T);
-        while (data_it.next()) |data| {
-            const is_selected = if (selected_data) |sd| sd.data == data else false;
-            if (c.ImGui_SelectableEx(data.data_gen.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                return .{ .changed = .{ .surface_mesh = surface_mesh, .data = data } };
-            }
-            if (is_selected) {
-                c.ImGui_SetItemDefaultFocus();
-            }
-        }
-    }
-    return .unchanged;
-}
-
 pub fn pointCloudDataComboBox(
-    point_cloud: *PointCloud,
+    point_cloud: *const PointCloud,
     comptime T: type,
     selected_data: ?PointCloud.CellData(T),
 ) SelectionResult(PointCloud.CellData(T)) {
@@ -219,12 +166,180 @@ pub fn pointCloudDataComboBox(
     return .unchanged;
 }
 
+pub fn surfaceMeshListBox(
+    sm_store: *const SurfaceMeshStore,
+    height: f32,
+) SelectionResult(*SurfaceMesh) {
+    if (c.ImGui_BeginListBox("##Surface Meshes", c.ImVec2{ .x = 0, .y = height })) {
+        defer c.ImGui_EndListBox();
+        var sm_it = sm_store.surface_meshes.iterator();
+        while (sm_it.next()) |entry| {
+            const sm = entry.value_ptr.*;
+            const name = entry.key_ptr.*;
+            const is_selected = sm_store.selected_model.modelType() == .surface_mesh and sm_store.selected_model.surface_mesh == sm;
+            if (c.ImGui_SelectableEx(name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                if (!is_selected) {
+                    return .{ .changed = sm }; // only return if it was not previously selected
+                } else {
+                    return .cleared; // clicking on the currently selected item clears the selection
+                }
+            }
+            if (is_selected) {
+                c.ImGui_SetItemDefaultFocus();
+            }
+        }
+    }
+    return .unchanged;
+}
+
+pub fn surfaceMeshCellDataComboBox(
+    surface_mesh: *const SurfaceMesh,
+    comptime cell_type: SurfaceMesh.CellType,
+    comptime T: type,
+    selected_data: ?SurfaceMesh.CellData(cell_type, T),
+) SelectionResult(SurfaceMesh.CellData(cell_type, T)) {
+    if (c.ImGui_BeginCombo("", if (selected_data) |data| data.name().ptr else "-- none --", 0)) {
+        defer c.ImGui_EndCombo();
+        const is_none_selected = selected_data == null;
+        if (c.ImGui_SelectableEx("-- none --", is_none_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+            return .cleared;
+        }
+        if (is_none_selected) {
+            c.ImGui_SetItemDefaultFocus();
+        }
+
+        var data_container = surface_mesh.dataContainerPtr(cell_type);
+        var data_it = data_container.typedIterator(T);
+        while (data_it.next()) |data| {
+            const is_selected = if (selected_data) |sd| sd.data == data else false;
+            if (c.ImGui_SelectableEx(data.data_gen.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                return .{ .changed = .{ .surface_mesh = surface_mesh, .data = data } };
+            }
+            if (is_selected) {
+                c.ImGui_SetItemDefaultFocus();
+            }
+        }
+    }
+    return .unchanged;
+}
+
+pub fn surfaceMeshCellSetComboBox(
+    surface_mesh: *const SurfaceMesh,
+    cell_type: SurfaceMesh.CellType,
+    selected_cell_set: ?*SurfaceMesh.CellSet,
+) SelectionResult(*SurfaceMesh.CellSet) {
+    if (c.ImGui_BeginCombo("", if (selected_cell_set) |cell_set| cell_set.name.ptr else "-- none --", 0)) {
+        defer c.ImGui_EndCombo();
+        const is_none_selected = selected_cell_set == null;
+        if (c.ImGui_SelectableEx("-- none --", is_none_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+            return .cleared;
+        }
+        if (is_none_selected) {
+            c.ImGui_SetItemDefaultFocus();
+        }
+
+        const cell_sets = switch (cell_type) {
+            .vertex => &surface_mesh.vertex_sets,
+            .edge => &surface_mesh.edge_sets,
+            .face => &surface_mesh.face_sets,
+            else => unreachable,
+        };
+        var cell_set_it = cell_sets.iterator();
+        while (cell_set_it.next()) |entry| {
+            const cell_set = entry.value_ptr;
+            const is_selected = if (selected_cell_set) |scs| scs == cell_set else false;
+            if (c.ImGui_SelectableEx(cell_set.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                return .{ .changed = cell_set };
+            }
+            if (is_selected) {
+                c.ImGui_SetItemDefaultFocus();
+            }
+        }
+    }
+    return .unchanged;
+}
+
 pub fn surfaceMeshCellTypeComboBox(
     selected_cell_type: SurfaceMesh.CellType,
 ) ?SurfaceMesh.CellType {
     if (c.ImGui_BeginCombo("", @tagName(selected_cell_type), 0)) {
         defer c.ImGui_EndCombo();
         inline for (@typeInfo(SurfaceMesh.CellType).@"enum".fields) |cell_type| {
+            const is_selected = @intFromEnum(selected_cell_type) == cell_type.value;
+            if (c.ImGui_SelectableEx(cell_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                return @enumFromInt(cell_type.value);
+            }
+            if (is_selected) {
+                c.ImGui_SetItemDefaultFocus();
+            }
+        }
+    }
+    return null;
+}
+
+pub fn incidenceGraphListBox(
+    ig_store: *const IncidenceGraphStore,
+    height: f32,
+) SelectionResult(*IncidenceGraph) {
+    if (c.ImGui_BeginListBox("##Incidence Graphs", c.ImVec2{ .x = 0, .y = height })) {
+        defer c.ImGui_EndListBox();
+        var ig_it = ig_store.incidence_graphs.iterator();
+        while (ig_it.next()) |entry| {
+            const ig = entry.value_ptr.*;
+            const name = entry.key_ptr.*;
+            const is_selected = ig_store.selected_model.modelType() == .incidence_graph and ig_store.selected_model.incidence_graph == ig;
+            if (c.ImGui_SelectableEx(name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                if (!is_selected) {
+                    return .{ .changed = ig }; // only return if it was not previously selected
+                } else {
+                    return .cleared; // clicking on the currently selected item clears the selection
+                }
+            }
+            if (is_selected) {
+                c.ImGui_SetItemDefaultFocus();
+            }
+        }
+    }
+    return .unchanged;
+}
+
+pub fn incidenceGraphCellDataComboBox(
+    incidence_graph: *const IncidenceGraph,
+    comptime cell_type: IncidenceGraph.CellType,
+    comptime T: type,
+    selected_data: ?IncidenceGraph.CellData(cell_type, T),
+) SelectionResult(IncidenceGraph.CellData(cell_type, T)) {
+    if (c.ImGui_BeginCombo("", if (selected_data) |data| data.name().ptr else "-- none --", 0)) {
+        defer c.ImGui_EndCombo();
+        const is_none_selected = selected_data == null;
+        if (c.ImGui_SelectableEx("-- none --", is_none_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+            return .cleared;
+        }
+        if (is_none_selected) {
+            c.ImGui_SetItemDefaultFocus();
+        }
+
+        var data_container = incidence_graph.dataContainerPtr(cell_type);
+        var data_it = data_container.typedIterator(T);
+        while (data_it.next()) |data| {
+            const is_selected = if (selected_data) |sd| sd.data == data else false;
+            if (c.ImGui_SelectableEx(data.data_gen.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                return .{ .changed = .{ .incidence_graph = incidence_graph, .data = data } };
+            }
+            if (is_selected) {
+                c.ImGui_SetItemDefaultFocus();
+            }
+        }
+    }
+    return .unchanged;
+}
+
+pub fn incidenceGraphCellTypeComboBox(
+    selected_cell_type: IncidenceGraph.CellType,
+) ?IncidenceGraph.CellType {
+    if (c.ImGui_BeginCombo("", @tagName(selected_cell_type), 0)) {
+        defer c.ImGui_EndCombo();
+        inline for (@typeInfo(IncidenceGraph.CellType).@"enum".fields) |cell_type| {
             const is_selected = @intFromEnum(selected_cell_type) == cell_type.value;
             if (c.ImGui_SelectableEx(cell_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
                 return @enumFromInt(cell_type.value);

@@ -7,11 +7,10 @@ uniform sampler2D u_exemplar_texture;
 uniform mat4 u_model_view_matrix;
 uniform float u_scale_tex_coords;
 uniform float u_scale_distorsion;
-uniform bool u_visu_area_distorsion;
-uniform bool u_visu_angle_distorsion;
 uniform bool u_visu_arap_energy;
 uniform bool u_compense_distorsions;
 uniform vec2 u_minmax_energy;
+uniform bool u_distorsions_computed;
 
 in vec3 frag_position;
 in vec3 v_frag_position;
@@ -201,10 +200,11 @@ void main() {
   float w2 = bary.y;
   float w3 = bary.z;
 
-  SSBO_distorsion distorsion = distorsions[id_triangle];
 
-  if(u_compense_distorsions)
+  SSBO_distorsion distorsion;
+  if(u_compense_distorsions && u_distorsions_computed)
   {
+    distorsion = distorsions[id_triangle];
     c1 = texture(u_exemplar_texture, distorsion.S[0] * u1.xy + r1).xyz;
     c2 = texture(u_exemplar_texture, distorsion.S[1] * u2.xy + r2).xyz;
     c3 = texture(u_exemplar_texture, distorsion.S[2] * u3.xy + r3).xyz;
@@ -218,7 +218,7 @@ void main() {
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
   
-  if(u_visu_arap_energy)
+  if(u_visu_arap_energy && u_distorsions_computed)
   {
     float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
     
@@ -228,7 +228,4 @@ void main() {
     f_color = vec4(result);
 
   f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
-
-
-
 }

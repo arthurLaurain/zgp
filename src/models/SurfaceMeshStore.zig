@@ -1,11 +1,10 @@
 const SurfaceMeshStore = @This();
 
 const std = @import("std");
+const assert = std.debug.assert;
 const builtin = @import("builtin");
 
-const c = @import("../main.zig").c;
-
-const imgui_log = std.log.scoped(.imgui);
+const c = @import("c");
 const zgp_log = std.log.scoped(.zgp);
 
 const imgui_utils = @import("../ui/imgui.zig");
@@ -15,8 +14,8 @@ const Module = @import("../modules/Module.zig");
 const ModelSelection = @import("../main.zig").ModelSelection;
 const SurfaceMesh = @import("surface/SurfaceMesh.zig");
 
-const Data = @import("../utils/Data.zig").Data;
-const DataGen = @import("../utils/Data.zig").DataGen;
+const Data = @import("../utils/data.zig").Data;
+const DataGen = @import("../utils/data.zig").DataGen;
 const BufferPool = @import("../utils/BufferPool.zig").BufferPool;
 
 const VBO = @import("../rendering/VBO.zig");
@@ -45,115 +44,108 @@ pub const SurfaceMeshStdData = types_utils.UnionFromStruct(SurfaceMeshStdDatas);
 pub const SurfaceMeshStdDataTag = std.meta.Tag(SurfaceMeshStdData);
 
 /// This struct holds information related to a SurfaceMesh, including:
-/// - its standard datas,
-/// - its BVH,
-/// - the cell sets,
-/// - the IBOs (for rendering).
+/// - standard datas,
+/// - BVH,
+/// - primitve IBOs (for rendering).
 /// The SurfaceMeshInfo associated with a SurfaceMesh is accessible via the surfaceMeshInfo function.
 const SurfaceMeshInfo = struct {
     std_datas: SurfaceMeshStdDatas = .{},
 
     bvh: bvh.TrianglesBVH = .{},
-    bvh_last_update: ?std.time.Instant = null,
+    bvh_last_update: ?std.Io.Timestamp = null,
 
     points_ibo: IBO,
     lines_ibo: IBO,
     triangles_ibo: IBO,
     boundaries_ibo: IBO,
 
-    // TODO: manage multiple sets per cell type
-    vertex_set: SurfaceMesh.CellSet(.vertex),
-    edge_set: SurfaceMesh.CellSet(.edge),
-    face_set: SurfaceMesh.CellSet(.face),
-
-    vertex_set_ibo: IBO,
-    edge_set_ibo: IBO,
-    face_set_ibo: IBO,
-
-    pub fn init(surface_mesh: *SurfaceMesh) !SurfaceMeshInfo {
+    pub fn init() SurfaceMeshInfo {
         return .{
             .points_ibo = .init(),
             .lines_ibo = .init(),
             .triangles_ibo = .init(),
             .boundaries_ibo = .init(),
-            .vertex_set = try .init(surface_mesh),
-            .edge_set = try .init(surface_mesh),
-            .face_set = try .init(surface_mesh),
-            .vertex_set_ibo = .init(),
-            .edge_set_ibo = .init(),
-            .face_set_ibo = .init(),
         };
     }
-    pub fn deinit(self: *SurfaceMeshInfo) void {
-        self.bvh.deinit();
-        self.points_ibo.deinit();
-        self.lines_ibo.deinit();
-        self.triangles_ibo.deinit();
-        self.boundaries_ibo.deinit();
-        self.vertex_set.deinit();
-        self.edge_set.deinit();
-        self.face_set.deinit();
-        self.vertex_set_ibo.deinit();
-        self.edge_set_ibo.deinit();
-        self.face_set_ibo.deinit();
+    pub fn deinit(smi: *SurfaceMeshInfo) void {
+        smi.bvh.deinit();
+        smi.points_ibo.deinit();
+        smi.lines_ibo.deinit();
+        smi.triangles_ibo.deinit();
+        smi.boundaries_ibo.deinit();
     }
 };
 
+io: std.Io,
 allocator: std.mem.Allocator,
 
 // list of Modules that have registered interest in SurfaceMesh events
 listeners: std.ArrayList(*Module),
 
-surface_meshes: std.StringHashMap(*SurfaceMesh),
-surface_meshes_info: std.AutoHashMap(*const SurfaceMesh, SurfaceMeshInfo),
+surface_meshes: std.StringArrayHashMapUnmanaged(*SurfaceMesh),
+surface_meshes_info: std.AutoHashMapUnmanaged(*const SurfaceMesh, SurfaceMeshInfo),
 selected_model: *ModelSelection = undefined, // set in AppContext wireUp
 
-data_vbo: std.AutoHashMap(*const DataGen, VBO),
-data_last_update: std.AutoHashMap(*const DataGen, std.time.Instant),
+// each DataGen can be associated with a VBO
+// once a VBO has been requested for a Data (in dataVBO function) it is stored in this map
+// and updated upon calls to surfaceMeshDataUpdated function
+data_vbo: std.AutoHashMapUnmanaged(*const DataGen, VBO),
+// each CellSet can be associated with an IBO
+// once an IBO has been requested for a CellSet (in cellSetIBO function) it is stored in this map
+// and updated upon calls to surfaceMeshCellSetUpdated function
+cell_set_ibo: std.AutoHashMapUnmanaged(*const SurfaceMesh.CellSet, IBO),
+// stores the last update time for each DataGen
+// updated upon calls to surfaceMeshDataUpdated
+data_last_update: std.AutoHashMapUnmanaged(*const DataGen, std.Io.Timestamp),
 
 cell_buffer_pool: BufferPool(SurfaceMesh.Cell),
 
-pub fn init(allocator: std.mem.Allocator) !SurfaceMeshStore {
+pub fn init(io: std.Io, allocator: std.mem.Allocator) !SurfaceMeshStore {
     return .{
+        .io = io,
         .allocator = allocator,
         .listeners = .empty,
-        .surface_meshes = .init(allocator),
-        .surface_meshes_info = .init(allocator),
-        .data_vbo = .init(allocator),
-        .data_last_update = .init(allocator),
-        .cell_buffer_pool = try .init(allocator, 1024, 64, 32),
+        .surface_meshes = .empty,
+        .surface_meshes_info = .empty,
+        .data_vbo = .empty,
+        .cell_set_ibo = .empty,
+        .data_last_update = .empty,
+        .cell_buffer_pool = try .init(io, allocator, 2048, 64, 32),
     };
 }
 
 pub fn deinit(sms: *SurfaceMeshStore) void {
-    var sm_info_it = sms.surface_meshes_info.iterator();
-    while (sm_info_it.next()) |entry| {
-        var info = entry.value_ptr.*;
+    sms.listeners.deinit(sms.allocator);
+
+    var info_it = sms.surface_meshes_info.valueIterator();
+    while (info_it.next()) |info| {
         info.deinit();
     }
-    sms.surface_meshes_info.deinit();
+    sms.surface_meshes_info.deinit(sms.allocator);
 
-    var sm_it = sms.surface_meshes.iterator();
-    while (sm_it.next()) |entry| {
-        var sm = entry.value_ptr.*;
-        const name: [:0]const u8 = @ptrCast(entry.key_ptr.*); // the name is a null-terminated string (dupeZ in createSurfaceMesh)
-        sms.allocator.free(name); // free the name
+    for (sms.surface_meshes.keys(), sms.surface_meshes.values()) |name, sm| {
+        const nameZ: [:0]const u8 = @ptrCast(name); // the name is a null-terminated string (dupeZ in createSurfaceMesh)
+        sms.allocator.free(nameZ); // free the name
         sm.deinit();
         sms.allocator.destroy(sm); // destroy the SurfaceMesh
     }
-    sms.surface_meshes.deinit();
+    sms.surface_meshes.deinit(sms.allocator);
 
     var vbo_it = sms.data_vbo.iterator();
     while (vbo_it.next()) |entry| {
-        var vbo = entry.value_ptr.*;
-        vbo.deinit();
+        entry.value_ptr.deinit();
     }
-    sms.data_vbo.deinit();
-    sms.data_last_update.deinit();
+    sms.data_vbo.deinit(sms.allocator);
+
+    var cell_set_ibo_it = sms.cell_set_ibo.iterator();
+    while (cell_set_ibo_it.next()) |entry| {
+        entry.value_ptr.deinit();
+    }
+    sms.cell_set_ibo.deinit(sms.allocator);
+
+    sms.data_last_update.deinit(sms.allocator);
 
     sms.cell_buffer_pool.deinit();
-
-    sms.listeners.deinit(sms.allocator);
 }
 
 pub fn addListener(sms: *SurfaceMeshStore, module: *Module) !void {
@@ -161,22 +153,24 @@ pub fn addListener(sms: *SurfaceMeshStore, module: *Module) !void {
 }
 
 pub fn createSurfaceMesh(sms: *SurfaceMeshStore, name: []const u8) !*SurfaceMesh {
-    const maybe_surface_mesh = sms.surface_meshes.get(name);
-    if (maybe_surface_mesh) |_| {
+    if (sms.surface_meshes.contains(name)) {
         return error.ModelNameAlreadyExists;
     }
+
+    // create and init the SurfaceMesh
     var sm = try sms.allocator.create(SurfaceMesh);
     errdefer sms.allocator.destroy(sm);
-    sm.* = try SurfaceMesh.init(sms.allocator, &sms.cell_buffer_pool);
+    try sm.init(sms.allocator, &sms.cell_buffer_pool);
     errdefer sm.deinit();
+
+    // duplicate name and store the SurfaceMesh pointer in the map
     const owned_name = try sms.allocator.dupeZ(u8, name);
     errdefer sms.allocator.free(owned_name);
-    try sms.surface_meshes.put(owned_name, sm);
-    errdefer _ = sms.surface_meshes.remove(owned_name);
-    var info = try SurfaceMeshInfo.init(sm);
-    errdefer info.deinit();
-    try sms.surface_meshes_info.put(sm, info);
-    errdefer _ = sms.surface_meshes_info.remove(sm);
+    try sms.surface_meshes.put(sms.allocator, owned_name, sm);
+    errdefer _ = sms.surface_meshes.swapRemove(owned_name);
+
+    // store the SurfaceMeshInfo in the map
+    try sms.surface_meshes_info.put(sms.allocator, sm, .init());
 
     for (sms.listeners.items) |module| {
         module.surfaceMeshCreated(sm);
@@ -185,15 +179,29 @@ pub fn createSurfaceMesh(sms: *SurfaceMeshStore, name: []const u8) !*SurfaceMesh
     return sm;
 }
 
+pub fn registerSurfaceMesh(sms: *SurfaceMeshStore, name: []const u8, sm: *SurfaceMesh) !void {
+    if (sms.surface_meshes.contains(name)) {
+        return error.ModelNameAlreadyExists;
+    }
+
+    const owned_name = try sms.allocator.dupeZ(u8, name);
+    errdefer sms.allocator.free(owned_name);
+    try sms.surface_meshes.put(sms.allocator, owned_name, sm);
+    errdefer _ = sms.surface_meshes.swapRemove(owned_name);
+
+    // store the SurfaceMeshInfo in the map
+    try sms.surface_meshes_info.put(sms.allocator, sm, .init());
+
+    for (sms.listeners.items) |module| {
+        module.surfaceMeshCreated(sm);
+    }
+}
+
 pub fn destroySurfaceMesh(sms: *SurfaceMeshStore, sm: *SurfaceMesh) void {
     const name = sms.surfaceMeshName(sm) orelse {
         zgp_log.err("Could not find name for SurfaceMesh to destroy it", .{});
         return;
     };
-
-    for (sms.listeners.items) |module| {
-        module.surfaceMeshDestroyed(sm);
-    }
 
     switch (sms.selected_model.*) {
         .surface_mesh => |selected_sm| {
@@ -203,11 +211,17 @@ pub fn destroySurfaceMesh(sms: *SurfaceMeshStore, sm: *SurfaceMesh) void {
         },
         else => {},
     }
-    _ = sms.surface_meshes.remove(name);
-    sms.allocator.free(name); // free the name
-    const info = sms.surface_meshes_info.getPtr(sm).?;
-    info.deinit();
+
+    for (sms.listeners.items) |module| {
+        module.surfaceMeshDestroyed(sm);
+    }
+
+    sms.surface_meshes_info.getPtr(sm).?.deinit();
     _ = sms.surface_meshes_info.remove(sm);
+
+    _ = sms.surface_meshes.swapRemove(name);
+    sms.allocator.free(name); // free the name
+
     sm.deinit();
     sms.allocator.destroy(sm); // destroy the SurfaceMesh
 }
@@ -226,14 +240,9 @@ pub fn surfaceMeshDataUpdated(
     }
 
     // update the last known data update time
-    const now = std.time.Instant.now();
-    if (now) |t| {
-        sms.data_last_update.put(data.gen(), t) catch |err| {
-            zgp_log.err("Failed to update last update time for SurfaceMesh data: {}", .{err});
-        };
-    } else |err| {
-        zgp_log.err("Failed to get current time: {}", .{err});
-    }
+    sms.data_last_update.put(sms.allocator, data.gen(), std.Io.Timestamp.now(sms.io, .real)) catch |err| {
+        zgp_log.err("Failed to update last update time for SurfaceMesh data: {}", .{err});
+    };
 
     // dispatch call to listeners
     for (sms.listeners.items) |module| {
@@ -284,21 +293,27 @@ pub fn surfaceMeshConnectivityUpdated(sms: *SurfaceMeshStore, sm: *SurfaceMesh) 
     };
 
     // update the cells sets
-    info.vertex_set.update() catch |err| {
-        zgp_log.err("Failed to update vertex set for SurfaceMesh: {}", .{err});
-        return;
-    };
-    sms.surfaceMeshCellSetUpdated(sm, .vertex);
-    info.edge_set.update() catch |err| {
-        zgp_log.err("Failed to update edge set for SurfaceMesh: {}", .{err});
-        return;
-    };
-    sms.surfaceMeshCellSetUpdated(sm, .edge);
-    info.face_set.update() catch |err| {
-        zgp_log.err("Failed to update face set for SurfaceMesh: {}", .{err});
-        return;
-    };
-    sms.surfaceMeshCellSetUpdated(sm, .face);
+    var vertex_sets_it = sm.vertex_sets.iterator();
+    while (vertex_sets_it.next()) |entry| {
+        entry.value_ptr.update() catch |err| {
+            zgp_log.err("Failed to update vertex set for SurfaceMesh: {}", .{err});
+        };
+        sms.surfaceMeshCellSetUpdated(sm, entry.value_ptr);
+    }
+    var edge_sets_it = sm.edge_sets.iterator();
+    while (edge_sets_it.next()) |entry| {
+        entry.value_ptr.update() catch |err| {
+            zgp_log.err("Failed to update edge set for SurfaceMesh: {}", .{err});
+        };
+        sms.surfaceMeshCellSetUpdated(sm, entry.value_ptr);
+    }
+    var face_sets_it = sm.face_sets.iterator();
+    while (face_sets_it.next()) |entry| {
+        entry.value_ptr.update() catch |err| {
+            zgp_log.err("Failed to update face set for SurfaceMesh: {}", .{err});
+        };
+        sms.surfaceMeshCellSetUpdated(sm, entry.value_ptr);
+    }
 
     // dispatch call to listeners
     for (sms.listeners.items) |module| {
@@ -309,36 +324,20 @@ pub fn surfaceMeshConnectivityUpdated(sms: *SurfaceMeshStore, sm: *SurfaceMesh) 
 pub fn surfaceMeshCellSetUpdated(
     sms: *SurfaceMeshStore,
     sm: *SurfaceMesh,
-    cell_type: SurfaceMesh.CellType,
+    cell_set: *const SurfaceMesh.CellSet,
 ) void {
-    const info = sms.surface_meshes_info.getPtr(sm).?;
-
-    // update the IBOs of the corresponding cell set
-    switch (cell_type) {
-        .vertex => {
-            info.vertex_set_ibo.fillFromCellSlice(sm, info.vertex_set.cells.items, sms.allocator) catch |err| {
-                zgp_log.err("Failed to fill vertex set IBO for SurfaceMesh: {}", .{err});
-                return;
-            };
-        },
-        .edge => {
-            info.edge_set_ibo.fillFromCellSlice(sm, info.edge_set.cells.items, sms.allocator) catch |err| {
-                zgp_log.err("Failed to fill edge set IBO for SurfaceMesh: {}", .{err});
-                return;
-            };
-        },
-        .face => {
-            info.face_set_ibo.fillFromCellSlice(sm, info.face_set.cells.items, sms.allocator) catch |err| {
-                zgp_log.err("Failed to fill face set IBO for SurfaceMesh: {}", .{err});
-                return;
-            };
-        },
-        else => unreachable,
+    // if it exists, update the IBO with the data
+    const maybe_ibo = sms.cell_set_ibo.getPtr(cell_set);
+    if (maybe_ibo) |ibo| {
+        ibo.fillFromSurfaceMeshCellSlice(sm, cell_set.cells.items, sms.allocator) catch |err| {
+            zgp_log.err("Failed to fill cell set IBO for SurfaceMesh: {}", .{err});
+            return;
+        };
     }
 
     // dispatch call to listeners
     for (sms.listeners.items) |module| {
-        module.surfaceMeshCellSetUpdated(sm, cell_type);
+        module.surfaceMeshCellSetUpdated(sm, cell_set);
     }
 }
 
@@ -348,18 +347,33 @@ pub fn dataVBO(
     comptime T: type,
     data: SurfaceMesh.CellData(cell_type, T),
 ) VBO {
-    const vbo = sms.data_vbo.getOrPut(data.gen()) catch |err| {
+    const vbo = sms.data_vbo.getOrPut(sms.allocator, data.gen()) catch |err| {
         zgp_log.err("Failed to get or add VBO in the registry: {}", .{err});
         return VBO.init(); // return a dummy VBO
     };
     if (!vbo.found_existing) {
         vbo.value_ptr.* = VBO.init();
-        vbo.value_ptr.*.fillFrom(T, data.data); // on VBO creation, fill it with the data
+        vbo.value_ptr.fillFrom(T, data.data); // on VBO creation, fill it with the data
     }
     return vbo.value_ptr.*;
 }
 
-pub fn dataLastUpdate(sms: *SurfaceMeshStore, data_gen: *const DataGen) ?std.time.Instant {
+pub fn cellSetIBO(sms: *SurfaceMeshStore, cell_set: *const SurfaceMesh.CellSet) IBO {
+    const ibo = sms.cell_set_ibo.getOrPut(sms.allocator, cell_set) catch |err| {
+        zgp_log.err("Failed to get or add IBO in the registry: {}", .{err});
+        return IBO.init(); // return a dummy IBO
+    };
+    if (!ibo.found_existing) {
+        ibo.value_ptr.* = IBO.init();
+        ibo.value_ptr.fillFromSurfaceMeshCellSlice(cell_set.surface_mesh, cell_set.cells.items, sms.allocator) catch |err| {
+            zgp_log.err("Failed to fill cell set IBO for SurfaceMesh: {}", .{err});
+            return IBO.init(); // return a dummy IBO
+        };
+    }
+    return ibo.value_ptr.*;
+}
+
+pub fn dataLastUpdate(sms: *SurfaceMeshStore, data_gen: *const DataGen) ?std.Io.Timestamp {
     return sms.data_last_update.get(data_gen);
 }
 
@@ -368,10 +382,9 @@ pub fn surfaceMeshInfo(sms: *SurfaceMeshStore, sm: *const SurfaceMesh) *SurfaceM
 }
 
 pub fn surfaceMeshName(sms: *SurfaceMeshStore, sm: *const SurfaceMesh) ?[:0]const u8 {
-    var it = sms.surface_meshes.iterator();
-    while (it.next()) |entry| {
-        if (entry.value_ptr.* == sm) {
-            return @ptrCast(entry.key_ptr.*); // the name is a null-terminated string (dupeZ in createSurfaceMesh)
+    for (sms.surface_meshes.keys(), sms.surface_meshes.values()) |name, sm_ptr| {
+        if (sm_ptr == sm) {
+            return @ptrCast(name); // the name is a null-terminated string (dupeZ in createSurfaceMesh)
         }
     }
     return null;
@@ -398,6 +411,8 @@ pub fn setSurfaceMeshStdData(
 pub fn menuBar(_: *SurfaceMeshStore) void {}
 
 pub fn leftPanel(sms: *SurfaceMeshStore) void {
+    assert(sms.selected_model.modelType() == .surface_mesh);
+
     const CreateDataTypes = union(enum) { bool: bool, u32: u32, f32: f32, Vec3f: Vec3f };
     const CreateDataTypesTag = std.meta.Tag(CreateDataTypes);
     const UiData = struct {
@@ -406,157 +421,142 @@ pub fn leftPanel(sms: *SurfaceMeshStore) void {
         var data_name_buf: [32]u8 = @splat(0);
     };
 
-    c.ImGui_PushIDPtr(sms); // push a unique ID for this panel
-    defer c.ImGui_PopID();
-
     const style = c.ImGui_GetStyle();
 
     c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
     defer c.ImGui_PopItemWidth();
 
-    c.ImGui_PushStyleColor(c.ImGuiCol_Header, c.IM_COL32(255, 128, 0, 200));
-    c.ImGui_PushStyleColor(c.ImGuiCol_HeaderActive, c.IM_COL32(255, 128, 0, 255));
-    c.ImGui_PushStyleColor(c.ImGuiCol_HeaderHovered, c.IM_COL32(255, 128, 0, 128));
-    if (c.ImGui_CollapsingHeader("Surface Meshes", c.ImGuiTreeNodeFlags_DefaultOpen)) {
+    const sm = sms.selected_model.surface_mesh;
+
+    if (c.ImGui_BeginTable("CellStats", 2, c.ImGuiTableFlags_Borders | c.ImGuiTableFlags_RowBg)) {
+        defer c.ImGui_EndTable();
+
+        c.ImGui_TableSetupColumn("CellType", c.ImGuiTableColumnFlags_WidthStretch);
+        c.ImGui_TableSetupColumn("Count", c.ImGuiTableColumnFlags_WidthFixed);
+        // c.ImGui_TableSetupColumn("ContainerDensity", c.ImGuiTableColumnFlags_WidthFixed);
+        c.ImGui_TableHeadersRow();
+
+        inline for ([_]SurfaceMesh.CellType{ .halfedge, .corner, .vertex, .edge, .face }) |cell_type| {
+            var buf_name: [32]u8 = undefined;
+            var buf_count: [16]u8 = undefined;
+            // var buf_density: [16]u8 = undefined;
+
+            const cells = std.fmt.bufPrintZ(&buf_name, "{s}", .{@tagName(cell_type)}) catch "";
+            const count = std.fmt.bufPrintZ(&buf_count, "{d}", .{sm.nbCells(cell_type)}) catch "";
+            // const density = std.fmt.bufPrintZ(&buf_density, "{d:.1}%", .{sm.dataContainerPtr(cell_type).density() * 100}) catch "";
+
+            c.ImGui_TableNextRow();
+            _ = c.ImGui_TableNextColumn();
+            c.ImGui_Text(cells.ptr);
+            _ = c.ImGui_TableNextColumn();
+            c.ImGui_Text(count.ptr);
+            // _ = c.ImGui_TableNextColumn();
+            // c.ImGui_Text(density.ptr);
+        }
+    }
+
+    if (c.ImGui_ButtonEx("Create cell data", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+        c.ImGui_OpenPopup("Create Cell Data", c.ImGuiPopupFlags_NoReopen);
+    }
+    if (c.ImGui_BeginPopupModal("Create Cell Data", 0, c.ImGuiWindowFlags_AlwaysAutoResize)) {
+        defer c.ImGui_EndPopup();
+        c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
+        defer c.ImGui_PopItemWidth();
+        c.ImGui_Text("Cell type:");
+        c.ImGui_PushID("cell type");
+        if (imgui_utils.surfaceMeshCellTypeComboBox(UiData.selected_surface_mesh_cell_type)) |cell_type| {
+            UiData.selected_surface_mesh_cell_type = cell_type;
+        }
+        c.ImGui_PopID();
+        c.ImGui_Text("Data type:");
+        c.ImGui_PushID("data type");
+        if (c.ImGui_BeginCombo("", @tagName(UiData.selected_data_type), 0)) {
+            defer c.ImGui_EndCombo();
+            inline for (@typeInfo(CreateDataTypesTag).@"enum".fields) |data_type| {
+                const is_selected = @intFromEnum(UiData.selected_data_type) == data_type.value;
+                if (c.ImGui_SelectableEx(data_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                    if (!is_selected) {
+                        UiData.selected_data_type = @enumFromInt(data_type.value);
+                    }
+                }
+                if (is_selected) {
+                    c.ImGui_SetItemDefaultFocus();
+                }
+            }
+        }
+        c.ImGui_PopID();
+        c.ImGui_Text("Name:");
+        _ = c.ImGui_InputText("##Name", &UiData.data_name_buf, UiData.data_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
+        if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = 0.5 * c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            UiData.data_name_buf = @splat(0);
+            c.ImGui_CloseCurrentPopup();
+        }
+        c.ImGui_SameLine();
+        if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            switch (UiData.selected_surface_mesh_cell_type) {
+                inline else => |cell_type| {
+                    switch (UiData.selected_data_type) {
+                        inline else => |data_type| {
+                            const data_name = std.mem.sliceTo(&UiData.data_name_buf, 0);
+                            _ = sm.addData(cell_type, @FieldType(CreateDataTypes, @tagName(data_type)), data_name) catch |err| {
+                                zgp_log.err("Error adding {s} ({s}: {s}) data: {}", .{ data_name, @tagName(cell_type), @tagName(data_type), err });
+                            };
+                            UiData.data_name_buf = @splat(0);
+                        },
+                    }
+                },
+            }
+        }
+    }
+
+    {
+        const info = sms.surface_meshes_info.getPtr(sm).?;
+
+        var bvh_computable = true;
+        if (info.std_datas.vertex_position == null) {
+            bvh_computable = false;
+        }
+        var bvh_upToDate = true;
+        if (!bvh_computable or info.bvh_last_update == null or std.math.order(info.bvh_last_update.?.nanoseconds, sms.dataLastUpdate(info.std_datas.vertex_position.?.gen()).?.nanoseconds) == .lt) {
+            bvh_upToDate = false;
+        }
+        if (!bvh_computable) {
+            c.ImGui_BeginDisabled(true);
+        }
+        if (!bvh_upToDate) {
+            c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(255, 128, 128, 200));
+            c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(255, 128, 128, 255));
+            c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(255, 128, 128, 128));
+        } else {
+            c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 200, 128, 200));
+            c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 200, 128, 255));
+            c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 200, 128, 128));
+        }
+        var buf_bvh_button: [32]u8 = undefined;
+        const bvh_button = std.fmt.bufPrintZ(&buf_bvh_button, c.ICON_FA_SITEMAP ++ " {s} BVH", .{if (info.bvh.initialized) "Update" else "Build"}) catch "";
+        if (c.ImGui_ButtonEx(bvh_button, c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            info.bvh.deinit();
+            info.bvh = bvh.TrianglesBVH.init(sm, info.std_datas.vertex_position.?) catch |err| blk: {
+                zgp_log.err("Failed to build BVH: {}", .{err});
+                break :blk .{};
+            };
+            if (info.bvh.initialized) {
+                info.bvh_last_update = std.Io.Timestamp.now(sms.io, .real);
+            }
+        }
         c.ImGui_PopStyleColorEx(3);
-
-        const nb_surface_meshes_f = @as(f32, @floatFromInt(sms.surface_meshes.count() + 1));
-        switch (imgui_utils.surfaceMeshListBox(
-            sms,
-            style.*.FontSizeBase * nb_surface_meshes_f + style.*.ItemSpacing.y * nb_surface_meshes_f,
-        )) {
-            .unchanged => {},
-            .cleared => sms.selected_model.* = .none,
-            .changed => |new_sm| sms.selected_model.* = .{ .surface_mesh = new_sm },
+        if (!bvh_computable) {
+            c.ImGui_EndDisabled();
         }
+    }
 
-        if (sms.selected_model.modelType() != .surface_mesh) return;
-        const sm = sms.selected_model.surface_mesh;
-
-        if (c.ImGui_BeginTable("CellStats", 3, c.ImGuiTableFlags_Borders | c.ImGuiTableFlags_RowBg)) {
-            defer c.ImGui_EndTable();
-
-            c.ImGui_TableSetupColumn("CellType", c.ImGuiTableColumnFlags_WidthStretch);
-            c.ImGui_TableSetupColumn("Count", c.ImGuiTableColumnFlags_WidthFixed);
-            c.ImGui_TableSetupColumn("ContainerDensity", c.ImGuiTableColumnFlags_WidthFixed);
-            c.ImGui_TableHeadersRow();
-
-            inline for ([_]SurfaceMesh.CellType{ .halfedge, .corner, .vertex, .edge, .face }) |cell_type| {
-                var buf_name: [32]u8 = undefined;
-                var buf_count: [16]u8 = undefined;
-                var buf_density: [16]u8 = undefined;
-
-                const cells = std.fmt.bufPrintZ(&buf_name, "{s}", .{@tagName(cell_type)}) catch "";
-                const count = std.fmt.bufPrintZ(&buf_count, "{d}", .{sm.nbCells(cell_type)}) catch "";
-                const density = std.fmt.bufPrintZ(&buf_density, "{d:.1}%", .{sm.dataContainer(cell_type).density() * 100}) catch "";
-
-                c.ImGui_TableNextRow();
-                _ = c.ImGui_TableNextColumn();
-                c.ImGui_Text(cells.ptr);
-                _ = c.ImGui_TableNextColumn();
-                c.ImGui_Text(count.ptr);
-                _ = c.ImGui_TableNextColumn();
-                c.ImGui_Text(density.ptr);
-            }
+    {
+        c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(255, 128, 128, 200));
+        c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(255, 128, 128, 255));
+        c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(255, 128, 128, 128));
+        if (c.ImGui_ButtonEx(c.ICON_FA_TRASH ++ " Delete", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            sms.destroySurfaceMesh(sm);
         }
-
-        if (c.ImGui_ButtonEx("Create cell data", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            c.ImGui_OpenPopup("Create Cell Data", c.ImGuiPopupFlags_NoReopen);
-        }
-        if (c.ImGui_BeginPopupModal("Create Cell Data", 0, c.ImGuiWindowFlags_AlwaysAutoResize)) {
-            defer c.ImGui_EndPopup();
-            c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
-            defer c.ImGui_PopItemWidth();
-            c.ImGui_Text("Cell type:");
-            c.ImGui_PushID("cell type");
-            if (imgui_utils.surfaceMeshCellTypeComboBox(UiData.selected_surface_mesh_cell_type)) |cell_type| {
-                UiData.selected_surface_mesh_cell_type = cell_type;
-            }
-            c.ImGui_PopID();
-            c.ImGui_Text("Data type:");
-            c.ImGui_PushID("data type");
-            if (c.ImGui_BeginCombo("", @tagName(UiData.selected_data_type), 0)) {
-                defer c.ImGui_EndCombo();
-                inline for (@typeInfo(CreateDataTypesTag).@"enum".fields) |*data_type| {
-                    const is_selected = @intFromEnum(UiData.selected_data_type) == data_type.value;
-                    if (c.ImGui_SelectableEx(data_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                        if (!is_selected) {
-                            UiData.selected_data_type = @enumFromInt(data_type.value);
-                        }
-                    }
-                    if (is_selected) {
-                        c.ImGui_SetItemDefaultFocus();
-                    }
-                }
-            }
-            c.ImGui_PopID();
-            c.ImGui_Text("Name:");
-            _ = c.ImGui_InputText("##Name", &UiData.data_name_buf, UiData.data_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
-            if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = 0.5 * c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                UiData.data_name_buf[0] = 0;
-                c.ImGui_CloseCurrentPopup();
-            }
-            c.ImGui_SameLine();
-            if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                switch (UiData.selected_surface_mesh_cell_type) {
-                    inline else => |cell_type| {
-                        switch (UiData.selected_data_type) {
-                            inline else => |data_type| {
-                                _ = sm.addData(cell_type, @FieldType(CreateDataTypes, @tagName(data_type)), &UiData.data_name_buf) catch |err| {
-                                    zgp_log.err("Error adding {s} ({s}: {s}) data: {}", .{ &UiData.data_name_buf, @tagName(cell_type), @tagName(data_type), err });
-                                };
-                                UiData.data_name_buf[0] = 0;
-                            },
-                        }
-                    },
-                }
-            }
-        }
-
-        {
-            const info = sms.surface_meshes_info.getPtr(sm).?;
-
-            var bvh_computable = true;
-            if (info.std_datas.vertex_position == null) {
-                bvh_computable = false;
-            }
-            var bvh_upToDate = true;
-            if (!bvh_computable or info.bvh_last_update == null or info.bvh_last_update.?.order(sms.dataLastUpdate(info.std_datas.vertex_position.?.gen()).?) == .lt) {
-                bvh_upToDate = false;
-            }
-            if (!bvh_computable) {
-                c.ImGui_BeginDisabled(true);
-            }
-            if (!bvh_upToDate) {
-                c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(255, 128, 128, 200));
-                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(255, 128, 128, 255));
-                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(255, 128, 128, 128));
-            } else {
-                c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 200, 128, 200));
-                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 200, 128, 255));
-                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 200, 128, 128));
-            }
-            if (c.ImGui_ButtonEx(c.ICON_FA_SITEMAP ++ " Update BVH", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                info.bvh.deinit();
-                info.bvh = bvh.TrianglesBVH.init(sm, info.std_datas.vertex_position.?) catch |err| blk: {
-                    zgp_log.err("Failed to build BVH: {}", .{err});
-                    break :blk .{};
-                };
-                if (info.bvh.bvh_ptr) |_| {
-                    const now = std.time.Instant.now();
-                    if (now) |t| {
-                        info.bvh_last_update = t;
-                    } else |err| {
-                        zgp_log.err("Failed to get current time: {}", .{err});
-                    }
-                }
-            }
-            c.ImGui_PopStyleColorEx(3);
-            if (!bvh_computable) {
-                c.ImGui_EndDisabled();
-            }
-        }
-    } else {
         c.ImGui_PopStyleColorEx(3);
     }
 }
@@ -588,11 +588,11 @@ const SurfaceMeshImportData = struct {
 };
 
 pub fn loadSurfaceMeshFromFile(sms: *SurfaceMeshStore, filename: []const u8) !*SurfaceMesh {
-    var file = try std.fs.cwd().openFile(filename, .{});
-    defer file.close();
+    var file = try std.Io.Dir.cwd().openFile(sms.io, filename, .{});
+    defer file.close(sms.io);
 
     var buffer: [1024]u8 = undefined;
-    var file_reader = file.reader(&buffer);
+    var file_reader = file.reader(sms.io, &buffer);
 
     const supported_filetypes = enum {
         off,
@@ -771,7 +771,7 @@ pub fn loadSurfaceMeshFromFile(sms: *SurfaceMeshStore, filename: []const u8) !*S
 
     const vertex_position = try sm.addData(.vertex, Vec3f, "position");
     const darts_of_vertex = try sm.addData(.vertex, std.ArrayList(SurfaceMesh.Dart), "darts_of_vertex");
-    defer sm.removeData(.vertex, darts_of_vertex.gen());
+    defer sm.removeData(.vertex, std.ArrayList(SurfaceMesh.Dart), darts_of_vertex);
     var darts_array_lists_arena = std.heap.ArenaAllocator.init(sms.allocator);
     defer darts_array_lists_arena.deinit();
 

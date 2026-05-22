@@ -4,13 +4,12 @@ const gl = @import("gl");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
-const Data = @import("../utils/Data.zig").Data;
+const Data = @import("../utils/data.zig").Data;
 
 index: c_uint = 0,
 
 pub fn init() SSBO {
     var s: SSBO = .{};
-
     gl.GenBuffers(1, (&s.index)[0..1]);
     return s;
 }

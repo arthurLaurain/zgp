@@ -1,8 +1,8 @@
 const Module = @This();
 
-const c = @import("../main.zig").c;
+const c = @import("c");
 
-const DataGen = @import("../utils/Data.zig").DataGen;
+const DataGen = @import("../utils/data.zig").DataGen;
 
 const mat = @import("../geometry/mat.zig");
 const Mat4f = mat.Mat4f;
@@ -13,9 +13,13 @@ const PointCloudStdData = @import("../models/PointCloudStore.zig").PointCloudStd
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMeshStdData;
 
+const IncidenceGraph = @import("../models/incidenceGraph/IncidenceGraph.zig");
+const IncidenceGraphStdData = @import("../models/IncidenceGraphStore.zig").IncidenceGraphStdData;
+
 pub const SupportedModels = struct {
     point_cloud: bool = false,
     surface_mesh: bool = false,
+    incidence_graph: bool = false,
 };
 
 name: []const u8,
@@ -36,7 +40,14 @@ const VTable = struct {
     surfaceMeshConnectivityUpdated: ?*const fn (m: *Module, surface_mesh: *SurfaceMesh) void = null,
     surfaceMeshStdDataChanged: ?*const fn (m: *Module, surface_mesh: *SurfaceMesh, std_data: SurfaceMeshStdData) void = null,
     surfaceMeshDataUpdated: ?*const fn (m: *Module, surface_mesh: *SurfaceMesh, cell_type: SurfaceMesh.CellType, data_gen: *const DataGen) void = null,
-    surfaceMeshCellSetUpdated: ?*const fn (m: *Module, surface_mesh: *SurfaceMesh, cell_type: SurfaceMesh.CellType) void = null,
+    surfaceMeshCellSetUpdated: ?*const fn (m: *Module, surface_mesh: *SurfaceMesh, cell_set: *const SurfaceMesh.CellSet) void = null,
+
+    // IncidenceGraphStore events
+    incidenceGraphCreated: ?*const fn (m: *Module, incidence_graph: *IncidenceGraph) void = null,
+    incidenceGraphDestroyed: ?*const fn (m: *Module, incidence_graph: *IncidenceGraph) void = null,
+    incidenceGraphConnectivityUpdated: ?*const fn (m: *Module, incidence_graph: *IncidenceGraph) void = null,
+    incidenceGraphStdDataChanged: ?*const fn (m: *Module, incidence_graph: *IncidenceGraph, std_data: IncidenceGraphStdData) void = null,
+    incidenceGraphDataUpdated: ?*const fn (m: *Module, incidence_graph: *IncidenceGraph, cell_type: IncidenceGraph.CellType, data_gen: *const DataGen) void = null,
 
     // UI events
     leftPanel: ?*const fn (m: *Module) void = null,
@@ -48,7 +59,7 @@ const VTable = struct {
     draw: ?*const fn (m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void = null,
 
     // Window events
-    sdlEvent: ?*const fn (m: *Module, event: *const c.SDL_Event) void = null,
+    sdlEvent: ?*const fn (m: *Module, event: *const c.SDL_Event) bool = null, // returns true if the event was handled and should not be processed by other modules
 };
 
 pub inline fn pointCloudCreated(m: *Module, pc: *PointCloud) void {
@@ -82,8 +93,24 @@ pub inline fn surfaceMeshStdDataChanged(m: *Module, sm: *SurfaceMesh, data: Surf
 pub inline fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, cell_type: SurfaceMesh.CellType, data_gen: *const DataGen) void {
     if (m.vtable.surfaceMeshDataUpdated) |func| func(m, sm, cell_type, data_gen);
 }
-pub inline fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_type: SurfaceMesh.CellType) void {
-    if (m.vtable.surfaceMeshCellSetUpdated) |func| func(m, sm, cell_type);
+pub inline fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const SurfaceMesh.CellSet) void {
+    if (m.vtable.surfaceMeshCellSetUpdated) |func| func(m, sm, cell_set);
+}
+
+pub inline fn incidenceGraphCreated(m: *Module, ig: *IncidenceGraph) void {
+    if (m.vtable.incidenceGraphCreated) |func| func(m, ig);
+}
+pub inline fn incidenceGraphDestroyed(m: *Module, ig: *IncidenceGraph) void {
+    if (m.vtable.incidenceGraphDestroyed) |func| func(m, ig);
+}
+pub inline fn incidenceGraphConnectivityUpdated(m: *Module, ig: *IncidenceGraph) void {
+    if (m.vtable.incidenceGraphConnectivityUpdated) |func| func(m, ig);
+}
+pub inline fn incidenceGraphStdDataChanged(m: *Module, ig: *IncidenceGraph, data: IncidenceGraphStdData) void {
+    if (m.vtable.incidenceGraphStdDataChanged) |func| func(m, ig, data);
+}
+pub inline fn incidenceGraphDataUpdated(m: *Module, ig: *IncidenceGraph, cell_type: IncidenceGraph.CellType, data_gen: *const DataGen) void {
+    if (m.vtable.incidenceGraphDataUpdated) |func| func(m, ig, cell_type, data_gen);
 }
 
 pub inline fn leftPanel(m: *Module) void {
@@ -103,6 +130,6 @@ pub inline fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) voi
     if (m.vtable.draw) |func| func(m, view_matrix, projection_matrix);
 }
 
-pub inline fn sdlEvent(m: *Module, event: *const c.SDL_Event) void {
-    if (m.vtable.sdlEvent) |func| func(m, event);
+pub inline fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
+    return if (m.vtable.sdlEvent) |func| func(m, event) else false;
 }

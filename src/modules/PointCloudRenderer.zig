@@ -4,7 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const gl = @import("gl");
 
-const c = @import("../main.zig").c;
+const c = @import("c");
 
 const imgui_utils = @import("../ui/imgui.zig");
 const imgui_log = std.log.scoped(.imgui);
@@ -13,7 +13,7 @@ const AppContext = @import("../main.zig").AppContext;
 const Module = @import("Module.zig");
 const PointCloud = @import("../models/point/PointCloud.zig");
 const PointCloudStdData = @import("../models/PointCloudStore.zig").PointCloudStdData;
-const DataGen = @import("../utils/Data.zig").DataGen;
+const DataGen = @import("../utils/data.zig").DataGen;
 
 const PointSphere = @import("../rendering/shaders/point_sphere/PointSphere.zig");
 const PointSphereColorPerVertex = @import("../rendering/shaders/point_sphere_color_per_vertex/PointSphereColorPerVertex.zig");
@@ -42,9 +42,14 @@ const ColorParameters = struct {
     point_vector_data: ?PointCloud.CellData(Vec3f) = null, // data used if definedOn is point & type is vector
     point_scalar_data: ?PointCloud.CellData(f32) = null, // data used if definedOn is point & type is scalar
 };
+
 const RadiusDefinedOn = enum {
     global,
     point,
+};
+const RadiusParameters = struct {
+    defined_on: RadiusDefinedOn,
+    // no need to store radius data here, the one configured in PointCloudStdData is used if defined_on is point
 };
 
 const PointCloudRendererParameters = struct {
@@ -59,7 +64,9 @@ const PointCloudRendererParameters = struct {
     draw_points_color: ColorParameters = .{
         .defined_on = .global,
     },
-    draw_points_radius_defined_on: RadiusDefinedOn = .global,
+    draw_points_radius: RadiusParameters = .{
+        .defined_on = .global,
+    },
 
     pub fn init() PointCloudRendererParameters {
         return .{
@@ -95,29 +102,27 @@ module: Module = .{
         .draw = draw,
     },
 },
-parameters: std.AutoHashMap(*PointCloud, PointCloudRendererParameters),
+parameters: std.AutoHashMapUnmanaged(*PointCloud, PointCloudRendererParameters) = .empty,
 
 pub fn init(app_ctx: *AppContext) PointCloudRenderer {
     return .{
         .app_ctx = app_ctx,
-        .parameters = .init(app_ctx.allocator),
     };
 }
 
 pub fn deinit(pcr: *PointCloudRenderer) void {
     var p_it = pcr.parameters.iterator();
     while (p_it.next()) |entry| {
-        var p = entry.value_ptr.*;
-        p.deinit();
+        entry.value_ptr.deinit();
     }
-    pcr.parameters.deinit();
+    pcr.parameters.deinit(pcr.app_ctx.allocator);
 }
 
 /// Part of the Module interface.
 /// Create and store a PointCloudRendererParameters for the created PointCloud.
 pub fn pointCloudCreated(m: *Module, point_cloud: *PointCloud) void {
     const pcr: *PointCloudRenderer = @alignCast(@fieldParentPtr("module", m));
-    pcr.parameters.put(point_cloud, PointCloudRendererParameters.init()) catch |err| {
+    pcr.parameters.put(pcr.app_ctx.allocator, point_cloud, PointCloudRendererParameters.init()) catch |err| {
         std.debug.print("Failed to create PointCloudRendererParameters for new PointCloud: {}\n", .{err});
         return;
     };
@@ -211,6 +216,11 @@ fn setPointCloudDrawPointsColorData(
     const p = pcr.parameters.getPtr(point_cloud) orelse return;
     switch (@typeInfo(T)) {
         .float => {
+            var min: f32 = std.math.floatMax(f32);
+            var max: f32 = std.math.floatMin(f32);
+            if (data) |d| {
+                min, max = d.data.minMaxValues(CompareScalarContext{}, compareScalar);
+            }
             p.draw_points_color.point_scalar_data = data;
             if (p.draw_points_color.point_scalar_data) |scalar| {
                 const scalar_vbo = pcr.app_ctx.point_cloud_store.dataVBO(f32, scalar);
@@ -220,6 +230,10 @@ fn setPointCloudDrawPointsColorData(
                 p.point_sphere_scalar_per_vertex_shader_parameters.unsetVertexAttribArray(.scalar);
                 p.point_sphere_scalar_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.scalar);
             }
+            p.point_sphere_scalar_per_vertex_shader_parameters.min_value = min;
+            p.point_sphere_scalar_per_vertex_shader_parameters.max_value = max;
+            p.point_sphere_scalar_radius_per_vertex_shader_parameters.min_value = min;
+            p.point_sphere_scalar_radius_per_vertex_shader_parameters.max_value = max;
         },
         .array => {
             if (@typeInfo(@typeInfo(T).array.child) != .float) {
@@ -256,7 +270,7 @@ pub fn draw(
         if (p.draw_points) {
             switch (p.draw_points_color.defined_on) {
                 .global => {
-                    switch (p.draw_points_radius_defined_on) {
+                    switch (p.draw_points_radius.defined_on) {
                         .global => {
                             p.point_sphere_shader_parameters.model_view_matrix = @bitCast(view_matrix);
                             p.point_sphere_shader_parameters.projection_matrix = @bitCast(projection_matrix);
@@ -272,7 +286,7 @@ pub fn draw(
                 .point => {
                     switch (p.draw_points_color.type) {
                         .scalar => {
-                            switch (p.draw_points_radius_defined_on) {
+                            switch (p.draw_points_radius.defined_on) {
                                 .global => {
                                     p.point_sphere_scalar_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
                                     p.point_sphere_scalar_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
@@ -286,7 +300,7 @@ pub fn draw(
                             }
                         },
                         .vector => {
-                            switch (p.draw_points_radius_defined_on) {
+                            switch (p.draw_points_radius.defined_on) {
                                 .global => {
                                     p.point_sphere_color_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
                                     p.point_sphere_color_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
@@ -328,17 +342,17 @@ pub fn rightPanel(m: *Module) void {
         {
             c.ImGui_BeginGroup();
             defer c.ImGui_EndGroup();
-            if (c.ImGui_RadioButton("Global##DrawPointsRadiusGlobal", p.draw_points_radius_defined_on == .global)) {
-                p.draw_points_radius_defined_on = .global;
+            if (c.ImGui_RadioButton("Global##DrawPointsRadiusGlobal", p.draw_points_radius.defined_on == .global)) {
+                p.draw_points_radius.defined_on = .global;
                 pcr.app_ctx.requestRedraw();
             }
             c.ImGui_SameLine();
-            if (c.ImGui_RadioButton("Per point##DrawPointsRadiusPerPoint", p.draw_points_radius_defined_on == .point)) {
-                p.draw_points_radius_defined_on = .point;
+            if (c.ImGui_RadioButton("Per point##DrawPointsRadiusPerPoint", p.draw_points_radius.defined_on == .point)) {
+                p.draw_points_radius.defined_on = .point;
                 pcr.app_ctx.requestRedraw();
             }
         }
-        switch (p.draw_points_radius_defined_on) {
+        switch (p.draw_points_radius.defined_on) {
             .global => {
                 c.ImGui_PushID("DrawPointsSize");
                 if (c.ImGui_SliderFloatEx("", &p.point_sphere_shader_parameters.sphere_radius, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
@@ -349,7 +363,9 @@ pub fn rightPanel(m: *Module) void {
                 }
                 c.ImGui_PopID();
             },
-            .point => {},
+            .point => {
+                c.ImGui_TextWrapped("Uses the radius defined as a standard radius data in the left panel.");
+            },
         }
 
         c.ImGui_Text("Color");
@@ -390,20 +406,12 @@ pub fn rightPanel(m: *Module) void {
                 }
                 c.ImGui_PushID("DrawPointsColorPointData");
                 switch (p.draw_points_color.type) {
-                    .scalar => switch (imgui_utils.pointCloudDataComboBox(
-                        pc,
-                        f32,
-                        p.draw_points_color.point_scalar_data,
-                    )) {
+                    .scalar => switch (imgui_utils.pointCloudDataComboBox(pc, f32, p.draw_points_color.point_scalar_data)) {
                         .unchanged => {},
                         .cleared => pcr.setPointCloudDrawPointsColorData(pc, f32, null),
                         .changed => |data| pcr.setPointCloudDrawPointsColorData(pc, f32, data),
                     },
-                    .vector => switch (imgui_utils.pointCloudDataComboBox(
-                        pc,
-                        Vec3f,
-                        p.draw_points_color.point_vector_data,
-                    )) {
+                    .vector => switch (imgui_utils.pointCloudDataComboBox(pc, Vec3f, p.draw_points_color.point_vector_data)) {
                         .unchanged => {},
                         .cleared => pcr.setPointCloudDrawPointsColorData(pc, Vec3f, null),
                         .changed => |data| pcr.setPointCloudDrawPointsColorData(pc, Vec3f, data),

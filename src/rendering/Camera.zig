@@ -1,9 +1,11 @@
 const Camera = @This();
 
 const std = @import("std");
+const gl_log = std.log.scoped(.gl);
 
 const View = @import("View.zig");
 
+const eigen = @import("../geometry/eigen.zig");
 const mat = @import("../geometry/mat.zig");
 const Mat4f = mat.Mat4f;
 const vec = @import("../geometry/vec.zig");
@@ -17,21 +19,22 @@ const CameraProjectionType = enum {
 };
 
 position: Vec3f,
-look_dir: Vec3f,
+look_dir: Vec3f = .{ 0.0, 0.0, -1.0 },
 up_dir: Vec3f,
 pivot_position: Vec3f,
 
 view_matrix: Mat4f = undefined,
+view_matrix_inv: Mat4f = undefined,
 
 aspect_ratio: f32,
 field_of_view: f32,
 projection_type: CameraProjectionType,
 
 projection_matrix: Mat4f = undefined,
+projection_matrix_inv: Mat4f = undefined,
 
 pub fn init(
     position: Vec3f,
-    look_dir: Vec3f,
     up_dir: Vec3f,
     pivot_position: Vec3f,
     aspect_ratio: f32,
@@ -40,31 +43,46 @@ pub fn init(
 ) Camera {
     var c: Camera = .{
         .position = position,
-        .look_dir = look_dir,
         .up_dir = up_dir,
         .pivot_position = pivot_position,
         .aspect_ratio = aspect_ratio,
         .field_of_view = field_of_view,
         .projection_type = projection_type,
     };
-    c.updateViewMatrix();
     c.updateProjectionMatrix();
+    c.lookAtPivotPosition();
     return c;
 }
 
 pub fn updateViewMatrix(c: *Camera) void {
     c.view_matrix = mat.lookAt(c.position, c.look_dir, c.up_dir);
+    c.view_matrix_inv = blk: {
+        const m_view = mat.mat4dFromMat4f(c.view_matrix);
+        const m_view_inv = eigen.computeInverse4d(m_view) orelse {
+            gl_log.err("Cannot invert view matrix", .{});
+            break :blk mat.identity4f;
+        };
+        break :blk mat.mat4fFromMat4d(m_view_inv);
+    };
 }
 
 pub fn updateProjectionMatrix(c: *Camera) void {
     c.projection_matrix = switch (c.projection_type) {
-        .perspective => mat.perspective(c.field_of_view, c.aspect_ratio, 0.01, 3.0),
-        .orthographic => mat.orthographic(c.aspect_ratio * -c.view_matrix[3][2], -c.view_matrix[3][2], 0.01, 3.0),
+        .perspective => mat.perspective(c.field_of_view, c.aspect_ratio, 0.01, 5.0),
+        .orthographic => mat.orthographic(c.aspect_ratio * -c.view_matrix[3][2], -c.view_matrix[3][2], 0.01, 5.0),
+    };
+    c.projection_matrix_inv = blk: {
+        const m_proj = mat.mat4dFromMat4f(c.projection_matrix);
+        const m_proj_inv = eigen.computeInverse4d(m_proj) orelse {
+            gl_log.err("Cannot invert projection matrix", .{});
+            break :blk mat.identity4f;
+        };
+        break :blk mat.mat4fFromMat4d(m_proj_inv);
     };
 }
 
 pub fn lookAtPivotPosition(c: *Camera) void {
-    c.look_dir = vec.normalized3f(vec.sub3f(c.pivot_position, c.position));
+    c.look_dir = vec.normalized3f(vec.sub3f(c.pivot_position, c.position)); // TODO: handle case where position == pivot_position
     c.updateViewMatrix();
 }
 

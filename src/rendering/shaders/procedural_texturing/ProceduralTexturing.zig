@@ -27,14 +27,17 @@ const Mat3d = mat.Mat3d;
 const Mat3f = mat.Mat3f;
 const Mat4d = mat.Mat4d;
 
-var global_instance: ProceduralTexturing = undefined;
-var init_global_once = std.once(init_global);
+var global_instance: ?ProceduralTexturing = null;
+
 fn init_global() void {
+    if (global_instance) |_| return;
+
     global_instance = init() catch unreachable;
+    Shader.register(&global_instance.?.program);
 }
 pub fn instance() *ProceduralTexturing {
-    init_global_once.call();
-    return &global_instance;
+    init_global();
+    return &global_instance.?;
 }
 
 program: Shader,
@@ -47,11 +50,9 @@ light_position_uniform: c_int = undefined,
 id_exemplar_texture: c_int = undefined,
 exemplar_texture_uniform: c_int = undefined,
 scale_tex_coords_uniform: c_int = undefined,
-u_scale_distorsion_uniform: c_int = undefined,
-visu_area_distorsion_uniform: c_int = undefined,
-visu_angle_distorsion_uniform: c_int = undefined,
 visu_arap_energy_uniform: c_int = undefined,
 compense_distorsions_uniform: c_int = undefined,
+distorsions_computed_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 vector_attrib: VAO.VertexAttribInfo = undefined,
@@ -80,11 +81,9 @@ fn init() !ProceduralTexturing {
     pt.light_position_uniform = gl.GetUniformLocation(pt.program.index, "u_light_position");
     pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture");
     pt.scale_tex_coords_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_tex_coords");
-    pt.u_scale_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_distorsion");
-    pt.visu_area_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_area_distorsion");
-    pt.visu_angle_distorsion_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_angle_distorsion");
     pt.visu_arap_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_arap_energy");
     pt.compense_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_compense_distorsions");
+    pt.distorsions_computed_uniform = gl.GetUniformLocation(pt.program.index, "u_distorsions_computed");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -107,28 +106,27 @@ pub fn deinit(tf: *ProceduralTexturing) void {
 pub const Parameters = struct {
     shader: *ProceduralTexturing,
     vao: VAO,
-    first: bool = true,
     exemplar_texture: TEXTURE2D,
     model_view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
     light_position: [3]f32 = .{ 10, 0, 100 },
-    ssbo_info_triangles: SSBO = undefined,
-    ssbo_info_vertices: SSBO = undefined,
-    ssbo_edge_ref: SSBO = undefined,
-    ssbo_normal_vertices: SSBO = undefined,
-    ssbo_distorsion_primitives: SSBO = undefined,
-    ssbo_neigh_selected_vertices: SSBO = undefined,
-    vertices_normal_vbo: VBO = undefined,
-    vertices_position_vbo: VBO = undefined,
+    ssbo_info_triangles: SSBO,
+    ssbo_info_vertices: SSBO,
+    ssbo_edge_ref: SSBO,
+    ssbo_normal_vertices: SSBO,
+    ssbo_distorsion_primitives: SSBO,
+    ssbo_neigh_selected_vertices: SSBO,
+    vertices_normal_vbo: ?VBO = undefined,
+    vertices_position_vbo: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
-    scale_distorsion: f32 = 1,
     visu_area_distorsion: bool = false,
     visu_angle_distorsion: bool = false,
     visu_arap_energy: bool = false,
     compense_distorsions: bool = false,
     minmax_energy: Vec2f = .{ 0, 0 },
+    distorsions_computed: bool = false,
 
     pub fn init() Parameters {
         return .{
@@ -140,6 +138,12 @@ pub const Parameters = struct {
                 .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
                 .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
             }),
+            .ssbo_info_triangles = .init(),
+            .ssbo_info_vertices = .init(),
+            .ssbo_edge_ref = .init(),
+            .ssbo_normal_vertices = .init(),
+            .ssbo_distorsion_primitives = .init(),
+            .ssbo_neigh_selected_vertices = .init(),
         };
     }
 
@@ -151,7 +155,9 @@ pub const Parameters = struct {
         p.ssbo_normal_vertices.deinit();
         p.ssbo_distorsion_primitives.deinit();
         p.ssbo_neigh_selected_vertices.deinit();
-        // p.vertices_position_vbo.deinit();
+        p.exemplar_texture.deinit();
+        p.shader.deinit();
+        p.edge_ref_vbo.deinit();
     }
 
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
@@ -221,26 +227,31 @@ pub const Parameters = struct {
         const F1 = computeF(x1, x2, x0, n1);
         const F2 = computeF(x2, x0, x1, n2);
 
-        var U: Mat3d = undefined;
-        var S: Mat3d = undefined;
-        var V: Mat3d = undefined;
-
         const F0d = mat.mat3dFromMat3f(F0);
-        eigen.computeJacobiSVD3D(&F0d, &U, &S, &V);
+        var res = eigen.computeJacobiSVD3D(F0d);
+        var U: Mat3d = res[0];
+        var S: Mat3d = res[1];
+        var V: Mat3d = res[2];
         const Vt0 = mat.transpose3d(V);
         const R0 = mat.mul3d(U, Vt0);
         const S0 = mat.mul3d(V, mat.mul3d(S, Vt0));
 
         // F1
         const F1d = mat.mat3dFromMat3f(F1);
-        eigen.computeJacobiSVD3D(&F1d, &U, &S, &V);
+        res = eigen.computeJacobiSVD3D(F1d);
+        U = res[0];
+        S = res[1];
+        V = res[2];
         const Vt1 = mat.transpose3d(V);
         const R1 = mat.mul3d(U, Vt1);
         const S1 = mat.mul3d(V, mat.mul3d(S, Vt1));
 
         // F2
         const F2d = mat.mat3dFromMat3f(F2);
-        eigen.computeJacobiSVD3D(&F2d, &U, &S, &V);
+        res = eigen.computeJacobiSVD3D(F2d);
+        U = res[0];
+        S = res[1];
+        V = res[2];
         const Vt2 = mat.transpose3d(V);
         const R2 = mat.mul3d(U, Vt2);
         const S2 = mat.mul3d(V, mat.mul3d(S, Vt2));
@@ -252,18 +263,25 @@ pub const Parameters = struct {
         return .{ computeAsRigidAsPossibleEnergy3D(F0, mat.mat3fFromMat3d(R0), mat.mat3fFromMat3d(S0)), computeAsRigidAsPossibleEnergy3D(F1, mat.mat3fFromMat3d(R1), mat.mat3fFromMat3d(S1)), computeAsRigidAsPossibleEnergy3D(F2, mat.mat3fFromMat3d(R2), mat.mat3fFromMat3d(S2)) };
     }
 
-    pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) void {
-        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.index);
+    pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) bool {
+        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.?.index);
         const ptr_vbo_position = gl.MapBuffer(gl.ARRAY_BUFFER, gl.READ_ONLY);
-        const array_vbo_position: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_position));
+        if (ptr_vbo_position) |_| {} else {
+            return false;
+        }
+        const array_vbo_position: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_position.?));
 
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
         const ptr_ibo = gl.MapBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.READ_ONLY);
         const array_ibo: [*]u32 = @ptrCast(@alignCast(ptr_ibo));
 
-        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_normal_vbo.index);
+        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_normal_vbo.?.index);
         const ptr_vbo_normal = gl.MapBuffer(gl.ARRAY_BUFFER, gl.READ_ONLY);
-        const array_vbo_normal: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_normal));
+        if (ptr_vbo_normal) |_| {} else {
+            std.log.debug("You should first compute normals", .{});
+            return false;
+        }
+        const array_vbo_normal: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_normal.?));
 
         const nb_triangle: usize = ibo.nb_indices / 3;
 
@@ -314,10 +332,10 @@ pub const Parameters = struct {
 
         p.minmax_energy = .{ min_energy, max_energy };
 
-        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.index);
+        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.?.index);
         _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
 
-        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_normal_vbo.index);
+        gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_normal_vbo.?.index);
         _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
 
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
@@ -325,12 +343,12 @@ pub const Parameters = struct {
 
         gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
         _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
+        return true;
     }
 
     pub fn draw(p: *Parameters, ibo: IBO) void {
-        if (p.first) {
-            p.fillDistorsionSSBO(&p.ssbo_distorsion_primitives, &ibo);
-            p.first = false;
+        if (!p.distorsions_computed and p.compense_distorsions) {
+            p.distorsions_computed = p.fillDistorsionSSBO(&p.ssbo_distorsion_primitives, &ibo);
         }
 
         gl.UseProgram(p.shader.program.index);
@@ -338,24 +356,23 @@ pub const Parameters = struct {
         gl.ActiveTexture(gl.TEXTURE0);
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
         p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
-        p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.index);
+        p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.?.index);
         p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
-        p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.index);
+        p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.?.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, p.ssbo_distorsion_primitives.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, p.ssbo_neigh_selected_vertices.index);
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
+
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform2fv(p.shader.min_max_energy_uniform, 1, @ptrCast(&p.minmax_energy));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
         gl.UniformMatrix4fv(p.shader.model_view_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.model_view_matrix));
         gl.UniformMatrix4fv(p.shader.projection_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.projection_matrix));
         gl.Uniform1f(p.shader.scale_tex_coords_uniform, p.scale_tex_coords);
-        gl.Uniform1f(p.shader.u_scale_distorsion_uniform, p.scale_distorsion);
-        gl.Uniform1i(p.shader.visu_angle_distorsion_uniform, @intFromBool(p.visu_angle_distorsion));
-        gl.Uniform1i(p.shader.visu_area_distorsion_uniform, @intFromBool(p.visu_area_distorsion));
         gl.Uniform1i(p.shader.visu_arap_energy_uniform, @intFromBool(p.visu_arap_energy));
         gl.Uniform1i(p.shader.compense_distorsions_uniform, @intFromBool(p.compense_distorsions));
+        gl.Uniform1i(p.shader.distorsions_computed_uniform, @intFromBool(p.distorsions_computed));
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);

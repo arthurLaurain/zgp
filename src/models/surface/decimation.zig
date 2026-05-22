@@ -1,8 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const PriorityQueue = @import("../../utils/PriorityQueue.zig").PriorityQueue;
 
-const zgp_log = std.log.scoped(.zgp);
+const PriorityQueue = @import("../../utils/PriorityQueue.zig").PriorityQueue;
 
 const AppContext = @import("../../main.zig").AppContext;
 const SurfaceMesh = @import("SurfaceMesh.zig");
@@ -39,7 +38,7 @@ const EdgeQueue = PriorityQueue(EdgeInfo, EdgeQueueContext, EdgeInfo.cmp, EdgeIn
 
 fn edgeCollapsePositionAndQuadric(queue: *EdgeQueue, edge: SurfaceMesh.Cell) struct { Vec3f, Mat4f } {
     assert(edge.cellType() == .edge);
-    const ctx: EdgeQueueContext = queue.context;
+    const ctx: *const EdgeQueueContext = &queue.context;
     const d = edge.dart();
     const d1 = ctx.surface_mesh.phi1(d);
     const v1: SurfaceMesh.Cell = .{ .vertex = d };
@@ -72,12 +71,12 @@ fn edgeCollapsePositionAndQuadric(queue: *EdgeQueue, edge: SurfaceMesh.Cell) str
     return .{ p.?, q };
 }
 
-fn addEdgeToQueue(queue: *EdgeQueue, edge: SurfaceMesh.Cell) !void {
+fn addEdgeToQueue(allocator: std.mem.Allocator, queue: *EdgeQueue, edge: SurfaceMesh.Cell) !void {
     assert(edge.cellType() == .edge);
     const p, const q = edgeCollapsePositionAndQuadric(queue, edge);
     const p_hom: Vec4f = .{ p[0], p[1], p[2], 1.0 };
     // cost = p^T * Q * p
-    try queue.add(.{
+    try queue.push(allocator, .{
         .edge = edge,
         .cost = vec.dot4f(p_hom, mat.mulVec4f(q, p_hom)),
     });
@@ -86,16 +85,16 @@ fn addEdgeToQueue(queue: *EdgeQueue, edge: SurfaceMesh.Cell) !void {
 fn removeEdgeFromQueue(queue: *EdgeQueue, edge: SurfaceMesh.Cell) void {
     assert(edge.cellType() == .edge);
     if (queue.context.edge_queue_index.value(edge)) |index| {
-        _ = queue.removeIndex(index);
+        _ = queue.popIndex(index);
     }
     queue.context.edge_queue_index.valuePtr(edge).* = null;
 }
 
-fn updateEdgeInQueue(queue: *EdgeQueue, edge: SurfaceMesh.Cell) !void {
+fn updateEdgeInQueue(allocator: std.mem.Allocator, queue: *EdgeQueue, edge: SurfaceMesh.Cell) !void {
     assert(edge.cellType() == .edge);
     removeEdgeFromQueue(queue, edge);
     if (queue.context.surface_mesh.canCollapseEdge(edge)) {
-        try addEdgeToQueue(queue, edge);
+        try addEdgeToQueue(allocator, queue, edge);
     }
 }
 
@@ -111,29 +110,29 @@ pub fn decimateQEM(
     try subdivision.triangulateFaces(app_ctx, sm);
 
     var edge_queue_index = try sm.addData(.edge, ?usize, "__edge_queue_index");
-    defer sm.removeData(.edge, edge_queue_index.gen());
+    defer sm.removeData(.edge, ?usize, edge_queue_index);
     edge_queue_index.data.fill(null);
 
-    var queue: EdgeQueue = EdgeQueue.init(app_ctx.allocator, .{
+    var queue: EdgeQueue = .initContext(.{
         .surface_mesh = sm,
         .vertex_position = vertex_position,
         .vertex_qem = vertex_qem,
         .edge_queue_index = edge_queue_index,
     });
-    defer queue.deinit();
+    defer queue.deinit(app_ctx.allocator);
 
-    // init queue with collapsible edges
-    var edge_it = try SurfaceMesh.CellIterator(.edge).init(sm);
+    // init queue with all topologically collapsible edges
+    var edge_it: SurfaceMesh.CellIterator = try .init(sm, .edge);
     defer edge_it.deinit();
     while (edge_it.next()) |edge| {
         if (sm.canCollapseEdge(edge)) {
-            try addEdgeToQueue(&queue, edge);
+            try addEdgeToQueue(app_ctx.allocator, &queue, edge);
         }
     }
 
     var nb_removed_vertices: u32 = 0;
     while (queue.items.len > 0 and nb_removed_vertices < nb_vertices_to_remove) {
-        const info = queue.remove();
+        const info = queue.popIndex(0);
 
         const d = info.edge.dart();
         const dd = sm.phi2(d);
@@ -157,16 +156,16 @@ pub fn decimateQEM(
         vertex_position.valuePtr(v).* = p;
         vertex_qem.valuePtr(v).* = q;
 
-        var dit = sm.cellDartIterator(v); // v.dart() == d_12
-        while (dit.next()) |dv| {
-            try updateEdgeInQueue(&queue, .{ .edge = dv });
-            try updateEdgeInQueue(&queue, .{ .edge = sm.phi1(dv) });
+        var dart_it = sm.cellDartIterator(v); // v.dart() == d_12
+        while (dart_it.next()) |dv| {
+            try updateEdgeInQueue(app_ctx.allocator, &queue, .{ .edge = dv });
+            try updateEdgeInQueue(app_ctx.allocator, &queue, .{ .edge = sm.phi1(dv) });
             if (dv == d_12 or dv == dd_12) {
                 var d_it = sm.phi1(sm.phi2(sm.phi1(dv)));
                 const d_stop = sm.phi2(dv);
                 while (d_it != d_stop) : (d_it = sm.phi1(sm.phi2(d_it))) {
-                    try updateEdgeInQueue(&queue, .{ .edge = d_it });
-                    try updateEdgeInQueue(&queue, .{ .edge = sm.phi1(d_it) });
+                    try updateEdgeInQueue(app_ctx.allocator, &queue, .{ .edge = d_it });
+                    try updateEdgeInQueue(app_ctx.allocator, &queue, .{ .edge = sm.phi1(d_it) });
                 }
             }
         }

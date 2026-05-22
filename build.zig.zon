@@ -2,33 +2,32 @@
     .name = .zgp,
     .version = "0.0.0",
     .fingerprint = 0xdc9eb8c856ea514c,
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .zigglgen = .{
-            .url = "git+https://github.com/castholm/zigglgen.git#6b21369ac50de8826f8af60a7edb33693b4ec7bf",
-            .hash = "zigglgen-0.5.0-zigglr_CLwBs1aABtYVtxNPo1SB8AzgKMVouoqULqkDQ",
+            .url = "git+https://github.com/castholm/zigglgen.git#7e55ad15655fc4d602ed3bcbe7fb487592063156",
+            .hash = "zigglgen-0.5.0-ziggltzDLwA0Gk0Pj6QMij1j6Z_jkvGEtGKBM6-YlI_s",
         },
         .sdl = .{
-            .url = "git+https://github.com/castholm/SDL.git#887fa805e40d5c7bb3955ae69b89ed566c6a0471",
-            .hash = "sdl-0.4.0+3.4.0-SDL--rq2owEZsySGuHCuVJ9naEvH3i3e_pyUIjziBtJ-",
+            .url = "git+https://github.com/castholm/SDL.git#21c6b79840d123e94a9f183f4b0fa1731668f48d",
+            .hash = "sdl-0.5.0+3.4.8-SDL--k4DpgH323IfF6cEaGzKUdtUQv1azbBmmcv0RMAu",
         },
         .cimgui_zig = .{
-            .url = "https://github.com/tiawl/cimgui.zig/archive/refs/heads/docking.zip",
-            .hash = "cimgui_zig-1.0.0-2Xubkv6iYgBVW-kLof31hmO2M0KQ4CzFZP08RT44mLLS",
+            .url = "git+https://github.com/tiawl/cimgui.zig.git#68c0ed133ed317061baad3a3ae56cd2940c61a62",
+            .hash = "cimgui_zig-1.0.0-2XubksPPvwDUY1zt1EGL16m1Zr-a53ZGn13PsqjChWhk",
         },
         .ceigen = .{
-            // .path = "../ceigen",
-            .url = "git+https://github.com/arthurLaurain/ceigen#0d4c864890d5b4ed1b22c368aec9ba58cdfb8626",
-            .hash = "ceigen-0.0.0-nikIKSiiBgF2bQ9iwlu1Q3QwdwbZySScLQA-hg3BwQAC",
+            .path = "src/thirdparty/ceigen",
         },
         .clibacc = .{
-            // .path = "../clibacc",
-            .url = "git+https://github.com/pierrekraemer/clibacc.git#17c50be8cd2620cc5abe1ea8d2366d7df519c045",
-            .hash = "clibacc-0.0.0-HMOW8SewAAAtaRzDzYQbvj2FGkzxlZEK9PGRrASum_Rt",
+            .path = "src/thirdparty/clibacc",
+        },
+        .predicates = .{
+            .path = "src/thirdparty/predicates",
         },
         .zstbi = .{
-            .url = "git+https://github.com/zig-gamedev/zstbi#664305dd52640be15cbebd7cd73d1199679933e1",
-            .hash = "zstbi-0.11.0-dev-L0Ea_2yVBwA4uh-tHfgdhZcQaWRoZVYlNGs4Dl_WTeuR",
+            .url = "git+https://github.com/zig-gamedev/zstbi#3813f5f113b26f644cfa01a30155cc76b3526e91",
+            .hash = "zstbi-0.11.0-dev-L0Ea_3GWBwAh7m54XX055vwLKPTPij5hyqyeq92MXPE2",
         },
     },
     .paths = .{

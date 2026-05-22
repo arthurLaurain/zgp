@@ -9,15 +9,15 @@ const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 
-var global_instance: TriFlatScalarPerVertex = undefined;
-var init_global_once = std.once(init_global);
+var global_instance: ?TriFlatScalarPerVertex = null;
 fn init_global() void {
+    if (global_instance) |_| return;
     global_instance = init() catch unreachable;
-    Shader.register(&global_instance.program);
+    Shader.register(&global_instance.?.program);
 }
 pub fn instance() *TriFlatScalarPerVertex {
-    init_global_once.call();
-    return &global_instance;
+    init_global();
+    return &global_instance.?;
 }
 
 program: Shader,
@@ -28,8 +28,9 @@ ambiant_color_uniform: c_int = undefined,
 light_position_uniform: c_int = undefined,
 min_value_uniform: c_int = undefined,
 max_value_uniform: c_int = undefined,
-show_isolines_uniform: c_int = undefined,
+draw_isolines_uniform: c_int = undefined,
 nb_isolines_uniform: c_int = undefined,
+dim_backfaces_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 scalar_attrib: VAO.VertexAttribInfo = undefined,
@@ -57,8 +58,9 @@ fn init() !TriFlatScalarPerVertex {
     tfspv.light_position_uniform = gl.GetUniformLocation(tfspv.program.index, "u_light_position");
     tfspv.min_value_uniform = gl.GetUniformLocation(tfspv.program.index, "u_min_value");
     tfspv.max_value_uniform = gl.GetUniformLocation(tfspv.program.index, "u_max_value");
-    tfspv.show_isolines_uniform = gl.GetUniformLocation(tfspv.program.index, "u_show_isolines");
+    tfspv.draw_isolines_uniform = gl.GetUniformLocation(tfspv.program.index, "u_draw_isolines");
     tfspv.nb_isolines_uniform = gl.GetUniformLocation(tfspv.program.index, "u_nb_isolines");
+    tfspv.dim_backfaces_uniform = gl.GetUniformLocation(tfspv.program.index, "u_dim_backfaces");
 
     tfspv.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(tfspv.program.index, "a_position")),
@@ -86,8 +88,9 @@ pub const Parameters = struct {
     light_position: [3]f32 = .{ 10, 0, 100 },
     min_value: f32 = 0.0,
     max_value: f32 = 1.0,
-    show_isolines: bool = false,
+    draw_isolines: bool = false,
     nb_isolines: i32 = 10,
+    dim_backfaces: bool = true,
 
     pub fn init() Parameters {
         return .{
@@ -126,8 +129,9 @@ pub const Parameters = struct {
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
         gl.Uniform1f(p.shader.min_value_uniform, p.min_value);
         gl.Uniform1f(p.shader.max_value_uniform, p.max_value);
-        gl.Uniform1i(p.shader.show_isolines_uniform, if (p.show_isolines) 1 else 0);
+        gl.Uniform1i(p.shader.draw_isolines_uniform, @intFromBool(p.draw_isolines));
         gl.Uniform1i(p.shader.nb_isolines_uniform, p.nb_isolines);
+        gl.Uniform1i(p.shader.dim_backfaces_uniform, @intFromBool(p.dim_backfaces));
 
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);

@@ -4,7 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const gl = @import("gl");
 
-const c = @import("../main.zig").c;
+const c = @import("c");
 
 const imgui_utils = @import("../ui/imgui.zig");
 const imgui_log = std.log.scoped(.imgui);
@@ -13,7 +13,7 @@ const AppContext = @import("../main.zig").AppContext;
 const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMeshStdData;
-const DataGen = @import("../utils/Data.zig").DataGen;
+const DataGen = @import("../utils/data.zig").DataGen;
 
 const PointSphere = @import("../rendering/shaders/point_sphere/PointSphere.zig");
 const PointSphereColorPerVertex = @import("../rendering/shaders/point_sphere_color_per_vertex/PointSphereColorPerVertex.zig");
@@ -35,7 +35,6 @@ const Mat4f = mat.Mat4f;
 const ColorDefinedOn = enum {
     global,
     vertex,
-    edge,
     face,
 };
 const ColorType = enum {
@@ -117,29 +116,27 @@ module: Module = .{
         .rightPanel = rightPanel,
     },
 },
-parameters: std.AutoHashMap(*SurfaceMesh, SurfaceMeshRendererParameters),
+parameters: std.AutoHashMapUnmanaged(*SurfaceMesh, SurfaceMeshRendererParameters) = .empty,
 
 pub fn init(app_ctx: *AppContext) SurfaceMeshRenderer {
     return .{
         .app_ctx = app_ctx,
-        .parameters = .init(app_ctx.allocator),
     };
 }
 
 pub fn deinit(smr: *SurfaceMeshRenderer) void {
     var p_it = smr.parameters.iterator();
     while (p_it.next()) |entry| {
-        var p = entry.value_ptr.*;
-        p.deinit();
+        entry.value_ptr.deinit();
     }
-    smr.parameters.deinit();
+    smr.parameters.deinit(smr.app_ctx.allocator);
 }
 
 /// Part of the Module interface.
 /// Create and store a SurfaceMeshRendererParameters for the new SurfaceMesh.
 pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const smr: *SurfaceMeshRenderer = @alignCast(@fieldParentPtr("module", m));
-    smr.parameters.put(surface_mesh, SurfaceMeshRendererParameters.init()) catch |err| {
+    smr.parameters.put(smr.app_ctx.allocator, surface_mesh, SurfaceMeshRendererParameters.init()) catch |err| {
         std.debug.print("Failed to create SurfaceMeshRendererParameters for new SurfaceMesh: {}\n", .{err});
         return;
     };
@@ -252,11 +249,7 @@ fn setSurfaceMeshDrawVerticesColorData(
             var min: f32 = std.math.floatMax(f32);
             var max: f32 = std.math.floatMin(f32);
             if (data) |d| {
-                var it = d.data.iterator();
-                while (it.next()) |v| {
-                    if (v.* < min) min = v.*;
-                    if (v.* > max) max = v.*;
-                }
+                min, max = d.data.minMaxValues(CompareScalarContext{}, compareScalar);
             }
             switch (cell_type) {
                 .vertex => {
@@ -417,7 +410,6 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
                         },
                     }
                 },
-                else => unreachable,
             }
             gl.Disable(gl.POLYGON_OFFSET_FILL);
         }
@@ -614,7 +606,7 @@ pub fn rightPanel(m: *Module) void {
                             .cleared => smr.setSurfaceMeshDrawFacesColorData(sm, .vertex, f32, null),
                             .changed => |data| smr.setSurfaceMeshDrawFacesColorData(sm, .vertex, f32, data),
                         }
-                        if (c.ImGui_Checkbox("Show isolines", &p.tri_flat_scalar_per_vertex_shader_parameters.show_isolines)) {
+                        if (c.ImGui_Checkbox("Draw isolines", &p.tri_flat_scalar_per_vertex_shader_parameters.draw_isolines)) {
                             smr.app_ctx.requestRedraw();
                         }
                         c.ImGui_Text("Nb isolines");
@@ -661,7 +653,6 @@ pub fn rightPanel(m: *Module) void {
                 }
                 c.ImGui_PopID();
             },
-            else => unreachable,
         }
     }
 

@@ -3,8 +3,9 @@ precision highp int;
 
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
-uniform bool u_show_isolines;
+uniform bool u_draw_isolines;
 uniform int u_nb_isolines;
+uniform bool u_dim_backfaces;
 
 in vec3 v_position;
 in float v_value;
@@ -19,10 +20,10 @@ void main() {
   vec4 result = vec4(v_color.rgb * lambert_term, 1.0);
   result += vec4(u_ambiant_color.rgb, 0.0);
   f_color = result;
-  if (!gl_FrontFacing) {
+  if (u_dim_backfaces && !gl_FrontFacing) {
     f_color *= 0.5;
   }
-  if (u_show_isolines)
+  if (u_draw_isolines)
   {
     float s = v_value * float(u_nb_isolines);
     if (s - floor(s) < 0.05)

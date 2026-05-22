@@ -6,10 +6,11 @@ const assert = std.debug.assert;
 const imgui_utils = @import("../ui/imgui.zig");
 const zgp_log = std.log.scoped(.zgp);
 
-const c = @import("../main.zig").c;
+const c = @import("c");
 
 const AppContext = @import("../main.zig").AppContext;
 const Module = @import("Module.zig");
+const PointCloud = @import("../models/point/PointCloud.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfaceMeshCurvature = @import("./SurfaceMeshCurvature.zig");
 
@@ -17,6 +18,7 @@ const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 const mat = @import("../geometry/mat.zig");
 const Mat4f = mat.Mat4f;
+const geometry_utils = @import("../geometry/utils.zig");
 const bvh = @import("../geometry/bvh.zig");
 
 const subdivision = @import("../models/surface/subdivision.zig");
@@ -69,8 +71,9 @@ fn triangulateFaces(
 fn remesh(
     smc: *SurfaceMeshConnectivity,
     sm: *SurfaceMesh,
-    sm_bvh: bvh.TrianglesBVH,
+    sm_bvh: *bvh.TrianglesBVH,
     edge_length_factor: f32,
+    preserve_features: bool,
     adaptive: bool,
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
     corner_angle: SurfaceMesh.CellData(.corner, f32),
@@ -82,13 +85,14 @@ fn remesh(
     vertex_normal: SurfaceMesh.CellData(.vertex, Vec3f),
     vertex_curvature: curvature.SurfaceMeshCurvatureDatas,
 ) !void {
-    var timer = try std.time.Timer.start();
+    const t = std.Io.Timestamp.now(smc.app_ctx.io, .real);
 
-    try remeshing.pliantRemeshing(
+    try remeshing.isotropicRemeshing(
         smc.app_ctx,
         sm,
         sm_bvh,
         edge_length_factor,
+        preserve_features,
         adaptive,
         vertex_position,
         corner_angle,
@@ -101,29 +105,10 @@ fn remesh(
         vertex_curvature,
     );
     smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_position);
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .corner, f32, corner_angle);
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, f32, face_area);
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, Vec3f, face_normal);
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .edge, f32, edge_length);
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .edge, f32, edge_dihedral_angle);
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, vertex_area);
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_normal);
-    if (vertex_curvature.vertex_kmin) |kmin| {
-        smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, kmin);
-    }
-    if (vertex_curvature.vertex_Kmin) |Kmin| {
-        smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, Kmin);
-    }
-    if (vertex_curvature.vertex_kmax) |kmax| {
-        smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, kmax);
-    }
-    if (vertex_curvature.vertex_Kmax) |Kmax| {
-        smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, Kmax);
-    }
     smc.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sm);
     smc.app_ctx.requestRedraw();
 
-    const elapsed: f64 = @floatFromInt(timer.read());
+    const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, smc.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Remeshing computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
 }
 
@@ -137,10 +122,10 @@ fn decimate(
     face_normal: SurfaceMesh.CellData(.face, Vec3f),
     nb_vertices_to_remove: u32,
 ) !void {
-    var timer = try std.time.Timer.start();
+    const t = std.Io.Timestamp.now(smc.app_ctx.io, .real);
 
-    var vertex_qem = try sm.addData(.vertex, Mat4f, "__vertex_qem");
-    defer sm.removeData(.vertex, vertex_qem.gen());
+    const vertex_qem = try sm.addData(.vertex, Mat4f, "__vertex_qem");
+    defer sm.removeData(.vertex, Mat4f, vertex_qem);
     try qem.computeVertexQEMs(
         smc.app_ctx,
         sm,
@@ -162,7 +147,7 @@ fn decimate(
     smc.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sm);
     smc.app_ctx.requestRedraw();
 
-    const elapsed: f64 = @floatFromInt(timer.read());
+    const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, smc.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Decimation computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
 }
 
@@ -170,27 +155,30 @@ fn generateConvexHull(
     smc: *SurfaceMeshConnectivity,
     sm: *SurfaceMesh,
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
+    convex_hull_name: []const u8,
 ) !void {
-    var timer = try std.time.Timer.start();
+    const t = std.Io.Timestamp.now(smc.app_ctx.io, .real);
 
-    const pc = try smc.app_ctx.point_cloud_store.createPointCloud(smc.app_ctx.surface_mesh_store.surfaceMeshName(sm).?);
-    defer smc.app_ctx.point_cloud_store.destroyPointCloud(pc);
+    var pc: PointCloud = undefined;
+    try pc.init(smc.app_ctx.allocator, &smc.app_ctx.point_cloud_store.point_buffer_pool);
+    defer pc.deinit();
     const point_position = try pc.addData(Vec3f, "position");
-    var vertex_it = try SurfaceMesh.CellIterator(.vertex).init(sm);
+    var vertex_it: SurfaceMesh.CellIterator = try .init(sm, .vertex);
+    defer vertex_it.deinit();
     while (vertex_it.next()) |vertex| {
         const p = try pc.addPoint();
         point_position.valuePtr(p).* = vertex_position.valuePtr(vertex).*;
     }
 
-    const ch = try smc.app_ctx.surface_mesh_store.createSurfaceMesh("convex_hull");
+    const ch = try smc.app_ctx.surface_mesh_store.createSurfaceMesh(convex_hull_name);
     const ch_vertex_position = try ch.addData(.vertex, Vec3f, "position");
     smc.app_ctx.surface_mesh_store.setSurfaceMeshStdData(ch, .{ .vertex_position = ch_vertex_position });
 
-    try convex_hull.generateConvexHull(smc.app_ctx, pc, point_position, ch, ch_vertex_position);
+    try convex_hull.generateConvexHull(smc.app_ctx, &pc, point_position, ch, ch_vertex_position);
     smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(ch, .vertex, Vec3f, ch_vertex_position);
     smc.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(ch);
 
-    const elapsed: f64 = @floatFromInt(timer.read());
+    const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, smc.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Convex hull generated in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
 
     smc.app_ctx.requestRedraw();
@@ -209,6 +197,8 @@ pub fn rightClickMenu(m: *Module) void {
         var edge_length_factor: f32 = 1.0;
         var percent_vertices_to_keep: i32 = 75;
         var adaptive_remeshing: bool = false;
+        var preserve_features: bool = false;
+        var convex_hull_name_buf: [32]u8 = @splat(0);
     };
 
     const style = c.ImGui_GetStyle();
@@ -232,12 +222,11 @@ pub fn rightClickMenu(m: *Module) void {
                     std.debug.print("Error cutting all edges: {}\n", .{err});
                 };
             }
-            // imgui_utils.tooltip(
-            //     \\ Read:
-            //     \\ - std vertex_position
-            //     \\ Update connectivity
-            // );
             if (disabled) {
+                imgui_utils.tooltip(
+                    \\ Following data should be available:
+                    \\ - std vertex_position
+                );
                 c.ImGui_EndDisabled();
             }
         }
@@ -249,7 +238,6 @@ pub fn rightClickMenu(m: *Module) void {
                     std.debug.print("Error triangulating faces: {}\n", .{err});
                 };
             }
-            imgui_utils.tooltip("Update connectivity");
         }
 
         if (c.ImGui_BeginMenu("Decimate (QEM)")) {
@@ -282,18 +270,15 @@ pub fn rightClickMenu(m: *Module) void {
                     };
                 }
             }
-            // imgui_utils.tooltip(
-            //     \\ Read:
-            //     \\ - std vertex_position
-            //     \\ - std vertex_area
-            //     \\ - std vertex_tangent_basis
-            //     \\ - std face_area
-            //     \\ - std face_normal
-            //     \\ Write:
-            //     \\ - std vertex_position
-            //     \\ Update connectivity
-            // );
             if (disabled) {
+                imgui_utils.tooltip(
+                    \\ Following data should be available:
+                    \\ - std vertex_position
+                    \\ - std vertex_area
+                    \\ - std vertex_tangent_basis
+                    \\ - std face_area
+                    \\ - std face_normal
+                );
                 c.ImGui_EndDisabled();
             }
         }
@@ -305,8 +290,9 @@ pub fn rightClickMenu(m: *Module) void {
             _ = c.ImGui_SliderFloatEx("", &UiData.edge_length_factor, 0.1, 10.0, "%.2f", c.ImGuiSliderFlags_Logarithmic);
             c.ImGui_PopID();
             _ = c.ImGui_Checkbox("Curvature adaptive", &UiData.adaptive_remeshing);
+            _ = c.ImGui_Checkbox("Preserve features", &UiData.preserve_features);
             var disabled =
-                info.bvh.bvh_ptr == null or
+                !info.bvh.initialized or
                 info.std_datas.vertex_position == null or
                 info.std_datas.corner_angle == null or
                 info.std_datas.face_area == null or
@@ -327,8 +313,9 @@ pub fn rightClickMenu(m: *Module) void {
             if (c.ImGui_ButtonEx("Remesh", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
                 smc.remesh(
                     sm,
-                    info.bvh,
+                    &info.bvh,
                     UiData.edge_length_factor,
+                    UiData.preserve_features,
                     UiData.adaptive_remeshing,
                     info.std_datas.vertex_position.?,
                     info.std_datas.corner_angle.?,
@@ -343,44 +330,45 @@ pub fn rightClickMenu(m: *Module) void {
                     std.debug.print("Error remeshing: {}\n", .{err});
                 };
             }
-            // imgui_utils.tooltip(
-            //     \\ Read:
-            //     \\ - std vertex_position
-            //     \\ - std corner_angle
-            //     \\ - std face_area
-            //     \\ - std face_normal
-            //     \\ - std edge_length
-            //     \\ - std edge_dihedral_angle
-            //     \\ - std vertex_area
-            //     \\ - std vertex_normal
-            //     \\ Write:
-            //     \\ - std vertex_position
-            //     \\ - std corner_angle
-            //     \\ - std face_area
-            //     \\ - std face_normal
-            //     \\ - std edge_length
-            //     \\ - std edge_dihedral_angle
-            //     \\ - std vertex_area
-            //     \\ - std vertex_normal
-            //     \\ Update connectivity
-            // );
             if (disabled) {
+                imgui_utils.tooltip(
+                    \\ Following data should be available:
+                    \\ - std vertex_position
+                    \\ - std corner_angle
+                    \\ - std face_area
+                    \\ - std face_normal
+                    \\ - std edge_length
+                    \\ - std edge_dihedral_angle
+                    \\ - std vertex_area
+                    \\ - std vertex_normal
+                );
                 c.ImGui_EndDisabled();
             }
         }
 
         if (c.ImGui_BeginMenu("Convex hull")) {
             defer c.ImGui_EndMenu();
-            const disabled = info.std_datas.vertex_position == null;
+            c.ImGui_Text("Convex hull name:");
+            _ = c.ImGui_InputText("##Name", &UiData.convex_hull_name_buf, UiData.convex_hull_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
+            const convex_hull_name = std.mem.sliceTo(&UiData.convex_hull_name_buf, 0);
+            const disabled =
+                info.std_datas.vertex_position == null or
+                convex_hull_name.len == 0;
             if (disabled) {
                 c.ImGui_BeginDisabled(true);
             }
             if (c.ImGui_ButtonEx("Generate convex hull", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                smc.generateConvexHull(sm, info.std_datas.vertex_position.?) catch |err| {
+                smc.generateConvexHull(sm, info.std_datas.vertex_position.?, convex_hull_name) catch |err| {
                     std.debug.print("Error generating convex hull: {}\n", .{err});
                 };
             }
             if (disabled) {
+                imgui_utils.tooltip(
+                    \\ Requires:
+                    \\ - a name for the convex hull
+                    \\ Following data should be available:
+                    \\ - std vertex_position
+                );
                 c.ImGui_EndDisabled();
             }
         }

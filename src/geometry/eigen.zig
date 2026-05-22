@@ -1,5 +1,4 @@
-const zgp = @import("../main.zig");
-const c = zgp.c;
+const c = @import("c");
 
 const vec = @import("vec.zig");
 const Vec3d = vec.Vec3d;
@@ -14,25 +13,35 @@ const Mat2d = mat.Mat2d;
 pub const Index = i32;
 pub const Scalar = f64;
 
-pub fn computeJacobiSVD2D(M: *const Mat2d, U: *Mat2d, S: *Mat2d, V: *Mat2d) void {
-    c.computeJacobiSVD2d(@ptrCast(M), @ptrCast(U), @ptrCast(S), @ptrCast(V));
+pub fn computeJacobiSVD2D(M: Mat2d) struct { Mat2d, Mat2d, Mat2d } {
+    var U: Mat2d = undefined;
+    var S: Mat2d = undefined;
+    var V: Mat2d = undefined;
+
+    c.computeJacobiSVD2d(@ptrCast(&M), @ptrCast(&U), @ptrCast(&S), @ptrCast(&V));
+    return .{ U, S, V };
 }
 
-pub fn computeJacobiSVD3D(M: *const Mat3d, U: *Mat3d, S: *Mat3d, V: *Mat3d) void {
-    c.computeJacobiSVD3d(@ptrCast(M), @ptrCast(U), @ptrCast(S), @ptrCast(V));
+pub fn computeJacobiSVD3D(M: Mat3d) struct { Mat3d, Mat3d, Mat3d } {
+    var U: Mat3d = undefined;
+    var S: Mat3d = undefined;
+    var V: Mat3d = undefined;
+    c.computeJacobiSVD3d(@ptrCast(@constCast(&M)), @ptrCast(&U), @ptrCast(&S), @ptrCast(&V));
+
+    return .{ U, S, V };
 }
 
 pub fn computeInverse4d(m: Mat4d) ?Mat4d {
     var inv: Mat4d = undefined;
     var invertible = false;
-    c.computeInverseWithCheck4d(@ptrCast(&m), @ptrCast(&inv), &invertible);
+    c.computeInverseWithCheck4d(@ptrCast(@constCast(&m)), @ptrCast(&inv), &invertible);
     return if (invertible) inv else null;
 }
 
 pub fn computeInverse3d(m: Mat3d) ?Mat3d {
     var inv: Mat3d = undefined;
     var invertible = false;
-    c.computeInverseWithCheck3d(@ptrCast(&m), @ptrCast(&inv), &invertible);
+    c.computeInverseWithCheck3d(@ptrCast(@constCast(&m)), @ptrCast(&inv), &invertible);
     return if (invertible) inv else null;
 }
 
@@ -49,14 +58,14 @@ pub fn computeLogOnEigenValues2d(m: *const Mat2d, out: *Mat2d) void {
 
 pub fn solveSymmetricLinearSystem4d(A: Mat4d, b: Vec4d) Vec4d {
     var x: Vec4d = undefined;
-    c.solveSymmetricLinearSystem4d(@ptrCast(&A), @ptrCast(&b), @ptrCast(&x));
+    c.solveSymmetricLinearSystem4d(@ptrCast(@constCast(&A)), @ptrCast(@constCast(&b)), @ptrCast(&x));
     return x;
 }
 
 pub fn eigenSolver(m: Mat3d) struct { Vec3d, Mat3d } {
     var evals: Vec3d = undefined;
     var evecs: Mat3d = undefined;
-    c.eigenSolver3d(@ptrCast(&m), @ptrCast(&evals), @ptrCast(&evecs));
+    c.eigenSolver3d(@ptrCast(@constCast(&m)), @ptrCast(&evals), @ptrCast(&evecs));
     return .{ evals, evecs };
 }
 

@@ -179,8 +179,8 @@ pub fn printMatrix(m: anytype) void {
 
 pub fn mul3f(a: Mat3f, b: Mat3f) Mat3f {
     var result: Mat3f = undefined;
-    for (0..2) |i| {
-        for (0..2) |j| {
+    for (0..3) |i| {
+        for (0..3) |j| {
             result[i][j] = a[0][j] * b[i][0] + a[1][j] * b[i][1] + a[2][j] * b[i][2];
         }
     }
@@ -239,8 +239,8 @@ pub fn mul3d(a: Mat3d, b: Mat3d) Mat3d {
 
 pub fn mul4f(a: Mat4f, b: Mat4f) Mat4f {
     var result: Mat4f = undefined;
-    for (0..3) |i| {
-        for (0..3) |j| {
+    for (0..4) |i| {
+        for (0..4) |j| {
             result[i][j] = a[0][j] * b[i][0] + a[1][j] * b[i][1] + a[2][j] * b[i][2] + a[3][j] * b[i][3];
         }
     }
@@ -248,8 +248,8 @@ pub fn mul4f(a: Mat4f, b: Mat4f) Mat4f {
 }
 pub fn mul4d(a: Mat4d, b: Mat4d) Mat4d {
     var result: Mat4d = undefined;
-    for (0..3) |i| {
-        for (0..3) |j| {
+    for (0..4) |i| {
+        for (0..4) |j| {
             result[i][j] = a[0][j] * b[i][0] + a[1][j] * b[i][1] + a[2][j] * b[i][2] + a[3][j] * b[i][3];
         }
     }

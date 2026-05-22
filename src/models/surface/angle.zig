@@ -3,9 +3,9 @@ const assert = std.debug.assert;
 
 const AppContext = @import("../../main.zig").AppContext;
 const SurfaceMesh = @import("SurfaceMesh.zig");
+
 const vec = @import("../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
-
 const geometry_utils = @import("../../geometry/utils.zig");
 
 /// Compute and return the angle of the given corner.
@@ -40,7 +40,7 @@ pub fn computeCornerAngles(
         vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
         corner_angle: SurfaceMesh.CellData(.corner, f32),
 
-        pub inline fn run(t: *const Task, corner: SurfaceMesh.Cell) void {
+        pub fn run(t: *const Task, corner: SurfaceMesh.Cell) void {
             t.corner_angle.valuePtr(corner).* = cornerAngle(
                 t.surface_mesh,
                 corner,
@@ -49,13 +49,15 @@ pub fn computeCornerAngles(
         }
     };
 
-    var pctr = try SurfaceMesh.ParallelCellTaskRunner(.corner).init(sm);
+    var pctr: SurfaceMesh.ParallelCellTaskRunner = try .init(sm, .corner);
     defer pctr.deinit();
     try pctr.run(app_ctx, Task{
         .surface_mesh = sm,
         .vertex_position = vertex_position,
         .corner_angle = corner_angle,
     });
+
+    // single-threaded version for the record
 
     // _ = app_ctx;
     // var corner_it = try SurfaceMesh.CellIterator(.corner).init(sm);
@@ -112,7 +114,7 @@ pub fn computeEdgeDihedralAngles(
         face_normal: SurfaceMesh.CellData(.face, Vec3f),
         edge_dihedral_angle: SurfaceMesh.CellData(.edge, f32),
 
-        pub inline fn run(t: *const Task, edge: SurfaceMesh.Cell) void {
+        pub fn run(t: *const Task, edge: SurfaceMesh.Cell) void {
             t.edge_dihedral_angle.valuePtr(edge).* = edgeDihedralAngle(
                 t.surface_mesh,
                 edge,
@@ -122,7 +124,7 @@ pub fn computeEdgeDihedralAngles(
         }
     };
 
-    var pctr = try SurfaceMesh.ParallelCellTaskRunner(.edge).init(sm);
+    var pctr: SurfaceMesh.ParallelCellTaskRunner = try .init(sm, .edge);
     defer pctr.deinit();
     try pctr.run(app_ctx, Task{
         .surface_mesh = sm,

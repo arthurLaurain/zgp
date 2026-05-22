@@ -10,15 +10,15 @@ const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 const TextureBuffer = @import("../../TextureBuffer.zig");
 
-var global_instance: TriFlatScalarPerFace = undefined;
-var init_global_once = std.once(init_global);
+var global_instance: ?TriFlatScalarPerFace = null;
 fn init_global() void {
+    if (global_instance) |_| return;
     global_instance = init() catch unreachable;
-    Shader.register(&global_instance.program);
+    Shader.register(&global_instance.?.program);
 }
 pub fn instance() *TriFlatScalarPerFace {
-    init_global_once.call();
-    return &global_instance;
+    init_global();
+    return &global_instance.?;
 }
 
 program: Shader,
@@ -31,6 +31,7 @@ min_value_uniform: c_int = undefined,
 max_value_uniform: c_int = undefined,
 face_index_buffer_uniform: c_int = undefined,
 face_scalar_buffer_uniform: c_int = undefined,
+dim_backfaces_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 
@@ -58,6 +59,7 @@ fn init() !TriFlatScalarPerFace {
     tfspf.max_value_uniform = gl.GetUniformLocation(tfspf.program.index, "u_max_value");
     tfspf.face_index_buffer_uniform = gl.GetUniformLocation(tfspf.program.index, "u_face_index_buffer");
     tfspf.face_scalar_buffer_uniform = gl.GetUniformLocation(tfspf.program.index, "u_face_scalar_buffer");
+    tfspf.dim_backfaces_uniform = gl.GetUniformLocation(tfspf.program.index, "u_dim_backfaces");
 
     tfspf.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(tfspf.program.index, "a_position")),
@@ -86,6 +88,7 @@ pub const Parameters = struct {
     light_position: [3]f32 = .{ 10, 0, 100 },
     min_value: f32 = 0.0,
     max_value: f32 = 1.0,
+    dim_backfaces: bool = true,
 
     pub fn init() Parameters {
         return .{
@@ -128,6 +131,7 @@ pub const Parameters = struct {
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
         gl.Uniform1f(p.shader.min_value_uniform, p.min_value);
         gl.Uniform1f(p.shader.max_value_uniform, p.max_value);
+        gl.Uniform1i(p.shader.dim_backfaces_uniform, @intFromBool(p.dim_backfaces));
 
         gl.ActiveTexture(gl.TEXTURE0 + @as(c_uint, @intCast(p.face_index_buffer_texture_unit)));
         gl.BindTexture(gl.TEXTURE_BUFFER, p.face_index_buffer_texture.index);

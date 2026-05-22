@@ -1,6 +1,19 @@
 const std = @import("std");
+
 const zigglgen = @import("zigglgen");
 const cimgui = @import("cimgui_zig");
+
+fn addIncludePathsToTranslateC(translate_c: *std.Build.Step.TranslateC, lib: *std.Build.Step.Compile) void {
+    for (lib.root_module.include_dirs.items) |*included| {
+        switch (included.*) {
+            .path => translate_c.addIncludePath(included.path),
+            .config_header_step => translate_c.addConfigHeader(included.config_header_step),
+            .path_system => translate_c.addSystemIncludePath(included.path_system),
+            .other_step => addIncludePathsToTranslateC(translate_c, included.other_step),
+            else => unreachable,
+        }
+    }
+}
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -14,6 +27,32 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // TRANSLATE C
+
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const c_mod = translate_c.createModule();
+    exe_mod.addImport("c", c_mod);
+
+    // FOR INCLUDE-ONLY THIRDPARTY HEADERS (WITHOUT BUILD STEPS)
+
+    translate_c.addIncludePath(b.path("src/thirdparty"));
+
+    // PREDICATES
+
+    const predicates_dep = b.dependency("predicates", .{
+        .target = target,
+        .optimize = optimize,
+        // .lto = lto,
+    });
+    const predicates_lib = predicates_dep.artifact("predicates");
+    addIncludePathsToTranslateC(translate_c, predicates_lib);
+    c_mod.linkLibrary(predicates_lib);
+    // exe_mod.addImport("predicates", predicates_dep.module("predicates"));
+
     // CEIGEN
 
     const ceigen_dep = b.dependency("ceigen", .{
@@ -22,7 +61,8 @@ pub fn build(b: *std.Build) void {
         // .lto = lto,
     });
     const ceigen_lib = ceigen_dep.artifact("ceigen");
-    exe_mod.linkLibrary(ceigen_lib);
+    addIncludePathsToTranslateC(translate_c, ceigen_lib);
+    c_mod.linkLibrary(ceigen_lib);
     // exe_mod.addImport("ceigen", ceigen_dep.module("ceigen"));
 
     // CLIBACC
@@ -33,7 +73,8 @@ pub fn build(b: *std.Build) void {
         // .lto = lto,
     });
     const clibacc_lib = clibacc_dep.artifact("clibacc");
-    exe_mod.linkLibrary(clibacc_lib);
+    addIncludePathsToTranslateC(translate_c, clibacc_lib);
+    c_mod.linkLibrary(clibacc_lib);
     // exe_mod.addImport("clibacc", clibacc_dep.module("clibacc"));
 
     // GL_BINDINGS
@@ -60,8 +101,8 @@ pub fn build(b: *std.Build) void {
         //.install_build_config_h = false,
     });
     const sdl_lib = sdl_dep.artifact("SDL3");
-    // const sdl_test_lib = sdl_dep.artifact("SDL3_test");
-    exe_mod.linkLibrary(sdl_lib);
+    addIncludePathsToTranslateC(translate_c, sdl_lib);
+    c_mod.linkLibrary(sdl_lib);
 
     // CIMGUI
 
@@ -71,9 +112,11 @@ pub fn build(b: *std.Build) void {
         // .lto = lto,
         .platforms = &[_]cimgui.Platform{.SDL3},
         .renderers = &[_]cimgui.Renderer{.OpenGL3},
+        .docking = true,
     });
     const cimgui_lib = cimgui_dep.artifact("cimgui");
-    exe_mod.linkLibrary(cimgui_lib);
+    addIncludePathsToTranslateC(translate_c, cimgui_lib);
+    c_mod.linkLibrary(cimgui_lib);
 
     // BUILD EXE
 
@@ -82,7 +125,7 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
     // exe.lto = lto;
-    exe.addIncludePath(b.path("src"));
+    exe.root_module.addIncludePath(b.path("src"));
 
     // ZSTBI
     const zstbi = b.dependency("zstbi", .{});
