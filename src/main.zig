@@ -32,6 +32,7 @@ const SurfaceMeshMedialAxis = @import("modules/SurfaceMeshMedialAxis.zig");
 const SurfaceMeshIntrinsicTriangulation = @import("modules/SurfaceMeshIntrinsicTriangulation.zig");
 const PointCloudMedialAxis = @import("modules/PointCloudMedialAxis.zig");
 const SurfaceMeshProceduralTexturing = @import("modules/SurfaceMeshProceduralTexturing.zig");
+const FieldsGenerator = @import("modules/FieldsGenerator.zig");
 
 const geometry_utils = @import("geometry/utils.zig");
 const vec = @import("geometry/vec.zig");
@@ -151,6 +152,7 @@ var surface_mesh_medial_axis: SurfaceMeshMedialAxis = undefined;
 var surface_mesh_intrinsic_triangulation: SurfaceMeshIntrinsicTriangulation = undefined;
 var point_cloud_medial_axis: PointCloudMedialAxis = undefined;
 var surface_mesh_procedural_texturing: SurfaceMeshProceduralTexturing = undefined;
+var field_generator: FieldsGenerator = undefined;
 
 // TODO: add a console bar at the bottom of the window to display logs & info messages
 
@@ -188,6 +190,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     point_cloud_medial_axis = .init(&app_ctx);
     surface_mesh_intrinsic_triangulation = .init(&app_ctx);
     surface_mesh_procedural_texturing = .init(&app_ctx);
+    field_generator = .init(&app_ctx);
 
     errdefer point_cloud_std_datas.deinit();
     errdefer surface_mesh_std_datas.deinit();
@@ -206,6 +209,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     errdefer surface_mesh_intrinsic_triangulation.deinit();
     errdefer point_cloud_medial_axis.deinit();
     errdefer surface_mesh_procedural_texturing.deinit();
+    errdefer field_generator.deinit();
 
     try modules.append(app_ctx.allocator, &point_cloud_std_datas.module);
     try modules.append(app_ctx.allocator, &surface_mesh_std_datas.module);
@@ -224,6 +228,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     try modules.append(app_ctx.allocator, &surface_mesh_intrinsic_triangulation.module);
     try modules.append(app_ctx.allocator, &point_cloud_medial_axis.module);
     try modules.append(app_ctx.allocator, &surface_mesh_procedural_texturing.module);
+    try modules.append(app_ctx.allocator, &field_generator.module);
     errdefer modules.deinit(app_ctx.allocator);
 
     // register modules with model stores they want to get events from
@@ -246,6 +251,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_medial_axis.module);
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_intrinsic_triangulation.module);
     try app_ctx.surface_mesh_store.addListener(&surface_mesh_procedural_texturing.module);
+    try app_ctx.surface_mesh_store.addListener(&field_generator.module);
 
     try app_ctx.incidence_graph_store.addListener(&incidence_graph_std_datas.module);
     try app_ctx.incidence_graph_store.addListener(&incidence_graph_renderer.module);
@@ -632,6 +638,7 @@ fn sdlAppQuit(appstate: ?*anyopaque, result: anyerror!c.SDL_AppResult) void {
     surface_mesh_intrinsic_triangulation.deinit();
     point_cloud_medial_axis.deinit();
     surface_mesh_procedural_texturing.deinit();
+    field_generator.deinit();
 
     modules.deinit(app_ctx.allocator);
 

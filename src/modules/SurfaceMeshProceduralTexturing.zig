@@ -93,7 +93,6 @@ module: Module = .{
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
         .surfaceMeshCellSetUpdated = surfaceMeshCellSetUpdated,
-        .sdlEvent = sdlEvent,
         .rightPanel = rightPanel,
         .draw = draw,
     },
@@ -164,6 +163,7 @@ pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
 
 /// Part of the Module interface
 /// Called everytime a cell is selected by the user
+/// TODO fix 1-ring visualization
 pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const SurfaceMesh.CellSet) void {
     const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
     const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
@@ -234,45 +234,11 @@ fn setSurfaceMeshVectorData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh:
     p.vertex_ref_edge_vec = vertex_vector;
     if (vertex_vector) |v| {
         const vector_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, v);
-        // p.procedural_texturing_parameters.setVertexAttribArray(.vector, vector_vbo, 0, 0);
+        p.procedural_texturing_parameters.setVertexAttribArray(.vector, vector_vbo, 0, 0);
         p.procedural_texturing_parameters.edge_ref_vbo = vector_vbo;
     } else unreachable;
 
     smpt.app_ctx.requestRedraw();
-}
-
-/// Part of the Module interface.
-/// Manage SDL events.
-pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
-    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
-    // const sm_store = &zgp.surface_mesh_store;
-    // const view = &zgp.view;
-
-    assert(smpt.app_ctx.selected_model.modelType() == .surface_mesh);
-    const sm = smpt.app_ctx.selected_model.surface_mesh;
-
-    _ = sm;
-
-    switch (event.type) {
-        c.SDL_EVENT_KEY_DOWN => {
-            switch (event.key.key) {
-                else => {},
-            }
-        },
-        c.SDL_EVENT_KEY_UP => {
-            switch (event.key.key) {
-                else => {},
-            }
-        },
-        c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
-            switch (event.button.button) {
-                else => {},
-            }
-        },
-        else => {},
-    }
-
-    return false;
 }
 
 fn loadShaderSource(io: std.Io, path: []const u8) ![]u8 {
