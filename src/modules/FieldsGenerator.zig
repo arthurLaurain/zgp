@@ -47,11 +47,15 @@ pub fn init(app_ctx: *AppContext) FieldsGenerator {
     };
 }
 
+fn freeFieldEntry(fg: *FieldsGenerator, entry: *FieldEntry) void {
+    fg.app_ctx.allocator.free(entry.name);
+    fg.app_ctx.allocator.free(entry.datatype);
+}
 pub fn deinit(fg: *FieldsGenerator) void {
-    for (fields_list.items) |value| {
-        fg.app_ctx.allocator.free(value.name);
-        fg.app_ctx.allocator.free(value.datatype);
+    for (fields_list.items) |*value| {
+        fg.freeFieldEntry(value);
     }
+    fields_list.deinit(fg.app_ctx.allocator);
 }
 
 /// Part of the Module interface.
@@ -121,10 +125,30 @@ pub fn rightPanel(m: *Module) void {
 
     var buffer: [128]u8 = undefined;
     var text = std.fmt.bufPrintZ(&buffer, "Existing Fields {d}", .{fields_list.items.len}) catch "";
-    c.ImGui_Text(text);
 
-    for (fields_list.items) |value| {
-        text = std.fmt.bufPrintZ(&buffer, "{s} {s}", .{ value.name, value.datatype }) catch "Error";
+    c.ImGui_SeparatorText(text);
+
+    var i: usize = 0;
+    while (i < fields_list.items.len) {
+        var value: FieldEntry = fields_list.items[i];
+        text = std.fmt.bufPrintZ(&buffer, "{s}: {s}", .{ value.name, value.datatype }) catch "Error";
         c.ImGui_Text(text);
+        c.ImGui_SameLine();
+        const text_button_visu = std.fmt.bufPrintZ(&buffer, "visu{d}", .{i}) catch unreachable;
+        c.ImGui_PushID(text_button_visu);
+        if (c.ImGui_ButtonEx("Visualize", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x / 2, .y = 0.0 })) {}
+        c.ImGui_PopID();
+        c.ImGui_SameLine();
+        const text_button_close = std.fmt.bufPrintZ(&buffer, "del{d}", .{i}) catch unreachable;
+        c.ImGui_PushID(text_button_close);
+        if (c.ImGui_ButtonEx("Delete", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            fg.freeFieldEntry(&value);
+            _ = fields_list.orderedRemove(i);
+            c.ImGui_PopID();
+            continue;
+        }
+        c.ImGui_PopID();
+
+        i = i + 1;
     }
 }
