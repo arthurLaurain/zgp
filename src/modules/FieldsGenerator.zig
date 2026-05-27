@@ -27,7 +27,7 @@ module: Module = .{
 const FieldData = struct {
     name: [32]u8,
     selected_vertex_set: ?*SurfaceMesh.CellSet = null,
-    cell_data: ?*SurfaceMesh.CellData(.vertex, f32) = null,
+    cell_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
 };
 
 var fields_list: std.ArrayList(FieldData) = .empty;
@@ -48,23 +48,29 @@ pub fn deinit(fg: *FieldsGenerator) void {
 
 /// Part of the Module interface.
 /// Manage SDL events.
-pub fn sdlEvent(_: *Module, _: *const c.SDL_Event) bool {
-    // if (!isEditing) return false;
-    // const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
-    // const sm_store = &fg.app_ctx.surface_mesh_store;
-    // const sm = fg.app_ctx.selected_model.surface_mesh;
-    // const info = sm_store.surfaceMeshInfo(sm);
-    // return switch (event.type) {
-    //     c.SDL_EVENT_KEY_DOWN => blk: {
-    //         switch (event.key.key) {
-    //             c.SDLK_UP => {
-    //                 for (field_edited.selected_vertex_set.?.indices.items) |_| {}
-    //             },
-    //         }
-    //     },
-    // };
-
-    return true;
+pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
+    if (!isEditing) return false;
+    const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
+    const sm_store = &fg.app_ctx.surface_mesh_store;
+    const sm = fg.app_ctx.selected_model.surface_mesh;
+    return switch (event.type) {
+        c.SDL_EVENT_KEY_DOWN => blk: {
+            switch (event.key.key) {
+                c.SDLK_UP => {
+                    for (field_edited.selected_vertex_set.?.indices.items) |indice| {
+                        const last_value = field_edited.cell_data.?.valueByIndex(indice);
+                        field_edited.cell_data.?.valuePtrByIndex(indice).* = last_value + 1;
+                    }
+                    sm_store.surfaceMeshDataUpdated(sm, .vertex, f32, field_edited.cell_data.?);
+                    fg.app_ctx.requestRedraw();
+                    break :blk true;
+                },
+                else => break :blk false,
+            }
+            break :blk false;
+        },
+        else => false,
+    };
 }
 
 /// Part of the Module interface.
@@ -100,7 +106,14 @@ pub fn rightPanel(m: *Module) void {
 
         if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
             const data_name = std.mem.sliceTo(&pending_field.name, 0);
-            _ = sm.addData(.vertex, f32, data_name) catch unreachable;
+            const maybe_data = sm.addData(.vertex, f32, data_name);
+            if (maybe_data) |data| {
+                pending_field.cell_data = data;
+            } else |err| {
+                zgp_log.err("Error adding field data: {}", .{err});
+            }
+
+            pending_field.selected_vertex_set = selected_vertex_set;
 
             //TODO check existing field with same name
             fields_list.append(fg.app_ctx.allocator, pending_field) catch unreachable;
