@@ -19,27 +19,22 @@ module: Module = .{
     .vtable = &.{
         // .surfaceMeshCreated = surfaceMeshCreated,
         // .surfaceMeshDestroyed = surfaceMeshDestroyed,
+        .sdlEvent = sdlEvent,
         .rightPanel = rightPanel,
     },
 },
 
-const FieldDataType = union(enum) {
-    f32: f32,
-    Vec3f: Vec3f,
-};
-const FieldDataTypeTag = std.meta.Tag(FieldDataType);
-
-const Field = struct {
-    var name: [32]u8 = @splat(0);
-    var datatype: FieldDataTypeTag = .f32;
+const FieldData = struct {
+    name: [32]u8,
+    selected_vertex_set: ?*SurfaceMesh.CellSet = null,
+    cell_data: ?*SurfaceMesh.CellData(.vertex, f32) = null,
 };
 
-const FieldEntry = struct {
-    name: []u8,
-    datatype: []u8,
-};
-
-var fields_list: std.ArrayList(FieldEntry) = .empty;
+var fields_list: std.ArrayList(FieldData) = .empty;
+var field_edited: *FieldData = undefined;
+var isEditing = false;
+var selected_vertex_set: ?*SurfaceMesh.CellSet = null;
+var pending_field: FieldData = .{ .name = @splat(0) };
 
 pub fn init(app_ctx: *AppContext) FieldsGenerator {
     return .{
@@ -47,15 +42,29 @@ pub fn init(app_ctx: *AppContext) FieldsGenerator {
     };
 }
 
-fn freeFieldEntry(fg: *FieldsGenerator, entry: *FieldEntry) void {
-    fg.app_ctx.allocator.free(entry.name);
-    fg.app_ctx.allocator.free(entry.datatype);
-}
 pub fn deinit(fg: *FieldsGenerator) void {
-    for (fields_list.items) |*value| {
-        fg.freeFieldEntry(value);
-    }
     fields_list.deinit(fg.app_ctx.allocator);
+}
+
+/// Part of the Module interface.
+/// Manage SDL events.
+pub fn sdlEvent(_: *Module, _: *const c.SDL_Event) bool {
+    // if (!isEditing) return false;
+    // const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
+    // const sm_store = &fg.app_ctx.surface_mesh_store;
+    // const sm = fg.app_ctx.selected_model.surface_mesh;
+    // const info = sm_store.surfaceMeshInfo(sm);
+    // return switch (event.type) {
+    //     c.SDL_EVENT_KEY_DOWN => blk: {
+    //         switch (event.key.key) {
+    //             c.SDLK_UP => {
+    //                 for (field_edited.selected_vertex_set.?.indices.items) |_| {}
+    //             },
+    //         }
+    //     },
+    // };
+
+    return true;
 }
 
 /// Part of the Module interface.
@@ -74,80 +83,69 @@ pub fn rightPanel(m: *Module) void {
         defer c.ImGui_EndPopup();
         c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
         defer c.ImGui_PopItemWidth();
+
         c.ImGui_Text("Name:");
         c.ImGui_PushID("Name:");
-        _ = c.ImGui_InputText("##Name", &Field.name, Field.name.len, c.ImGuiInputTextFlags_CharsNoBlank);
+        _ = c.ImGui_InputText("##Name", &pending_field.name, pending_field.name.len, c.ImGuiInputTextFlags_CharsNoBlank);
+        c.ImGui_PopID();
 
-        if (c.ImGui_RadioButton("Scalar", std.mem.eql(u8, @tagName(Field.datatype), "f32"))) {
-            Field.datatype = .f32;
-        }
-
-        c.ImGui_SameLine();
-
-        if (c.ImGui_RadioButton("Vector", std.mem.eql(u8, @tagName(Field.datatype), "Vec3f"))) {
-            Field.datatype = .Vec3f;
+        c.ImGui_Text("Vertex set:");
+        c.ImGui_PushID("vertex set");
+        switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, selected_vertex_set)) {
+            .unchanged => {},
+            .cleared => selected_vertex_set = null,
+            .changed => |cell_set| selected_vertex_set = cell_set,
         }
         c.ImGui_PopID();
 
         if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            switch (Field.datatype) {
-                inline else => |data_type| {
-                    const data_name = std.mem.sliceTo(&Field.name, 0);
-                    _ = sm.addData(.vertex, @FieldType(FieldDataType, @tagName(data_type)), data_name) catch |err|
-                        {
-                            zgp_log.err("Error adding {s} {s} data: {}", .{ data_name, @tagName(data_type), err });
-                        };
+            const data_name = std.mem.sliceTo(&pending_field.name, 0);
+            _ = sm.addData(.vertex, f32, data_name) catch unreachable;
 
-                    const datatype_label: []const u8 = switch (Field.datatype) {
-                        .f32 => "Scalar field",
-                        .Vec3f => "Vector field",
-                    };
-                    const name = fg.app_ctx.allocator.dupe(u8, data_name) catch unreachable;
-                    const datatype = fg.app_ctx.allocator.dupe(u8, datatype_label) catch unreachable;
-
-                    const pending_field = FieldEntry{
-                        .name = name,
-                        .datatype = datatype,
-                    };
-                    //TODO check existing field with same name
-                    fields_list.append(fg.app_ctx.allocator, pending_field) catch unreachable;
-                    Field.name = @splat(0);
-                    c.ImGui_CloseCurrentPopup();
-                },
-            }
+            //TODO check existing field with same name
+            fields_list.append(fg.app_ctx.allocator, pending_field) catch unreachable;
+            c.ImGui_CloseCurrentPopup();
         }
         // c.ImGui_SameLine();
         if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            Field.name = @splat(0);
+            pending_field.name = @splat(0);
             c.ImGui_CloseCurrentPopup();
         }
     }
 
     var buffer: [128]u8 = undefined;
-    var text = std.fmt.bufPrintZ(&buffer, "Existing Fields {d}", .{fields_list.items.len}) catch "";
+    const text = std.fmt.bufPrintZ(&buffer, "Existing Fields {d}", .{fields_list.items.len}) catch "";
 
     c.ImGui_SeparatorText(text);
 
     var i: usize = 0;
     while (i < fields_list.items.len) {
-        var value: FieldEntry = fields_list.items[i];
-        text = std.fmt.bufPrintZ(&buffer, "{s}: {s}", .{ value.name, value.datatype }) catch "Error";
-        c.ImGui_Text(text);
+        const value: FieldData = fields_list.items[i];
+        c.ImGui_Text(&value.name);
         c.ImGui_SameLine();
-        const text_button_visu = std.fmt.bufPrintZ(&buffer, "visu{d}", .{i}) catch unreachable;
-        c.ImGui_PushID(text_button_visu);
-        if (c.ImGui_ButtonEx("Visualize", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x / 2, .y = 0.0 })) {}
-        c.ImGui_PopID();
-        c.ImGui_SameLine();
-        const text_button_close = std.fmt.bufPrintZ(&buffer, "del{d}", .{i}) catch unreachable;
-        c.ImGui_PushID(text_button_close);
-        if (c.ImGui_ButtonEx("Delete", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            fg.freeFieldEntry(&value);
-            _ = fields_list.orderedRemove(i);
-            c.ImGui_PopID();
-            continue;
+        const text_button_edit = std.fmt.bufPrintZ(&buffer, "edit{d}", .{i}) catch unreachable;
+        c.ImGui_PushID(text_button_edit);
+        if (c.ImGui_ButtonEx(if (isEditing) "Stop editing" else "Edit", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x / 2, .y = 0.0 })) {
+            if (!isEditing) {
+                isEditing = true;
+                field_edited = &fields_list.items[i];
+            } else {
+                isEditing = false;
+            }
         }
         c.ImGui_PopID();
+        // TODO Enable fields removal
+        // c.ImGui_SameLine();
+        // const text_button_close = std.fmt.bufPrintZ(&buffer, "del{d}", .{i}) catch unreachable;
+        // c.ImGui_PushID(text_button_close);
+        // if (c.ImGui_ButtonEx("Delete", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+        //     fg.freeFieldData(&value);
+        //     sm.removeData(.vertex, Field.datatype, value.cell_data_handle);
+        //     _ = fields_list.orderedRemove(i);
+        //     c.ImGui_PopID();
+        //     continue;
+        // }
+        // c.ImGui_PopID();
 
         i = i + 1;
     }
