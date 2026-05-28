@@ -4,7 +4,7 @@ const std = @import("std");
 const gl = @import("gl");
 const assert = std.debug.assert;
 
-// const imgui_utils = @import("../ui/imgui.zig");
+const imgui_utils = @import("../ui/imgui.zig");
 // const zgp_log = std.log.scoped(.zgp);
 
 const c = @import("c");
@@ -36,6 +36,7 @@ const TnBData = struct {
     texture_initialized: bool = false,
     position_vbo: VBO = undefined,
     normal_vbo: VBO = undefined,
+    field_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
     draw_texture: bool = true,
     initialized: bool = false,
 
@@ -229,6 +230,15 @@ pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
     _ = smpt.surface_meshes_data.remove(surface_mesh);
 }
 
+fn setSurfaceMeshFieldData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh: *SurfaceMesh, vertex_scalar: ?SurfaceMesh.CellData(.vertex, f32)) void {
+    const p = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
+    if (vertex_scalar) |v| {
+        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, v);
+        p.procedural_texturing_parameters.setVertexAttribArray(.field, field_vbo, 0, 0);
+        p.procedural_texturing_parameters.scalar_field_vbo = field_vbo;
+    }
+}
+
 fn setSurfaceMeshVectorData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh: *SurfaceMesh, vertex_vector: ?SurfaceMesh.CellData(.vertex, Vec3f)) void {
     const p = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
     p.vertex_ref_edge_vec = vertex_vector;
@@ -342,6 +352,15 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_Text("Exemplar texture: ");
             const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
             c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+
+            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.field_data)) {
+                .unchanged => {},
+                .cleared => tnb_data.field_data = null,
+                .changed => |field_data| {
+                    tnb_data.field_data = field_data;
+                    smpt.setSurfaceMeshFieldData(sm, field_data);
+                },
+            }
         }
     }
 }
