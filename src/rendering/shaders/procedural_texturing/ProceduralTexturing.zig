@@ -56,12 +56,12 @@ distorsions_computed_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 vector_attrib: VAO.VertexAttribInfo = undefined,
-field_attrib: VAO.VertexAttribInfo = undefined,
+scalar_field_attrib: VAO.VertexAttribInfo = undefined,
 
 const VertexAttrib = enum {
     position,
     vector,
-    field,
+    scalar_field,
 };
 
 fn init() !ProceduralTexturing {
@@ -93,8 +93,8 @@ fn init() !ProceduralTexturing {
         .normalized = false,
     };
 
-    pt.field_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_field")),
+    pt.scalar_field_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_scalar_field")),
         .size = 1,
         .type = gl.FLOAT,
         .normalized = false,
@@ -175,7 +175,7 @@ pub const Parameters = struct {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
             .vector => p.shader.vector_attrib,
-            .field => p.shader.field_attrib,
+            .scalar_field => p.shader.scalar_field_attrib,
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
@@ -183,7 +183,7 @@ pub const Parameters = struct {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
             .vector => p.shader.vector_attrib,
-            .field => p.shader.field_attrib,
+            .scalar_field => p.shader.scalar_field_attrib,
         };
         p.vao.disableVertexAttribArray(attrib_info);
     }

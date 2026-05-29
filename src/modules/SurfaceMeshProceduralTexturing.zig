@@ -13,6 +13,7 @@ const AppContext = @import("../main.zig").AppContext;
 const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMeshStdData;
+const DataGen = @import("../utils/data.zig").DataGen;
 
 const ProceduralTexturing = @import("../rendering/shaders/procedural_texturing/ProceduralTexturing.zig");
 const Texture2D = @import("../rendering/Texture2D");
@@ -36,7 +37,7 @@ const TnBData = struct {
     texture_initialized: bool = false,
     position_vbo: VBO = undefined,
     normal_vbo: VBO = undefined,
-    field_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    scalar_field_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
     draw_texture: bool = true,
     initialized: bool = false,
 
@@ -93,6 +94,7 @@ module: Module = .{
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
+        .surfaceMeshDataUpdated = surfaceMeshDataUpdated,
         .surfaceMeshCellSetUpdated = surfaceMeshCellSetUpdated,
         .rightPanel = rightPanel,
         .draw = draw,
@@ -162,6 +164,15 @@ pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     };
 }
 
+pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, _: SurfaceMesh.CellType, _: *const DataGen) void {
+    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
+    const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
+    if (tnb_data.initialized) {
+        tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scalar_field, tnb_data.procedural_texturing_parameters.scalar_field_vbo, 0, 0);
+        smpt.app_ctx.requestRedraw();
+    }
+}
+
 /// Part of the Module interface
 /// Called everytime a cell is selected by the user
 /// TODO fix 1-ring visualization
@@ -175,6 +186,9 @@ pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const 
     }
 
     const info = smpt.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
+
+    // TODO Check if cellset is used for 1-ring visualization
+
     const vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = info.std_datas.vertex_position.?;
     var list_neigh_position: std.ArrayList(f64) = .empty;
     defer list_neigh_position.deinit(smpt.app_ctx.allocator);
@@ -230,11 +244,11 @@ pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
     _ = smpt.surface_meshes_data.remove(surface_mesh);
 }
 
-fn setSurfaceMeshFieldData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh: *SurfaceMesh, vertex_scalar: ?SurfaceMesh.CellData(.vertex, f32)) void {
+fn setSurfaceMeshScalarFieldData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh: *SurfaceMesh, vertex_scalar: ?SurfaceMesh.CellData(.vertex, f32)) void {
     const p = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
     if (vertex_scalar) |v| {
         const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, v);
-        p.procedural_texturing_parameters.setVertexAttribArray(.field, field_vbo, 0, 0);
+        p.procedural_texturing_parameters.setVertexAttribArray(.scalar_field, field_vbo, 0, 0);
         p.procedural_texturing_parameters.scalar_field_vbo = field_vbo;
     }
 }
@@ -353,12 +367,13 @@ pub fn rightPanel(m: *Module) void {
             const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
             c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
-            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.field_data)) {
+            c.ImGui_Text("Scalar field");
+            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.scalar_field_data)) {
                 .unchanged => {},
-                .cleared => tnb_data.field_data = null,
-                .changed => |field_data| {
-                    tnb_data.field_data = field_data;
-                    smpt.setSurfaceMeshFieldData(sm, field_data);
+                .cleared => tnb_data.scalar_field_data = null,
+                .changed => |scalar_field_data| {
+                    tnb_data.scalar_field_data = scalar_field_data;
+                    smpt.setSurfaceMeshScalarFieldData(sm, scalar_field_data);
                     smpt.app_ctx.requestRedraw();
                 },
             }
