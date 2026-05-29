@@ -83,6 +83,7 @@ pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const 
     const p = fg.surface_meshes_data.getPtr(sm) orelse return;
     for (p.fields_list.items) |field| {
         if (field.selected_vertex_set.? == cell_set) {
+            field.cell_data.?.data.fill(0);
             for (field.selected_vertex_set.?.indices.items) |indice| {
                 field.cell_data.?.valuePtrByIndex(indice).* = field.value;
             }
