@@ -19,7 +19,6 @@ module: Module = .{
     .vtable = &.{
         // .surfaceMeshCreated = surfaceMeshCreated,
         // .surfaceMeshDestroyed = surfaceMeshDestroyed,
-        .sdlEvent = sdlEvent,
         .rightPanel = rightPanel,
     },
 },
@@ -28,11 +27,10 @@ const FieldData = struct {
     name: [32]u8,
     selected_vertex_set: ?*SurfaceMesh.CellSet = null,
     cell_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    value: f32 = 0,
 };
 
 var fields_list: std.ArrayList(FieldData) = .empty;
-var field_edited: *FieldData = undefined;
-var isEditing = false;
 var selected_vertex_set: ?*SurfaceMesh.CellSet = null;
 var pending_field: FieldData = .{ .name = @splat(0) };
 
@@ -44,33 +42,6 @@ pub fn init(app_ctx: *AppContext) FieldsGenerator {
 
 pub fn deinit(fg: *FieldsGenerator) void {
     fields_list.deinit(fg.app_ctx.allocator);
-}
-
-/// Part of the Module interface.
-/// Manage SDL events.
-pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
-    if (!isEditing) return false;
-    const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
-    const sm_store = &fg.app_ctx.surface_mesh_store;
-    const sm = fg.app_ctx.selected_model.surface_mesh;
-    return switch (event.type) {
-        c.SDL_EVENT_KEY_DOWN => blk: {
-            switch (event.key.key) {
-                c.SDLK_UP => {
-                    for (field_edited.selected_vertex_set.?.indices.items) |indice| {
-                        const last_value = field_edited.cell_data.?.valueByIndex(indice);
-                        field_edited.cell_data.?.valuePtrByIndex(indice).* = last_value + 1;
-                    }
-                    sm_store.surfaceMeshDataUpdated(sm, .vertex, f32, field_edited.cell_data.?);
-                    fg.app_ctx.requestRedraw();
-                    break :blk true;
-                },
-                else => break :blk false,
-            }
-            break :blk false;
-        },
-        else => false,
-    };
 }
 
 /// Part of the Module interface.
@@ -127,7 +98,7 @@ pub fn rightPanel(m: *Module) void {
     }
 
     var buffer: [128]u8 = undefined;
-    const text = std.fmt.bufPrintZ(&buffer, "Existing Fields {d}", .{fields_list.items.len}) catch "";
+    var text = std.fmt.bufPrintZ(&buffer, "Existing Fields {d}", .{fields_list.items.len}) catch "";
 
     c.ImGui_SeparatorText(text);
 
@@ -136,15 +107,15 @@ pub fn rightPanel(m: *Module) void {
         const value: FieldData = fields_list.items[i];
         c.ImGui_Text(&value.name);
         c.ImGui_SameLine();
-        const text_button_edit = std.fmt.bufPrintZ(&buffer, "edit{d}", .{i}) catch unreachable;
-        c.ImGui_PushID(text_button_edit);
-        if (c.ImGui_ButtonEx(if (isEditing) "Stop editing" else "Edit", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x / 2, .y = 0.0 })) {
-            if (!isEditing) {
-                isEditing = true;
-                field_edited = &fields_list.items[i];
-            } else {
-                isEditing = false;
+        c.ImGui_Text("Field value");
+        text = std.fmt.bufPrintZ(&buffer, "Field value {d}", .{i}) catch "";
+        c.ImGui_PushID(text);
+        if (c.ImGui_SliderFloat("", &fields_list.items[i].value, 0, 50)) {
+            for (fields_list.items[i].selected_vertex_set.?.indices.items) |indice| {
+                const last_value = fields_list.items[i].cell_data.?.valueByIndex(indice);
+                fields_list.items[i].cell_data.?.valuePtrByIndex(indice).* = last_value + 1;
             }
+            fg.app_ctx.requestRedraw();
         }
         c.ImGui_PopID();
         // TODO Enable fields removal

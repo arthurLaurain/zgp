@@ -359,6 +359,7 @@ pub fn rightPanel(m: *Module) void {
                 .changed => |field_data| {
                     tnb_data.field_data = field_data;
                     smpt.setSurfaceMeshFieldData(sm, field_data);
+                    smpt.app_ctx.requestRedraw();
                 },
             }
         }
