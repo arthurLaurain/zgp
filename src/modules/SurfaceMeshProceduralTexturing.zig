@@ -37,6 +37,8 @@ const TnBData = struct {
     texture_initialized: bool = false,
     position_vbo: VBO = undefined,
     normal_vbo: VBO = undefined,
+    num_scalar_field: u8 = 1,
+    list_scalar_field_data: [8]?SurfaceMesh.CellData(.vertex, f32) = .{null} ** 8,
     scalar_field_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
     draw_texture: bool = true,
     initialized: bool = false,
@@ -50,6 +52,7 @@ const TnBData = struct {
             tbd.vertex_ref_edge = try tbd.surface_mesh.addData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
             tbd.vertex_ref_edge_vec = try tbd.surface_mesh.addData(.vertex, Vec3f, "vertex_ref_edge_vec");
         }
+        tbd.scalar_field_data = tbd.surface_mesh.addData(.vertex, f32, "scalar_field") catch unreachable;
         tbd.initialized = true;
         try tbd.computeVertexRefEdges();
         try tbd.computeVertexRefEdgesVec();
@@ -59,6 +62,7 @@ const TnBData = struct {
         if (tbd.initialized) {
             tbd.surface_mesh.removeData(.vertex, SurfaceMesh.Cell, tbd.vertex_ref_edge.?);
             tbd.surface_mesh.removeData(.vertex, Vec3f, tbd.vertex_ref_edge_vec.?);
+            tbd.surface_mesh.removeData(.vertex, f32, tbd.scalar_field_data.?);
             tbd.initialized = false;
             tbd.procedural_texturing_parameters.deinit();
         }
@@ -164,9 +168,19 @@ pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     };
 }
 
-pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, _: SurfaceMesh.CellType, _: *const DataGen) void {
+pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMesh.CellType, data: *const DataGen) void {
     const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
     const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
+    if (!tnb_data.initialized or celltype != .vertex) return;
+
+    for (0..tnb_data.num_scalar_field) |i| {
+        if (data == &tnb_data.list_scalar_field_data[i].?.data.data_gen) {
+            smpt.mergeFieldCellData(tnb_data.list_scalar_field_data[i].?);
+            smpt.setSurfaceMeshScalarFieldData(sm, tnb_data.scalar_field_data);
+            smpt.app_ctx.requestRedraw();
+        }
+    }
+
     if (tnb_data.initialized) {
         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scalar_field, tnb_data.procedural_texturing_parameters.scalar_field_vbo, 0, 0);
         smpt.app_ctx.requestRedraw();
@@ -184,6 +198,8 @@ pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const 
     if (cell_set.cell_type != .vertex) {
         return;
     }
+
+    // Check if one of the scalar fields has been changed, if so update module scalar field data
 
     const info = smpt.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
 
@@ -247,7 +263,8 @@ pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
 fn setSurfaceMeshScalarFieldData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh: *SurfaceMesh, vertex_scalar: ?SurfaceMesh.CellData(.vertex, f32)) void {
     const p = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
     if (vertex_scalar) |v| {
-        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, v);
+        var field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, v);
+        field_vbo.fillFrom(f32, v.data);
         p.procedural_texturing_parameters.setVertexAttribArray(.scalar_field, field_vbo, 0, 0);
         p.procedural_texturing_parameters.scalar_field_vbo = field_vbo;
     }
@@ -269,6 +286,13 @@ fn loadShaderSource(io: std.Io, path: []const u8) ![]u8 {
     var buf: [40960]u8 = undefined;
     const file = try std.Io.Dir.readFile(std.Io.Dir.cwd(), io, path, &buf);
     return file;
+}
+
+fn mergeFieldCellData(smpt: *SurfaceMeshProceduralTexturing, celldata: ?SurfaceMesh.CellData(.vertex, f32)) void {
+    const tnb_data = smpt.surface_meshes_data.getPtr(smpt.app_ctx.selected_model.surface_mesh).?;
+    for (0..tnb_data.surface_mesh.nbCells(.vertex)) |i| {
+        tnb_data.scalar_field_data.?.valuePtrByIndex(@intCast(i)).* = tnb_data.scalar_field_data.?.valueByIndex(@intCast(i)) + celldata.?.valueByIndex(@intCast(i));
+    }
 }
 
 /// Part of the Module interface.
@@ -367,15 +391,25 @@ pub fn rightPanel(m: *Module) void {
             const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
             c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
-            c.ImGui_Text("Scalar field");
-            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.scalar_field_data)) {
-                .unchanged => {},
-                .cleared => tnb_data.scalar_field_data = null,
-                .changed => |scalar_field_data| {
-                    tnb_data.scalar_field_data = scalar_field_data;
-                    smpt.setSurfaceMeshScalarFieldData(sm, scalar_field_data);
-                    smpt.app_ctx.requestRedraw();
-                },
+            c.ImGui_SeparatorText("Scalar Field");
+            var buf: [32]u8 = undefined;
+            for (0..tnb_data.num_scalar_field) |i| {
+                const id = std.fmt.bufPrint(&buf, "Scalar field {d}", .{i}) catch "";
+                c.ImGui_PushID(id.ptr);
+                switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.list_scalar_field_data[i])) {
+                    .unchanged => {},
+                    .cleared => tnb_data.list_scalar_field_data[i] = null,
+                    .changed => |field| {
+                        tnb_data.list_scalar_field_data[i] = field;
+                        smpt.mergeFieldCellData(field);
+                        smpt.setSurfaceMeshScalarFieldData(sm, tnb_data.scalar_field_data);
+                        smpt.app_ctx.requestRedraw();
+                    },
+                }
+                c.ImGui_PopID();
+            }
+            if (tnb_data.num_scalar_field < 8 and c.ImGui_Button("Add scalar field")) {
+                tnb_data.num_scalar_field = tnb_data.num_scalar_field + 1;
             }
         }
     }
