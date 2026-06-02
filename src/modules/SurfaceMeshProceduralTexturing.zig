@@ -40,6 +40,7 @@ const TnBData = struct {
     num_scalar_field: u8 = 1,
     list_scalar_field_data: [8]?SurfaceMesh.CellData(.vertex, f32) = .{null} ** 8,
     scalar_field_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    cellset_selection_visualized: ?*SurfaceMesh.CellSet = null,
     draw_texture: bool = true,
     initialized: bool = false,
 
@@ -173,6 +174,8 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
     const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
     if (!tnb_data.initialized or celltype != .vertex) return;
 
+    if (tnb_data.scalar_field_data) |_| return;
+
     for (0..tnb_data.num_scalar_field) |i| {
         if (data == &tnb_data.list_scalar_field_data[i].?.data.data_gen) {
             smpt.mergeFieldCellData();
@@ -187,28 +190,13 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
     }
 }
 
-/// Part of the Module interface
-/// Called everytime a cell is selected by the user
-/// TODO fix 1-ring visualization
-pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const SurfaceMesh.CellSet) void {
-    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
-    const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
-    if (!tnb_data.initialized) return;
-
-    if (cell_set.cell_type != .vertex) {
-        return;
-    }
-
-    // Check if one of the scalar fields has been changed, if so update module scalar field data
-
+pub fn refreshCellsetVisualized(smpt: SurfaceMeshProceduralTexturing, sm: *SurfaceMesh) void {
     const info = smpt.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
-
-    // TODO Check if cellset is used for 1-ring visualization
-
+    const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
     const vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = info.std_datas.vertex_position.?;
-    var list_neigh_position: std.ArrayList(f64) = .empty;
+    var list_neigh_position: std.ArrayList(f32) = .empty;
     defer list_neigh_position.deinit(smpt.app_ctx.allocator);
-    for (cell_set.cells.items) |value| {
+    for (tnb_data.cellset_selection_visualized.?.cells.items) |value| {
         var current: u32 = value.dart();
         const position_selected_vertex: Vec3f = vertex_position.value(.{ .vertex = current });
 
@@ -229,15 +217,15 @@ pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const 
     }
 
     const ssbo_neigh: *SSBO = &tnb_data.procedural_texturing_parameters.ssbo_neigh_selected_vertices;
-    ssbo_neigh.memoryAllocationForMapping(@intCast(@sizeOf(f64) * (list_neigh_position.items.len + 1)));
+    ssbo_neigh.memoryAllocationForMapping(@intCast(@sizeOf(f32) * (list_neigh_position.items.len + 1)));
 
     gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo_neigh.index);
     defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
 
     const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
-    const array_ssbo: [*]f64 = @ptrCast(@alignCast(ptr_ssbo));
+    const array_ssbo: [*]f32 = @ptrCast(@alignCast(ptr_ssbo));
 
-    array_ssbo[0] = @floatFromInt(cell_set.cells.items.len);
+    array_ssbo[0] = @floatFromInt(tnb_data.cellset_selection_visualized.?.cells.items.len);
     for (list_neigh_position.items, 0..) |value, i| {
         array_ssbo[i + 1] = value;
     }
@@ -249,6 +237,24 @@ pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const 
     // }
 
     _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
+}
+
+/// Part of the Module interface
+/// Called everytime a cell is selected by the user
+/// TODO fix 1-ring visualization
+pub fn surfaceMeshCellSetUpdated(m: *Module, sm: *SurfaceMesh, cell_set: *const SurfaceMesh.CellSet) void {
+    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
+    const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
+    if (!tnb_data.initialized) return;
+
+    if (cell_set.cell_type != .vertex) {
+        return;
+    }
+
+    if (tnb_data.cellset_selection_visualized) |cellset_selected| {
+        if (cell_set != cellset_selected) return;
+        smpt.refreshCellsetVisualized(sm);
+    }
 }
 
 /// Part of the Module interface.
@@ -394,6 +400,18 @@ pub fn rightPanel(m: *Module) void {
             const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
             c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
+            c.ImGui_Text("Visualize cellset");
+            c.ImGui_PushID("Visualize cellset");
+            switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, tnb_data.cellset_selection_visualized)) {
+                .unchanged => {},
+                .cleared => tnb_data.cellset_selection_visualized = null,
+                .changed => |cellset| {
+                    tnb_data.cellset_selection_visualized = cellset;
+                    smpt.refreshCellsetVisualized(sm);
+                    smpt.app_ctx.requestRedraw();
+                },
+            }
+            c.ImGui_PopID();
             c.ImGui_SeparatorText("Scalar Field");
             var buf: [32]u8 = undefined;
             for (0..tnb_data.num_scalar_field) |i| {
