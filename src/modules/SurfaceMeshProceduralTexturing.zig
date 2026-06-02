@@ -175,7 +175,7 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
 
     for (0..tnb_data.num_scalar_field) |i| {
         if (data == &tnb_data.list_scalar_field_data[i].?.data.data_gen) {
-            smpt.mergeFieldCellData(tnb_data.list_scalar_field_data[i].?);
+            smpt.mergeFieldCellData();
             smpt.setSurfaceMeshScalarFieldData(sm, tnb_data.scalar_field_data);
             smpt.app_ctx.requestRedraw();
         }
@@ -288,10 +288,13 @@ fn loadShaderSource(io: std.Io, path: []const u8) ![]u8 {
     return file;
 }
 
-fn mergeFieldCellData(smpt: *SurfaceMeshProceduralTexturing, celldata: ?SurfaceMesh.CellData(.vertex, f32)) void {
+fn mergeFieldCellData(smpt: *SurfaceMeshProceduralTexturing) void {
     const tnb_data = smpt.surface_meshes_data.getPtr(smpt.app_ctx.selected_model.surface_mesh).?;
     for (0..tnb_data.surface_mesh.nbCells(.vertex)) |i| {
-        tnb_data.scalar_field_data.?.valuePtrByIndex(@intCast(i)).* = tnb_data.scalar_field_data.?.valueByIndex(@intCast(i)) + celldata.?.valueByIndex(@intCast(i));
+        tnb_data.scalar_field_data.?.valuePtrByIndex(@intCast(i)).* = 0;
+        for (0..tnb_data.num_scalar_field) |j| { // Necessary to enable multi field visualization
+            tnb_data.scalar_field_data.?.valuePtrByIndex(@intCast(i)).* = tnb_data.scalar_field_data.?.valueByIndex(@intCast(i)) + tnb_data.list_scalar_field_data[j].?.valueByIndex(@intCast(i));
+        }
     }
 }
 
@@ -401,7 +404,7 @@ pub fn rightPanel(m: *Module) void {
                     .cleared => tnb_data.list_scalar_field_data[i] = null,
                     .changed => |field| {
                         tnb_data.list_scalar_field_data[i] = field;
-                        smpt.mergeFieldCellData(field);
+                        smpt.mergeFieldCellData();
                         smpt.setSurfaceMeshScalarFieldData(sm, tnb_data.scalar_field_data);
                         smpt.app_ctx.requestRedraw();
                     },
