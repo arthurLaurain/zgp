@@ -190,6 +190,20 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
     }
 }
 
+pub fn clearCellSetVisualized(smpt: SurfaceMeshProceduralTexturing, sm: *SurfaceMesh) void {
+    const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
+    const ssbo_neigh: *SSBO = &tnb_data.procedural_texturing_parameters.ssbo_neigh_selected_vertices;
+    ssbo_neigh.memoryAllocationForMapping(@sizeOf(f32));
+    gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo_neigh.index);
+    defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
+
+    const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
+    const array_ssbo: [*]f32 = @ptrCast(@alignCast(ptr_ssbo));
+
+    array_ssbo[0] = 0;
+    _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
+}
+
 pub fn refreshCellsetVisualized(smpt: SurfaceMeshProceduralTexturing, sm: *SurfaceMesh) void {
     const info = smpt.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
     const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
@@ -404,7 +418,11 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_PushID("Visualize cellset");
             switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, tnb_data.cellset_selection_visualized)) {
                 .unchanged => {},
-                .cleared => tnb_data.cellset_selection_visualized = null,
+                .cleared => {
+                    tnb_data.cellset_selection_visualized = null;
+                    smpt.clearCellSetVisualized(sm);
+                    smpt.app_ctx.requestRedraw();
+                },
                 .changed => |cellset| {
                     tnb_data.cellset_selection_visualized = cellset;
                     smpt.refreshCellsetVisualized(sm);
