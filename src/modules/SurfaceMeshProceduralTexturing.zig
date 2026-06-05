@@ -174,8 +174,6 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
     const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
     if (!tnb_data.initialized or celltype != .vertex) return;
 
-    if (tnb_data.scalar_field_data) |_| return;
-
     for (0..tnb_data.num_scalar_field) |i| {
         if (data == &tnb_data.list_scalar_field_data[i].?.data.data_gen) {
             smpt.mergeFieldCellData();
@@ -310,6 +308,7 @@ fn loadShaderSource(io: std.Io, path: []const u8) ![]u8 {
 
 fn mergeFieldCellData(smpt: *SurfaceMeshProceduralTexturing) void {
     const tnb_data = smpt.surface_meshes_data.getPtr(smpt.app_ctx.selected_model.surface_mesh).?;
+
     for (0..tnb_data.surface_mesh.nbCells(.vertex)) |i| {
         tnb_data.scalar_field_data.?.valuePtrByIndex(@intCast(i)).* = 0;
         for (0..tnb_data.num_scalar_field) |j| { // Necessary to enable multi field visualization
