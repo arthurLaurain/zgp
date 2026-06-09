@@ -56,12 +56,12 @@ distorsions_computed_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 vector_attrib: VAO.VertexAttribInfo = undefined,
-scalar_field_attrib: VAO.VertexAttribInfo = undefined,
+field_attrib: VAO.VertexAttribInfo = undefined,
 
 const VertexAttrib = enum {
     position,
     vector,
-    scalar_field,
+    field,
 };
 
 fn init() !ProceduralTexturing {
@@ -93,9 +93,9 @@ fn init() !ProceduralTexturing {
         .normalized = false,
     };
 
-    pt.scalar_field_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_scalar_field")),
-        .size = 1,
+    pt.field_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_transform_field")),
+        .size = 9,
         .type = gl.FLOAT,
         .normalized = false,
     };
@@ -129,7 +129,7 @@ pub const Parameters = struct {
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
-    scalar_field_vbo: VBO = undefined,
+    field_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
     visu_area_distorsion: bool = false,
     visu_angle_distorsion: bool = false,
@@ -168,14 +168,14 @@ pub const Parameters = struct {
         p.exemplar_texture.deinit();
         p.shader.deinit();
         p.edge_ref_vbo.deinit();
-        p.scalar_field_vbo.deinit();
+        p.field_vbo.deinit();
     }
 
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
             .vector => p.shader.vector_attrib,
-            .scalar_field => p.shader.scalar_field_attrib,
+            .field => p.shader.field_attrib,
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
@@ -183,7 +183,7 @@ pub const Parameters = struct {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
             .vector => p.shader.vector_attrib,
-            .scalar_field => p.shader.scalar_field_attrib,
+            .field => p.shader.field_attrib,
         };
         p.vao.disableVertexAttribArray(attrib_info);
     }

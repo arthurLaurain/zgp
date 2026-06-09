@@ -14,7 +14,7 @@ uniform bool u_distorsions_computed;
 
 in vec3 frag_position;
 in vec3 v_frag_position;
-in float scalar_field;
+in mat3 transform_field;
 out vec4 f_color;
 
 // using raw buffer to avoid vec3/ivec3 in SSBO because they need to be aligned to a 16 byte boundary while IBO/VBO uses 12 floats vec3
@@ -183,9 +183,18 @@ void main() {
   vec3 n2 = (vec4(vertices_normal[id_vertices.y * 3], vertices_normal[id_vertices.y * 3 + 1], vertices_normal[id_vertices.y * 3 + 2],1.)).xyz;
   vec3 n3 = (vec4(vertices_normal[id_vertices.z * 3], vertices_normal[id_vertices.z * 3 + 1], vertices_normal[id_vertices.z * 3 + 2],1.)).xyz;
 
-  vec2 u1 = getTexCoordFromVertexPlane(frag_position, p1, n1) * (u_scale_tex_coords + scalar_field);
-  vec2 u2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * (u_scale_tex_coords + scalar_field);
-  vec2 u3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * (u_scale_tex_coords + scalar_field);
+  vec2 u1 = getTexCoordFromVertexPlane(frag_position, p1, n1) * (u_scale_tex_coords);
+  vec2 u2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * (u_scale_tex_coords);
+  vec2 u3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * (u_scale_tex_coords);
+
+  vec3 u1_extended = transform_field * vec3(u1,1);
+  vec3 u2_extended = transform_field * vec3(u2,1);
+  vec3 u3_extended = transform_field * vec3(u3,1);
+
+  u1 = u1_extended.xy / u1_extended.z;
+  u2 = u2_extended.xy / u2_extended.z;
+  u3 = u3_extended.xy / u3_extended.z;
+
 
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 
@@ -229,4 +238,5 @@ void main() {
     f_color = vec4(result);
 
   f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
+  f_color = vec4(transform_field[0],1);
 }

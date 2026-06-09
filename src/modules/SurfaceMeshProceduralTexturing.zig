@@ -22,9 +22,18 @@ const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 const Vec3d = vec.Vec3d;
 const mat = @import("../geometry/mat.zig");
+const Mat2f = mat.Mat2f;
+const Mat3f = mat.Mat3f;
 const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
 const SSBO = @import("../rendering/SSBO.zig");
+
+const FieldType = enum { scaling, rotation, translation };
+
+const TnBField = struct {
+    cellData: ?SurfaceMesh.CellData(.vertex, f32),
+    fieldType: FieldType,
+};
 
 const TnBData = struct {
     surface_mesh: *SurfaceMesh,
@@ -37,16 +46,21 @@ const TnBData = struct {
     texture_initialized: bool = false,
     position_vbo: VBO = undefined,
     normal_vbo: VBO = undefined,
-    num_scaling_scalar_field: u8 = 0,
-    list_scaling_scalar_field_data: [8]?SurfaceMesh.CellData(.vertex, f32) = .{null} ** 8,
-    list_rotation_scalar_field_data: [8]?SurfaceMesh.CellData(.vertex, f32) = .{null} ** 8,
-    scaling_scalar_field_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
-    rotation_scalar_field_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    num_tnb_fields: u8 = 0,
+    list_tnb_fields: [8]?TnBField = .{null} ** 8,
+    field_tnb_transform: ?SurfaceMesh.CellData(.vertex, Mat3f) = null,
     cellset_selection_visualized: ?*SurfaceMesh.CellSet = null,
-    celldata_selected: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    current_tnb_field: TnBField = undefined,
     draw_texture: bool = true,
     initialized: bool = false,
 
+    fn init_transform_matrix_data(tnb_data: *TnBData) void {
+        for (0..tnb_data.surface_mesh.nbCells(.vertex)) |i| {
+            if (tnb_data.field_tnb_transform) |tnb_transform| {
+                tnb_transform.valuePtrByIndex(@intCast(i)).* = .{ .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } };
+            }
+        }
+    }
     pub fn init(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
@@ -56,9 +70,11 @@ const TnBData = struct {
             tbd.vertex_ref_edge = try tbd.surface_mesh.addData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
             tbd.vertex_ref_edge_vec = try tbd.surface_mesh.addData(.vertex, Vec3f, "vertex_ref_edge_vec");
         }
-        tbd.scaling_scalar_field_data = tbd.surface_mesh.addData(.vertex, f32, "scaling_scalar_field") catch unreachable;
-        tbd.rotation_scalar_field_data = tbd.surface_mesh.addData(.vertex, f32, "rotation_scalar_field") catch unreachable;
+        tbd.field_tnb_transform = try tbd.surface_mesh.addData(.vertex, Mat3f, "transform_tnb_field");
         tbd.initialized = true;
+        tbd.current_tnb_field.cellData = null;
+        tbd.current_tnb_field.fieldType = .scaling;
+        tbd.init_transform_matrix_data();
         try tbd.computeVertexRefEdges();
         try tbd.computeVertexRefEdgesVec();
     }
@@ -67,8 +83,7 @@ const TnBData = struct {
         if (tbd.initialized) {
             tbd.surface_mesh.removeData(.vertex, SurfaceMesh.Cell, tbd.vertex_ref_edge.?);
             tbd.surface_mesh.removeData(.vertex, Vec3f, tbd.vertex_ref_edge_vec.?);
-            tbd.surface_mesh.removeData(.vertex, f32, tbd.scaling_scalar_field_data.?);
-            tbd.surface_mesh.removeData(.vertex, f32, tbd.rotation_scalar_field_data.?);
+            tbd.surface_mesh.removeData(.vertex, Mat3f, tbd.field_tnb_transform.?);
             tbd.initialized = false;
             tbd.procedural_texturing_parameters.deinit();
         }
@@ -179,16 +194,17 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
     const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
     if (!tnb_data.initialized or celltype != .vertex) return;
 
-    for (0..tnb_data.num_scaling_scalar_field) |i| {
-        if (data == &tnb_data.list_scaling_scalar_field_data[i].?.data.data_gen) {
-            smpt.mergeFieldCellData();
-            smpt.setSurfaceMeshScalarFieldData(sm, tnb_data.scaling_scalar_field_data);
-            smpt.app_ctx.requestRedraw();
+    var needUpdate = false;
+    for (0..tnb_data.num_tnb_fields) |i| {
+        if (data == &tnb_data.list_tnb_fields[i].?.cellData.?.data.data_gen) {
+            needUpdate = true;
         }
     }
 
-    if (tnb_data.initialized) {
-        tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scalar_field, tnb_data.procedural_texturing_parameters.scalar_field_vbo, 0, 0);
+    if (needUpdate) {
+        smpt.mergeFieldCellData();
+        smpt.setSurfaceMeshFieldData(sm, tnb_data.field_tnb_transform);
+        tnb_data.procedural_texturing_parameters.setVertexAttribArray(.field, tnb_data.procedural_texturing_parameters.field_vbo, 0, 0);
         smpt.app_ctx.requestRedraw();
     }
 }
@@ -283,13 +299,13 @@ pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
     _ = smpt.surface_meshes_data.remove(surface_mesh);
 }
 
-fn setSurfaceMeshScalarFieldData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh: *SurfaceMesh, vertex_scalar: ?SurfaceMesh.CellData(.vertex, f32)) void {
+fn setSurfaceMeshFieldData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh: *SurfaceMesh, vertex_field: ?SurfaceMesh.CellData(.vertex, Mat3f)) void {
     const p = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
-    if (vertex_scalar) |v| {
-        var field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, v);
-        field_vbo.fillFrom(f32, v.data);
-        p.procedural_texturing_parameters.setVertexAttribArray(.scalar_field, field_vbo, 0, 0);
-        p.procedural_texturing_parameters.scalar_field_vbo = field_vbo;
+    if (vertex_field) |v| {
+        var field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Mat3f, v);
+        field_vbo.fillFrom(Mat3f, v.data);
+        p.procedural_texturing_parameters.setVertexAttribArray(.field, field_vbo, 0, 0);
+        p.procedural_texturing_parameters.field_vbo = field_vbo;
     }
 }
 
@@ -314,10 +330,26 @@ fn loadShaderSource(io: std.Io, path: []const u8) ![]u8 {
 fn mergeFieldCellData(smpt: *SurfaceMeshProceduralTexturing) void {
     const tnb_data = smpt.surface_meshes_data.getPtr(smpt.app_ctx.selected_model.surface_mesh).?;
 
+    var scaling_value: f32 = 1;
+    var rotation_value: f32 = 0;
+    var translation_value: f32 = 0; // TODO
     for (0..tnb_data.surface_mesh.nbCells(.vertex)) |i| {
-        tnb_data.scaling_scalar_field_data.?.valuePtrByIndex(@intCast(i)).* = 0;
-        for (0..tnb_data.num_scaling_scalar_field) |j| { // Necessary to enable multi field visualization
-            tnb_data.scaling_scalar_field_data.?.valuePtrByIndex(@intCast(i)).* = tnb_data.scaling_scalar_field_data.?.valueByIndex(@intCast(i)) + tnb_data.list_scaling_scalar_field_data[j].?.valueByIndex(@intCast(i));
+        for (0..tnb_data.num_tnb_fields) |j| {
+            if (tnb_data.list_tnb_fields[j]) |field| {
+                switch (field.fieldType) {
+                    .rotation => rotation_value = rotation_value + field.cellData.?.valueByIndex(@intCast(i)),
+                    .scaling => scaling_value = scaling_value + field.cellData.?.valueByIndex(@intCast(i)),
+                    .translation => translation_value = translation_value + field.cellData.?.valueByIndex(@intCast(i)),
+                }
+            }
+        }
+
+        const co = @cos(rotation_value);
+        const si = @sin(rotation_value);
+        const transformation_matrix: Mat3f = .{ .{ scaling_value * co, -scaling_value * si, translation_value }, .{ scaling_value * si, scaling_value * co, translation_value }, .{ 0, 0, 1 } };
+
+        if (tnb_data.field_tnb_transform) |tnb_transform| {
+            tnb_transform.valuePtrByIndex(@intCast(i)).* = transformation_matrix;
         }
     }
 }
@@ -406,6 +438,8 @@ pub fn rightPanel(m: *Module) void {
         if (c.ImGui_Button("Init texture")) {
             tnb_data.texture_initialized = true;
 
+            smpt.setSurfaceMeshFieldData(sm, tnb_data.field_tnb_transform);
+
             const nul_index = std.mem.indexOfScalar(u8, tnb_data.exemplar_texture_path[0..], 0).?;
             var path_buffer: [128]u8 = undefined;
             const path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
@@ -435,23 +469,23 @@ pub fn rightPanel(m: *Module) void {
             }
             c.ImGui_PopID();
             c.ImGui_SeparatorText("Scalar Field");
-            var buf: [32]u8 = undefined;
-            for (0..tnb_data.num_scaling_scalar_field) |i| {
-                const id = std.fmt.bufPrint(&buf, "Scalar field {d}", .{i}) catch "";
-                c.ImGui_PushID(id.ptr);
-                switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.list_scaling_scalar_field_data[i])) {
-                    .unchanged => {},
-                    .cleared => tnb_data.list_scaling_scalar_field_data[i] = null,
-                    .changed => |field| {
-                        tnb_data.list_scaling_scalar_field_data[i] = field;
-                        smpt.mergeFieldCellData();
-                        smpt.setSurfaceMeshScalarFieldData(sm, tnb_data.scaling_scalar_field_data);
-                        smpt.app_ctx.requestRedraw();
-                    },
-                }
-                c.ImGui_PopID();
-            }
-            if (tnb_data.num_scaling_scalar_field < 8 and c.ImGui_ButtonEx("Add scalar field", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+            // var buf: [32]u8 = undefined;
+            // for (0..tnb_data.num_scaling_scalar_field) |i| {
+            //     const id = std.fmt.bufPrint(&buf, "Scalar field {d}", .{i}) catch "";
+            //     c.ImGui_PushID(id.ptr);
+            //     switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.list_scaling_scalar_field_data[i])) {
+            //         .unchanged => {},
+            //         .cleared => tnb_data.list_scaling_scalar_field_data[i] = null,
+            //         .changed => |field| {
+            //             tnb_data.list_scaling_scalar_field_data[i] = field;
+            //             smpt.mergeFieldCellData();
+            //             smpt.setSurfaceMeshScalarFieldData(sm, tnb_data.scaling_scalar_field_data);
+            //             smpt.app_ctx.requestRedraw();
+            //         },
+            //     }
+            //     c.ImGui_PopID();
+            // }
+            if (tnb_data.num_tnb_fields < 8 and c.ImGui_ButtonEx("Add scalar field", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
                 c.ImGui_OpenPopup("Add new Field", c.ImGuiPopupFlags_NoReopen);
             }
             if (c.ImGui_BeginPopupModal("Add new Field", 0, c.ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -460,18 +494,27 @@ pub fn rightPanel(m: *Module) void {
                 defer c.ImGui_PopItemWidth();
 
                 c.ImGui_PushID("Field celldata");
-                switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.celldata_selected)) {
+                switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.current_tnb_field.cellData)) {
                     .unchanged => {},
-                    .cleared => tnb_data.celldata_selected = null,
+                    .cleared => tnb_data.current_tnb_field.cellData = null,
                     .changed => |field| {
-                        tnb_data.celldata_selected = field;
+                        tnb_data.current_tnb_field.cellData = field;
                     },
                 }
                 c.ImGui_PopID();
 
+                c.ImGui_BeginGroup();
+                if (c.ImGui_RadioButton("Scaling", tnb_data.current_tnb_field.fieldType == .scaling)) {
+                    tnb_data.current_tnb_field.fieldType = .scaling;
+                }
+                if (c.ImGui_RadioButton("Rotation", tnb_data.current_tnb_field.fieldType == .rotation)) {
+                    tnb_data.current_tnb_field.fieldType = .rotation;
+                }
+                c.ImGui_EndGroup();
+
                 if (c.ImGui_ButtonEx("Assign", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                    tnb_data.list_scaling_scalar_field_data[tnb_data.num_scaling_scalar_field] = tnb_data.celldata_selected;
-                    tnb_data.num_scaling_scalar_field = tnb_data.num_scaling_scalar_field + 1;
+                    tnb_data.list_tnb_fields[tnb_data.num_tnb_fields] = tnb_data.current_tnb_field;
+                    tnb_data.num_tnb_fields = tnb_data.num_tnb_fields + 1;
                     c.ImGui_CloseCurrentPopup();
                 }
                 if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
