@@ -66,6 +66,25 @@ pending_field_name: [32]u8 = @splat(0),
 hovered_cell: ?SurfaceMesh.Cell = null,
 hovered_cell_ibo: IBO,
 selecting: bool = false,
+selected_op_index: i32 = 0,
+op: *const fn (f32, FieldOperationParam) f32 = sum,
+exponential_slope: f32 = 1,
+
+const functions = [_]FunctionEntry{
+    .{ .name = "Add", .func = sum },
+    .{ .name = "Exponential Decay", .func = exponential_decay },
+};
+
+const FunctionEntry = struct {
+    name: []const u8,
+    func: *const fn (f32, FieldOperationParam) f32,
+};
+
+const FieldOperationParam = struct {
+    distance: f32 = 0,
+    radius_expo: f32 = 0,
+    slope_expo: f32 = 0,
+};
 
 pub fn init(app_ctx: *AppContext) FieldsGenerator {
     return .{
@@ -82,6 +101,14 @@ pub fn deinit(fg: *FieldsGenerator) void {
     }
     fg.surface_meshes_data.deinit(fg.app_ctx.allocator);
     fg.hovered_cell_ibo.deinit();
+}
+
+fn sum(x: f32, _: FieldOperationParam) f32 {
+    return x;
+}
+
+fn exponential_decay(x: f32, p: FieldOperationParam) f32 {
+    return x * (@exp(-p.slope_expo * p.distance) - @exp(-p.slope_expo * p.radius_expo)) / (1 - @exp(-p.slope_expo * p.radius_expo));
 }
 
 /// Part of the Module interface.
@@ -241,13 +268,25 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
 
                     const action: SelectionAction = if (modState & c.SDL_KMOD_SHIFT != 0) .remove else .add;
 
+                    var op_param: FieldOperationParam = .{};
+                    const info = sm_store.surfaceMeshInfo(sm);
                     for (vertices_in_sphere.items) |cell| {
+                        switch (fg.op) {
+                            exponential_decay => {
+                                const v1 = info.std_datas.vertex_position.?.valueByIndex(sm.cellIndex(cell));
+                                const v2 = info.std_datas.vertex_position.?.valueByIndex(sm.cellIndex(fg.hovered_cell.?));
+                                op_param.distance = vec.norm3f(vec.sub3f(v1, v2));
+                                op_param.radius_expo = fgd.point_sphere_shader_parameters.sphere_radius;
+                                op_param.slope_expo = fg.exponential_slope;
+                            },
+                            else => {},
+                        }
                         switch (action) {
                             .add => {
-                                celldata.valuePtrByIndex(sm.cellIndex(cell)).* = celldata.valueByIndex(sm.cellIndex(cell)) + fg.value_increment;
+                                celldata.valuePtrByIndex(sm.cellIndex(cell)).* = celldata.valueByIndex(sm.cellIndex(cell)) + fg.op(fg.value_increment, op_param);
                             },
                             .remove => {
-                                celldata.valuePtrByIndex(sm.cellIndex(cell)).* = @max(0, celldata.valueByIndex(sm.cellIndex(cell)) - fg.value_increment);
+                                celldata.valuePtrByIndex(sm.cellIndex(cell)).* = @max(0, celldata.valueByIndex(sm.cellIndex(cell)) - fg.op(fg.value_increment, op_param));
                             },
                         }
                     }
@@ -320,6 +359,29 @@ pub fn rightPanel(m: *Module) void {
             fg.field_edited = field;
         },
     }
+    if (fg.field_edited) |_| {
+        c.ImGui_SameLine();
+        c.ImGui_Text("Celldata");
 
-    _ = c.ImGui_SliderFloat("Value increment", &fg.value_increment, 0, 10);
+        if (c.ImGui_BeginCombo(" Function", functions[@intCast(fg.selected_op_index)].name.ptr, 0)) {
+            for (functions, 0..) |f, i| {
+                const is_selected = (fg.selected_op_index == i);
+
+                if (c.ImGui_SelectableEx(f.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                    fg.selected_op_index = @intCast(i);
+                    fg.op = functions[@intCast(fg.selected_op_index)].func;
+                }
+            }
+            c.ImGui_EndCombo();
+        }
+
+        c.ImGui_SeparatorText("Fields operations parameters");
+        _ = c.ImGui_SliderFloat(" Value increment", &fg.value_increment, 0, 10);
+        switch (fg.op) {
+            exponential_decay => {
+                _ = (c.ImGui_SliderFloat("Exponential decay slope", &fg.exponential_slope, 0, 10));
+            },
+            else => {},
+        }
+    }
 }
