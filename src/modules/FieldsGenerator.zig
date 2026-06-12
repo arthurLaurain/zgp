@@ -23,12 +23,6 @@ const LineCylinder = @import("../rendering/shaders/line_cylinder/LineCylinder.zi
 const TriFlat = @import("../rendering/shaders/tri_flat/TriFlat.zig");
 const IBO = @import("../rendering/IBO.zig");
 
-const FieldData = struct {
-    name: [32]u8,
-    cell_data: ?SurfaceMesh.CellData(.vertex, f32) = null,
-    value: f32 = 0,
-};
-
 const FieldGeneratorData = struct {
     point_sphere_shader_parameters: PointSphere.Parameters,
 
@@ -67,11 +61,11 @@ module: Module = .{
 
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, FieldGeneratorData) = .empty,
 value_increment: f32 = 1,
-fields_list: std.ArrayList(FieldData) = .empty,
-field_edited: ?*FieldData = null,
-pending_field: FieldData = .{ .name = @splat(0) },
+field_edited: ?SurfaceMesh.CellData(.vertex, f32) = null,
+pending_field_name: [32]u8 = @splat(0),
 hovered_cell: ?SurfaceMesh.Cell = null,
 hovered_cell_ibo: IBO,
+selecting: bool = false,
 
 pub fn init(app_ctx: *AppContext) FieldsGenerator {
     return .{
@@ -88,7 +82,6 @@ pub fn deinit(fg: *FieldsGenerator) void {
     }
     fg.surface_meshes_data.deinit(fg.app_ctx.allocator);
     fg.hovered_cell_ibo.deinit();
-    fg.fields_list.deinit(fg.app_ctx.allocator);
 }
 
 /// Part of the Module interface.
@@ -134,6 +127,7 @@ pub fn surfaceMeshStdDataChanged(
 
 pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
     const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
+    if (!fg.selecting) return;
 
     // only draw selection for the currently selected SurfaceMesh & CellSet
     if (fg.app_ctx.selected_model.modelType() != .surface_mesh) return;
@@ -178,6 +172,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
 
     return switch (event.type) {
         c.SDL_EVENT_MOUSE_MOTION => blk: {
+            if (!fg.selecting) break :blk false;
             if (fg.field_edited) |_| {
                 const info_motion = sm_store.surfaceMeshInfo(sm);
                 if (info_motion.bvh.initialized) {
@@ -197,7 +192,32 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
             }
             break :blk false;
         },
+
+        c.SDL_EVENT_KEY_DOWN => blk: {
+            switch (event.key.key) {
+                c.SDLK_F => {
+                    fg.selecting = true;
+                    fg.app_ctx.requestRedraw();
+                    break :blk true;
+                },
+                else => {},
+            }
+            break :blk false;
+        },
+        c.SDL_EVENT_KEY_UP => blk: {
+            switch (event.key.key) {
+                c.SDLK_F => {
+                    fg.selecting = false;
+                    fg.app_ctx.requestRedraw();
+                    break :blk true;
+                },
+                else => {},
+            }
+            break :blk false;
+        },
+
         c.SDL_EVENT_MOUSE_BUTTON_DOWN => blk: {
+            if (!fg.selecting) break :blk false;
             const info_button = sm_store.surfaceMeshInfo(sm);
             if (info_button.std_datas.vertex_position) |vertex_position| {
 
@@ -216,7 +236,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                         };
                 }
 
-                if (fg.field_edited) |field_data| {
+                if (fg.field_edited) |celldata| {
                     const modState = c.SDL_GetModState();
 
                     const action: SelectionAction = if (modState & c.SDL_KMOD_SHIFT != 0) .remove else .add;
@@ -224,20 +244,21 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                     for (vertices_in_sphere.items) |cell| {
                         switch (action) {
                             .add => {
-                                field_data.cell_data.?.valuePtrByIndex(sm.cellIndex(cell)).* = field_data.cell_data.?.valueByIndex(sm.cellIndex(cell)) + fg.value_increment;
+                                celldata.valuePtrByIndex(sm.cellIndex(cell)).* = celldata.valueByIndex(sm.cellIndex(cell)) + fg.value_increment;
                             },
                             .remove => {
-                                field_data.cell_data.?.valuePtrByIndex(sm.cellIndex(cell)).* = @max(0, field_data.cell_data.?.valueByIndex(sm.cellIndex(cell)) - fg.value_increment);
+                                celldata.valuePtrByIndex(sm.cellIndex(cell)).* = @max(0, celldata.valueByIndex(sm.cellIndex(cell)) - fg.value_increment);
                             },
                         }
                     }
-                    sm_store.surfaceMeshDataUpdated(sm, .vertex, f32, field_data.cell_data.?);
+                    sm_store.surfaceMeshDataUpdated(sm, .vertex, f32, celldata);
                     break :blk true;
                 }
             }
             break :blk false;
         },
         c.SDL_EVENT_MOUSE_WHEEL => blk: {
+            if (!fg.selecting) break :blk false;
             if (fg.field_edited) |_| {
                 fgd.point_sphere_shader_parameters.sphere_radius += event.wheel.y * 0.001;
                 fg.app_ctx.requestRedraw();
@@ -269,80 +290,36 @@ pub fn rightPanel(m: *Module) void {
 
         c.ImGui_Text("Name:");
         c.ImGui_PushID("Name:");
-        _ = c.ImGui_InputText("##Name", &fg.pending_field.name, fg.pending_field.name.len, c.ImGuiInputTextFlags_CharsNoBlank);
+        _ = c.ImGui_InputText("##Name", &fg.pending_field_name, fg.pending_field_name.len, c.ImGuiInputTextFlags_CharsNoBlank);
         c.ImGui_PopID();
 
         if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            const data_name = std.mem.sliceTo(&fg.pending_field.name, 0);
+            const data_name = std.mem.sliceTo(&fg.pending_field_name, 0);
             const maybe_data = sm.addData(.vertex, f32, data_name);
             if (maybe_data) |data| {
-                fg.pending_field.cell_data = data;
+                fg.field_edited = data;
             } else |err| {
                 zgp_log.err("Error adding field data: {}", .{err});
             }
-
-            //TODO check existing field with same name
-            fg.fields_list.append(fg.app_ctx.allocator, fg.pending_field) catch unreachable;
             c.ImGui_CloseCurrentPopup();
         }
         // c.ImGui_SameLine();
         if (c.ImGui_ButtonEx("Close", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            fg.pending_field.name = @splat(0);
+            fg.pending_field_name = @splat(0);
             c.ImGui_CloseCurrentPopup();
         }
     }
 
-    var buffer: [128]u8 = undefined;
-    var text = std.fmt.bufPrintZ(&buffer, "Existing Fields {d}", .{fg.fields_list.items.len}) catch "";
-
-    c.ImGui_SeparatorText(text);
-
-    var i: usize = 0;
-    while (i < fg.fields_list.items.len) {
-        var value: FieldData = fg.fields_list.items[i];
-        c.ImGui_Text(&value.name);
-        c.ImGui_SameLine();
-
-        text = std.fmt.bufPrintZ(&buffer, "Field value {d}", .{i}) catch "";
-
-        c.ImGui_PushID(text);
-        const is_current = if (fg.field_edited) |field|
-            field == &fg.fields_list.items[i]
-        else
-            false;
-
-        if (is_current) {
-            if (c.ImGui_Button("Stop editing")) {
-                fg.field_edited = null;
-            }
-        } else {
-            if (c.ImGui_Button("Edit")) {
-                fg.field_edited = &fg.fields_list.items[i];
-            }
-        }
-        c.ImGui_PopID();
-
-        // c.ImGui_PushID(text);
-        // if (c.ImGui_SliderFloat("", &fg.field_list.items[i].value, 0, 50)) {
-        //     for (fg.field_list.items[i].selected_vertex_set.?.indices.items) |indice| {
-        //         fg.field_list.items[i].cell_data.?.valuePtrByIndex(indice).* = fg.field_list.items[i].value;
-        //     }
-        //     fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, fg.field_list.items[i].cell_data.?);
-        // }
-        // c.ImGui_PopID();
-        // TODO Enable fields removal
-        // c.ImGui_SameLine();
-        // const text_button_close = std.fmt.bufPrintZ(&buffer, "del{d}", .{i}) catch unreachable;
-        // c.ImGui_PushID(text_button_close);
-        // if (c.ImGui_ButtonEx("Delete", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-        //     fg.freeFieldData(&value);
-        //     sm.removeData(.vertex, Field.datatype, value.cell_data_handle);
-        //     _ = fields_list.orderedRemove(i);
-        //     c.ImGui_PopID();
-        //     continue;
-        // }
-        // c.ImGui_PopID();
-
-        i = i + 1;
+    c.ImGui_SeparatorText("Edit fields");
+    switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, fg.field_edited)) {
+        .unchanged => {},
+        .cleared => {
+            fg.field_edited = null;
+        },
+        .changed => |field| {
+            fg.field_edited = field;
+        },
     }
+
+    _ = c.ImGui_SliderFloat("Value increment", &fg.value_increment, 0, 10);
 }
