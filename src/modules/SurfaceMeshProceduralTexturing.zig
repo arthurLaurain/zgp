@@ -37,6 +37,7 @@ const TnBData = struct {
     procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
     exemplar_texture_path: [128]u8 = std.mem.zeroes([128]u8),
     scaling_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    rotation_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
     texture_initialized: bool = false,
     position_vbo: VBO = undefined,
     normal_vbo: VBO = undefined,
@@ -174,6 +175,15 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
             const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, scaling_field);
             tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scaling_field, field_vbo, 0, 0);
             smpt.app_ctx.requestRedraw();
+            return;
+        }
+    }
+    if (tnb_data.rotation_fieldData) |rotation_field| {
+        if (rotation_field.gen() == data) {
+            const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, rotation_field);
+            tnb_data.procedural_texturing_parameters.setVertexAttribArray(.rotation_field, field_vbo, 0, 0);
+            smpt.app_ctx.requestRedraw();
+            return;
         }
     }
 }
@@ -401,7 +411,7 @@ pub fn rightPanel(m: *Module) void {
 
             c.ImGui_Text("Scalar field:");
             c.ImGui_SameLine();
-            c.ImGui_PushID("Field celldata");
+            c.ImGui_PushID("scaling field");
             switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.scaling_fieldData)) {
                 .unchanged => {},
                 .cleared => {
@@ -420,18 +430,26 @@ pub fn rightPanel(m: *Module) void {
             }
             c.ImGui_PopID();
 
-            // c.ImGui_Text("Rotation field:");
-            // c.ImGui_SameLine();
-            // c.ImGui_PushID("Field celldata");
-            // switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.scaling_fieldData)) {
-            //     .unchanged => {},
-            //     .cleared => tnb_data.scaling_fieldData = null,
-            //     .changed => |field| {
-            //         tnb_data.scaling_fieldData = field;
-            //         smpt.app_ctx.requestRedraw();
-            //     },
-            // }
-            // c.ImGui_PopID();
+            c.ImGui_Text("Rotation field:");
+            c.ImGui_SameLine();
+            c.ImGui_PushID("rotation field");
+            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.rotation_fieldData)) {
+                .unchanged => {},
+                .cleared => {
+                    tnb_data.rotation_fieldData = null;
+                    tnb_data.procedural_texturing_parameters.unsetVertexAttribArray(.rotation_field);
+                    smpt.app_ctx.requestRedraw();
+                },
+                .changed => |field| {
+                    tnb_data.rotation_fieldData = field;
+                    if (tnb_data.rotation_fieldData) |rotation_field| {
+                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, rotation_field);
+                        tnb_data.procedural_texturing_parameters.setVertexAttribArray(.rotation_field, field_vbo, 0, 0);
+                        smpt.app_ctx.requestRedraw();
+                    }
+                },
+            }
+            c.ImGui_PopID();
         }
     }
 }

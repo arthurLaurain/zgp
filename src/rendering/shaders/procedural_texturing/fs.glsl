@@ -15,6 +15,7 @@ uniform bool u_distorsions_computed;
 in vec3 frag_position;
 in vec3 v_frag_position;
 in float scaling_field;
+in float rotation_field;
 out vec4 f_color;
 
 // using raw buffer to avoid vec3/ivec3 in SSBO because they need to be aligned to a 16 byte boundary while IBO/VBO uses 12 floats vec3
@@ -183,9 +184,12 @@ void main() {
   vec3 n2 = (vec4(vertices_normal[id_vertices.y * 3], vertices_normal[id_vertices.y * 3 + 1], vertices_normal[id_vertices.y * 3 + 2],1.)).xyz;
   vec3 n3 = (vec4(vertices_normal[id_vertices.z * 3], vertices_normal[id_vertices.z * 3 + 1], vertices_normal[id_vertices.z * 3 + 2],1.)).xyz;
 
-  vec2 u1 = getTexCoordFromVertexPlane(frag_position, p1, n1) * (u_scale_tex_coords + scaling_field);
-  vec2 u2 = getTexCoordFromVertexPlane(frag_position, p2, n2) * (u_scale_tex_coords + scaling_field);
-  vec2 u3 = getTexCoordFromVertexPlane(frag_position, p3, n3) * (u_scale_tex_coords + scaling_field);
+  mat2 rotation_transform = mat2(vec2(cos(rotation_field), sin(rotation_field)), vec2(-sin(rotation_field), cos(rotation_field)));
+
+  vec2 u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1) * (u_scale_tex_coords + scaling_field);
+  vec2 u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2) * (u_scale_tex_coords + scaling_field);
+  vec2 u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3) * (u_scale_tex_coords + scaling_field);
+
 
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 

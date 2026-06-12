@@ -4,10 +4,14 @@ uniform mat4 u_projection_matrix;
 
 in vec4 a_position;
 in float a_scaling_field;
+in float a_rotation_field;
 
 out vec3 frag_position;
 out vec3 v_frag_position;
 out float scaling_field;
+out float rotation_field;
+
+#define PI 3.141592653589793
 
 void main()
 {
@@ -15,5 +19,6 @@ void main()
     frag_position = a_position.xyz;
     v_frag_position = view_pos.xyz;
     scaling_field = a_scaling_field;
+    rotation_field = mod(a_rotation_field, 2. * PI);
     gl_Position = u_projection_matrix * view_pos;
 }

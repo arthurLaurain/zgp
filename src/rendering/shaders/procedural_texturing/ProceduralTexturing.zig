@@ -57,8 +57,9 @@ distorsions_computed_uniform: c_int = undefined,
 position_attrib: VAO.VertexAttribInfo = undefined,
 vector_attrib: VAO.VertexAttribInfo = undefined,
 scaling_field_attrib: VAO.VertexAttribInfo = undefined,
+rotation_field_attrib: VAO.VertexAttribInfo = undefined,
 
-const VertexAttrib = enum { position, vector, scaling_field };
+const VertexAttrib = enum { position, vector, scaling_field, rotation_field };
 
 fn init() !ProceduralTexturing {
     var pt: ProceduralTexturing = .{
@@ -96,6 +97,13 @@ fn init() !ProceduralTexturing {
         .normalized = false,
     };
 
+    pt.rotation_field_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_rotation_field")),
+        .size = 1,
+        .type = gl.FLOAT,
+        .normalized = false,
+    };
+
     // pt.vector_attrib = .{
     //     .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_edge_ref")),
     //     .size = 3,
@@ -126,10 +134,7 @@ pub const Parameters = struct {
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
-    field_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
-    visu_area_distorsion: bool = false,
-    visu_angle_distorsion: bool = false,
     visu_arap_energy: bool = false,
     compense_distorsions: bool = false,
     minmax_energy: Vec2f = .{ 0, 0 },
@@ -165,7 +170,6 @@ pub const Parameters = struct {
         p.exemplar_texture.deinit();
         p.shader.deinit();
         p.edge_ref_vbo.deinit();
-        p.field_vbo.deinit();
     }
 
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
@@ -173,6 +177,7 @@ pub const Parameters = struct {
             .position => p.shader.position_attrib,
             .vector => p.shader.vector_attrib,
             .scaling_field => p.shader.scaling_field_attrib,
+            .rotation_field => p.shader.rotation_field_attrib,
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
@@ -181,6 +186,7 @@ pub const Parameters = struct {
             .position => p.shader.position_attrib,
             .vector => p.shader.vector_attrib,
             .scaling_field => p.shader.scaling_field_attrib,
+            .rotation_field => p.shader.rotation_field_attrib,
         };
         p.vao.disableVertexAttribArray(attrib_info);
     }
