@@ -67,11 +67,11 @@ hovered_cell: ?SurfaceMesh.Cell = null,
 hovered_cell_ibo: IBO,
 selecting: bool = false,
 selected_op_index: i32 = 0,
-op: *const fn (f32, FieldOperationParam) f32 = sum,
+op: *const fn (f32, FieldOperationParam) f32 = constant,
 exponential_slope: f32 = 1,
 
 const functions = [_]FunctionEntry{
-    .{ .name = "Add", .func = sum },
+    .{ .name = "Constant", .func = constant },
     .{ .name = "Exponential Decay", .func = exponential_decay },
 };
 
@@ -103,12 +103,12 @@ pub fn deinit(fg: *FieldsGenerator) void {
     fg.hovered_cell_ibo.deinit();
 }
 
-fn sum(x: f32, _: FieldOperationParam) f32 {
+fn constant(x: f32, _: FieldOperationParam) f32 {
     return x;
 }
 
 fn exponential_decay(x: f32, p: FieldOperationParam) f32 {
-    return x * (@exp(-p.slope_expo * p.distance) - @exp(-p.slope_expo * p.radius_expo)) / (1 - @exp(-p.slope_expo * p.radius_expo));
+    return x * (@exp(-p.slope_expo * p.distance) - @exp(-p.slope_expo * p.radius_expo)) / @max(0.0001, 1 - @exp(-p.slope_expo * p.radius_expo));
 }
 
 /// Part of the Module interface.
@@ -283,6 +283,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                         }
                         switch (action) {
                             .add => {
+                                std.log.debug("X: {d}, distance: {d}, radius: {d}, slope: {d}, res: {d}\n", .{ fg.value_increment, op_param.distance, op_param.radius_expo, op_param.slope_expo, fg.op(fg.value_increment, op_param) });
                                 celldata.valuePtrByIndex(sm.cellIndex(cell)).* = celldata.valueByIndex(sm.cellIndex(cell)) + fg.op(fg.value_increment, op_param);
                             },
                             .remove => {
@@ -379,7 +380,7 @@ pub fn rightPanel(m: *Module) void {
         _ = c.ImGui_SliderFloat(" Value increment", &fg.value_increment, 0, 10);
         switch (fg.op) {
             exponential_decay => {
-                _ = (c.ImGui_SliderFloat("Exponential decay slope", &fg.exponential_slope, 0, 10));
+                _ = (c.ImGui_SliderFloat("Exponential decay slope", &fg.exponential_slope, 0, 100));
             },
             else => {},
         }
