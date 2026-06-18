@@ -283,7 +283,6 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                         }
                         switch (action) {
                             .add => {
-                                std.log.debug("X: {d}, distance: {d}, radius: {d}, slope: {d}, res: {d}\n", .{ fg.value_increment, op_param.distance, op_param.radius_expo, op_param.slope_expo, fg.op(fg.value_increment, op_param) });
                                 celldata.valuePtrByIndex(sm.cellIndex(cell)).* = celldata.valueByIndex(sm.cellIndex(cell)) + fg.op(fg.value_increment, op_param);
                             },
                             .remove => {

@@ -11,6 +11,7 @@ uniform bool u_visu_arap_energy;
 uniform bool u_compense_distorsions;
 uniform vec2 u_minmax_energy;
 uniform bool u_distorsions_computed;
+uniform bool u_tiles_transform_per_vertex;
 
 in vec3 frag_position;
 in vec3 v_frag_position;
@@ -39,6 +40,7 @@ layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
   float vertices_normal[];
 };
 
+
 struct SSBO_distorsion
 {
   mat2 S[3];
@@ -54,6 +56,16 @@ layout(std430, binding = 5) readonly buffer ssbo_neigh_selected_vertices
 {
   float num_selected_vertices;
   float neigh_selected_vertices[];
+};
+
+layout(std430, binding = 6) readonly buffer ssbo_scaling_value
+{
+  float scaling_value[];
+};
+
+layout(std430, binding = 7) readonly buffer ssbo_rotation_value
+{
+  float rotation_value[];
 };
 
 vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
@@ -107,6 +119,11 @@ vec3 getBarycentric(vec3 P, vec3 A, vec3 B, vec3 C)
     float u = 1.0 - v - w;
 
     return vec3(u, v, w);
+}
+
+mat2 rotate(float theta)
+{
+  return mat2(vec2(cos(theta), sin(theta)), vec2(-sin(theta), cos(theta)));
 }
 
 float pointInTriangleBary(vec3 P, vec3 A, vec3 B, vec3 C)
@@ -184,13 +201,27 @@ void main() {
   vec3 n2 = (vec4(vertices_normal[id_vertices.y * 3], vertices_normal[id_vertices.y * 3 + 1], vertices_normal[id_vertices.y * 3 + 2],1.)).xyz;
   vec3 n3 = (vec4(vertices_normal[id_vertices.z * 3], vertices_normal[id_vertices.z * 3 + 1], vertices_normal[id_vertices.z * 3 + 2],1.)).xyz;
 
-  mat2 rotation_transform = mat2(vec2(cos(rotation_field), sin(rotation_field)), vec2(-sin(rotation_field), cos(rotation_field)));
+  vec2 u1;
+  vec2 u2;
+  vec2 u3;
 
-  vec2 u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1) * (u_scale_tex_coords + scaling_field);
-  vec2 u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2) * (u_scale_tex_coords + scaling_field);
-  vec2 u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3) * (u_scale_tex_coords + scaling_field);
-
-
+  
+  if(u_tiles_transform_per_vertex)
+  {
+    mat2 ro1 = rotate(rotation_value[id_vertices.x]);
+    mat2 ro2 = rotate(rotation_value[id_vertices.y]);
+    mat2 ro3 = rotate(rotation_value[id_vertices.z]);
+    u1 = ro1 * getTexCoordFromVertexPlane(frag_position, p1, n1) * (u_scale_tex_coords + scaling_value[id_vertices.x] );
+    u2 = ro2 * getTexCoordFromVertexPlane(frag_position, p2, n2) * (u_scale_tex_coords + scaling_value[id_vertices.y]);
+    u3 = ro3 * getTexCoordFromVertexPlane(frag_position, p3, n3) * (u_scale_tex_coords + scaling_value[id_vertices.z]);
+  }
+  else
+  {
+    mat2 rotation_transform = mat2(vec2(cos(rotation_field), sin(rotation_field)), vec2(-sin(rotation_field), cos(rotation_field)));
+    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1) * (u_scale_tex_coords + scaling_field);
+    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2) * (u_scale_tex_coords + scaling_field);
+    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3) * (u_scale_tex_coords + scaling_field);
+  }
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 
   vec2 r1 = hash12(int(id_vertices.x));
@@ -204,7 +235,6 @@ void main() {
   float w1 = bary.x;
   float w2 = bary.y;
   float w3 = bary.z;
-
 
   SSBO_distorsion distorsion;
   if(u_compense_distorsions && u_distorsions_computed)
@@ -232,5 +262,6 @@ void main() {
   else
     f_color = vec4(result);
 
+  
   f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
 }

@@ -53,6 +53,7 @@ scale_tex_coords_uniform: c_int = undefined,
 visu_arap_energy_uniform: c_int = undefined,
 compense_distorsions_uniform: c_int = undefined,
 distorsions_computed_uniform: c_int = undefined,
+tiles_transform_per_vertex_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 vector_attrib: VAO.VertexAttribInfo = undefined,
@@ -83,6 +84,7 @@ fn init() !ProceduralTexturing {
     pt.visu_arap_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_arap_energy");
     pt.compense_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_compense_distorsions");
     pt.distorsions_computed_uniform = gl.GetUniformLocation(pt.program.index, "u_distorsions_computed");
+    pt.tiles_transform_per_vertex_uniform = gl.GetUniformLocation(pt.program.index, "u_tiles_transform_per_vertex");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -110,6 +112,7 @@ fn init() !ProceduralTexturing {
     //     .type = gl.FLOAT,
     //     .normalized = false,
     // };
+
     return pt;
 }
 
@@ -131,14 +134,19 @@ pub const Parameters = struct {
     ssbo_normal_vertices: SSBO,
     ssbo_distorsion_primitives: SSBO,
     ssbo_neigh_selected_vertices: SSBO,
+    ssbo_scaling_tile: SSBO,
+    ssbo_rotation_tile: SSBO,
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
+    vertices_scaling_vbo: ?VBO = undefined,
+    vertices_rotation_vbo: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
     visu_arap_energy: bool = false,
     compense_distorsions: bool = false,
     minmax_energy: Vec2f = .{ 0, 0 },
     distorsions_computed: bool = false,
+    tiles_transform_per_vertex: bool = true,
 
     pub fn init() Parameters {
         return .{
@@ -156,6 +164,8 @@ pub const Parameters = struct {
             .ssbo_normal_vertices = .init(),
             .ssbo_distorsion_primitives = .init(),
             .ssbo_neigh_selected_vertices = .init(),
+            .ssbo_scaling_tile = .init(),
+            .ssbo_rotation_tile = .init(),
         };
     }
 
@@ -167,6 +177,8 @@ pub const Parameters = struct {
         p.ssbo_normal_vertices.deinit();
         p.ssbo_distorsion_primitives.deinit();
         p.ssbo_neigh_selected_vertices.deinit();
+        p.ssbo_scaling_tile.deinit();
+        p.ssbo_rotation_tile.deinit();
         p.exemplar_texture.deinit();
         p.shader.deinit();
         p.edge_ref_vbo.deinit();
@@ -377,6 +389,18 @@ pub const Parameters = struct {
         p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.?.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, p.ssbo_distorsion_primitives.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, p.ssbo_neigh_selected_vertices.index);
+        if (p.vertices_scaling_vbo) |vbo| {
+            p.ssbo_scaling_tile.bindBufferToShader(6, vbo.index);
+        } else {
+            p.ssbo_scaling_tile.bindBufferToShader(6, 0);
+        }
+
+        if (p.vertices_rotation_vbo) |vbo| {
+            p.ssbo_rotation_tile.bindBufferToShader(7, vbo.index);
+        } else {
+            p.ssbo_rotation_tile.bindBufferToShader(7, 0);
+        }
+
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
 
@@ -389,6 +413,7 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.visu_arap_energy_uniform, @intFromBool(p.visu_arap_energy));
         gl.Uniform1i(p.shader.compense_distorsions_uniform, @intFromBool(p.compense_distorsions));
         gl.Uniform1i(p.shader.distorsions_computed_uniform, @intFromBool(p.distorsions_computed));
+        gl.Uniform1i(p.shader.tiles_transform_per_vertex_uniform, @intFromBool(p.tiles_transform_per_vertex));
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);

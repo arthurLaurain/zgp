@@ -409,6 +409,9 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_PopID();
             c.ImGui_SeparatorText("Field");
 
+            if (c.ImGui_Checkbox("Compute tiles transformations per vertex", &tnb_data.procedural_texturing_parameters.tiles_transform_per_vertex)) {
+                smpt.app_ctx.requestRedraw();
+            }
             c.ImGui_Text("Scalar field:");
             c.ImGui_SameLine();
             c.ImGui_PushID("scaling field");
@@ -416,6 +419,7 @@ pub fn rightPanel(m: *Module) void {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.scaling_fieldData = null;
+                    tnb_data.procedural_texturing_parameters.vertices_scaling_vbo = null;
                     tnb_data.procedural_texturing_parameters.unsetVertexAttribArray(.scaling_field);
                     smpt.app_ctx.requestRedraw();
                 },
@@ -424,6 +428,7 @@ pub fn rightPanel(m: *Module) void {
                     if (tnb_data.scaling_fieldData) |scaling_field| {
                         const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, scaling_field);
                         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scaling_field, field_vbo, 0, 0);
+                        tnb_data.procedural_texturing_parameters.vertices_scaling_vbo = field_vbo;
                         smpt.app_ctx.requestRedraw();
                     }
                 },
@@ -438,6 +443,7 @@ pub fn rightPanel(m: *Module) void {
                 .cleared => {
                     tnb_data.rotation_fieldData = null;
                     tnb_data.procedural_texturing_parameters.unsetVertexAttribArray(.rotation_field);
+                    tnb_data.procedural_texturing_parameters.vertices_scaling_vbo = null;
                     smpt.app_ctx.requestRedraw();
                 },
                 .changed => |field| {
@@ -445,6 +451,7 @@ pub fn rightPanel(m: *Module) void {
                     if (tnb_data.rotation_fieldData) |rotation_field| {
                         const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, rotation_field);
                         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.rotation_field, field_vbo, 0, 0);
+                        tnb_data.procedural_texturing_parameters.vertices_rotation_vbo = field_vbo;
                         smpt.app_ctx.requestRedraw();
                     }
                 },
