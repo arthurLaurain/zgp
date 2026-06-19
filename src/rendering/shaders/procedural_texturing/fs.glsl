@@ -16,7 +16,7 @@ uniform bool u_tiles_transform_per_vertex;
 in vec3 frag_position;
 in vec3 v_frag_position;
 in float scaling_field;
-in float rotation_field;
+in vec2 rotation_field;
 out vec4 f_color;
 
 // using raw buffer to avoid vec3/ivec3 in SSBO because they need to be aligned to a 16 byte boundary while IBO/VBO uses 12 floats vec3
@@ -217,7 +217,8 @@ void main() {
   }
   else
   {
-    mat2 rotation_transform = mat2(vec2(cos(rotation_field), sin(rotation_field)), vec2(-sin(rotation_field), cos(rotation_field)));
+    vec2 r = normalize(rotation_field);
+    mat2 rotation_transform = mat2(r.x, -r.y, r.y, r.x);
     u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1) * (u_scale_tex_coords + scaling_field);
     u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2) * (u_scale_tex_coords + scaling_field);
     u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3) * (u_scale_tex_coords + scaling_field);

@@ -48,7 +48,7 @@ const TnBData = struct {
     pub fn init(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
-        const s = "perlin";
+        const s = "gravel";
         std.mem.copyBackwards(u8, tbd.exemplar_texture_path[0..s.len], s); // default value to speed up debug
         if (!tbd.initialized) {
             tbd.vertex_ref_edge = try tbd.surface_mesh.getOrAddData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
@@ -442,8 +442,8 @@ pub fn rightPanel(m: *Module) void {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.rotation_fieldData = null;
+                    tnb_data.procedural_texturing_parameters.vertices_rotation_vbo = null;
                     tnb_data.procedural_texturing_parameters.unsetVertexAttribArray(.rotation_field);
-                    tnb_data.procedural_texturing_parameters.vertices_scaling_vbo = null;
                     smpt.app_ctx.requestRedraw();
                 },
                 .changed => |field| {

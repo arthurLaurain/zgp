@@ -9,7 +9,7 @@ in float a_rotation_field;
 out vec3 frag_position;
 out vec3 v_frag_position;
 out float scaling_field;
-out float rotation_field;
+out vec2 rotation_field;
 
 #define PI 3.141592653589793
 
@@ -19,6 +19,6 @@ void main()
     frag_position = a_position.xyz;
     v_frag_position = view_pos.xyz;
     scaling_field = a_scaling_field;
-    rotation_field = mod(a_rotation_field, 2. * PI);
+    rotation_field = vec2(cos(a_rotation_field), sin(a_rotation_field));
     gl_Position = u_projection_matrix * view_pos;
 }
