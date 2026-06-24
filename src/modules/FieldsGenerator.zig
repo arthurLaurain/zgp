@@ -69,7 +69,7 @@ selecting: bool = false,
 selected_op_index: i32 = 0,
 op: *const fn (f32, FieldOperationParam) f32 = constant,
 exponential_slope: f32 = 1,
-
+k_neighborhood: i32 = 1,
 const functions = [_]FunctionEntry{
     .{ .name = "Constant", .func = constant },
     .{ .name = "Exponential Decay", .func = exponential_decay },
@@ -108,7 +108,12 @@ fn constant(x: f32, _: FieldOperationParam) f32 {
 }
 
 fn exponential_decay(x: f32, p: FieldOperationParam) f32 {
-    return x * (@exp(-p.slope_expo * p.distance) - @exp(-p.slope_expo * p.radius_expo)) / @max(0.0001, 1 - @exp(-p.slope_expo * p.radius_expo));
+    const k = @max(0.0001, p.slope_expo);
+
+    const a = @exp(-k * p.distance);
+    const b = @exp(-k * p.radius_expo);
+
+    return x * (a - b) / (1.0 - b);
 }
 
 /// Part of the Module interface.
@@ -149,6 +154,123 @@ pub fn surfaceMeshStdDataChanged(
             }
         },
         else => return,
+    }
+}
+
+pub fn printArrayList(a: std.ArrayList(std.ArrayList(SurfaceMesh.Cell))) void {
+    for (0..a.items.len) |i| {
+        for (0..a.items[i].items.len) |j| {
+            std.log.debug("{d} {d} {d}\n", .{ i, j, a.items[i].items[j].vertex });
+        }
+    }
+}
+
+pub fn getNeighTriangleID(
+    sm: *SurfaceMesh,
+    k: u32,
+    source: SurfaceMesh.Cell,
+) !std.ArrayList(std.ArrayList(SurfaceMesh.Cell)) {
+    var rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)) = .empty;
+
+    var marker = try SurfaceMesh.DartMarker.init(sm);
+    defer marker.deinit();
+
+    var first_ring: std.ArrayList(SurfaceMesh.Cell) = .empty;
+    try first_ring.append(sm.allocator, source);
+    try rings.append(sm.allocator, first_ring);
+
+    marker.mark(source.dart());
+
+    var level: u32 = 0;
+    while (level < k) : (level += 1) {
+        const current_ring = rings.items[level];
+
+        var next_ring: std.ArrayList(SurfaceMesh.Cell) = .empty;
+
+        for (current_ring.items) |cell| {
+            var current: u32 = cell.dart();
+            while (true) {
+                if (!marker.isMarked(current)) {
+                    next_ring.append(sm.allocator, .{ .vertex = sm.phi2(current) }) catch unreachable;
+                    marker.mark(current);
+                }
+                current = sm.phi1(sm.phi2(current));
+                if (current == cell.dart()) break;
+            }
+        }
+
+        if (next_ring.items.len == 0)
+            break;
+
+        try rings.append(sm.allocator, next_ring);
+    }
+
+    printArrayList(rings);
+    return rings;
+}
+
+pub fn uniformMean(
+    rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)),
+    field: SurfaceMesh.CellData(.vertex, f32),
+) f32 {
+    var sum: f32 = 0;
+    var count: f32 = 0;
+
+    for (rings.items) |ring| {
+        for (ring.items) |cell| {
+            sum += field.value(cell);
+            count += 1;
+        }
+    }
+
+    if (count == 0) return sum;
+    return sum / count;
+}
+
+pub fn gaussianMean(
+    rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)),
+    field: SurfaceMesh.CellData(.vertex, f32),
+    sigma: f32,
+) f32 {
+    var sum: f32 = 0;
+    var weight_sum: f32 = 0;
+
+    for (rings.items, 0..) |ring, i| {
+        const fi: f32 = @floatFromInt(i);
+        const w = std.math.exp(-(fi * fi) / (2.0 * sigma * sigma));
+
+        for (ring.items) |cell| {
+            sum += w * field.value(cell);
+            weight_sum += w;
+        }
+    }
+
+    return if (weight_sum == 0) sum else sum / weight_sum;
+}
+
+pub fn smoothField(field: SurfaceMesh.CellData(.vertex, f32), sm: *SurfaceMesh, k: u32) !void {
+    var cell_it = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
+    defer cell_it.deinit();
+    var field_copy = try sm.allocator.alloc(f32, sm.nbCells(.vertex));
+    defer sm.allocator.free(field_copy);
+
+    @memset(field_copy, 0);
+    var j: usize = 0;
+    while (cell_it.next()) |cell| {
+        var rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)) = getNeighTriangleID(sm, k, cell) catch unreachable;
+        field_copy[j] = uniformMean(rings, field);
+        for (0..rings.items.len) |i| {
+            rings.items[i].deinit(sm.allocator);
+        }
+        rings.deinit(sm.allocator);
+        j = j + 1;
+    }
+
+    cell_it.reset();
+    j = 0;
+    while (cell_it.next()) |cell| {
+        field.valuePtrByIndex(sm.cellIndex(cell)).* = field_copy[j];
+        j = j + 1;
     }
 }
 
@@ -376,12 +498,21 @@ pub fn rightPanel(m: *Module) void {
         }
 
         c.ImGui_SeparatorText("Fields operations parameters");
-        _ = c.ImGui_SliderFloat(" Value increment", &fg.value_increment, 0, 10);
-        switch (fg.op) {
-            exponential_decay => {
-                _ = (c.ImGui_SliderFloat("Exponential decay slope", &fg.exponential_slope, 0, 100));
-            },
-            else => {},
+        if (fg.field_edited) |field| {
+            _ = c.ImGui_SliderFloat(" Value increment", &fg.value_increment, 0, 10);
+            switch (fg.op) {
+                exponential_decay => {
+                    _ = (c.ImGui_SliderFloat("Exponential decay slope", &fg.exponential_slope, 0, 100));
+                },
+                else => {},
+            }
+
+            _ = c.ImGui_SliderInt("K-neighborhood", &fg.k_neighborhood, 1, 5);
+            if (c.ImGui_Button("Smooth Field")) {
+                smoothField(field, sm, @intCast(fg.k_neighborhood)) catch unreachable;
+                fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, field);
+                fg.app_ctx.requestRedraw();
+            }
         }
     }
 }
