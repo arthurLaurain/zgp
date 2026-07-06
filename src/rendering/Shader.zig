@@ -71,7 +71,6 @@ pub fn setShader(s: *Shader, shader_type: ShaderType, shader_source: []const u8)
         gl_log.err("Failed to create shader: {}", .{shader_type});
         return error.GlCreateShaderFailed;
     }
-    defer gl.DeleteShader(shader); // attached shader will only be _tagged_ for deletion
     gl.ShaderSource(
         shader,
         2,
@@ -108,6 +107,7 @@ pub fn linkProgram(s: *Shader) !void {
         var i: u32 = 0;
         while (i < nb_attached_shaders) : (i += 1) {
             gl.DetachShader(s.index, attached_shaders[i]);
+            gl.DeleteShader(attached_shaders[i]);
         }
     }
 }

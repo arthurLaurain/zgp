@@ -74,7 +74,20 @@ fn init() !ProceduralTexturing {
     try pt.program.setShader(.vertex, vertex_shader_source);
     try pt.program.setShader(.fragment, fragment_shader_source);
     try pt.program.linkProgram();
+    try pt.linkAttributes();
 
+    return pt;
+}
+
+pub fn reload(pt: *ProceduralTexturing, vertex_shader_source: []u8, fragment_shader_source: []u8) !void {
+    pt.program = Shader.init();
+    try pt.program.setShader(.vertex, vertex_shader_source);
+    try pt.program.setShader(.fragment, fragment_shader_source);
+    try pt.program.linkProgram();
+    // try pt.linkAttributes();
+}
+
+pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.view_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_view_matrix");
     pt.projection_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_projection_matrix");
     pt.ambiant_color_uniform = gl.GetUniformLocation(pt.program.index, "u_ambiant_color");
@@ -113,8 +126,6 @@ fn init() !ProceduralTexturing {
         .type = gl.FLOAT,
         .normalized = false,
     };
-
-    return pt;
 }
 
 pub fn deinit(tf: *ProceduralTexturing) void {

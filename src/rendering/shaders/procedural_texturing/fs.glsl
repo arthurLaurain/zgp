@@ -216,11 +216,10 @@ void main() {
   }
   else
   {
-  
     mat2 rotation_transform = rotate(rotation_field);
-    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * u_scale_tex_coords * scaling_field;
-    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * u_scale_tex_coords * scaling_field;
-    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * u_scale_tex_coords * scaling_field;
+    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * u_scale_tex_coords * scaling_field * 50.;
+    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * u_scale_tex_coords * scaling_field * 50.;
+    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * u_scale_tex_coords * scaling_field * 50.;
   }
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 

@@ -17,6 +17,7 @@ const DataGen = @import("../utils/data.zig").DataGen;
 
 const ProceduralTexturing = @import("../rendering/shaders/procedural_texturing/ProceduralTexturing.zig");
 const Texture2D = @import("../rendering/Texture2D");
+const Shader = @import("../rendering/Shader.zig");
 
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
@@ -289,10 +290,12 @@ fn setSurfaceMeshVectorData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh:
     }
 }
 
-fn loadShaderSource(io: std.Io, path: []const u8) ![]u8 {
-    var buf: [40960]u8 = undefined;
-    const file = try std.Io.Dir.readFile(std.Io.Dir.cwd(), io, path, &buf);
-    return file;
+fn loadShaderSource(io: std.Io, path: []const u8, buf: []u8) ![:0]u8 {
+    const file = try std.Io.Dir.readFile(std.Io.Dir.cwd(), io, path, buf);
+
+    buf[file.len] = 0;
+
+    return buf[0..file.len :0];
 }
 
 /// Part of the Module interface.
@@ -335,19 +338,12 @@ pub fn rightPanel(m: *Module) void {
             smpt.app_ctx.requestRedraw();
 
         if (c.ImGui_ButtonEx("Reload shader", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            const vs_source = loadShaderSource(smpt.app_ctx.io, "src/rendering/shaders/procedural_texturing/vs.glsl") catch unreachable;
-            defer smpt.app_ctx.allocator.free(vs_source);
+            var buf_vs_source: [40960]u8 = undefined;
+            var buf_fs_source: [40960]u8 = undefined;
+            const vs_source = loadShaderSource(smpt.app_ctx.io, "src/rendering/shaders/procedural_texturing/vs.glsl", &buf_vs_source) catch unreachable;
+            const fs_source = loadShaderSource(smpt.app_ctx.io, "src/rendering/shaders/procedural_texturing/fs.glsl", &buf_fs_source) catch unreachable;
 
-            std.log.debug("{any}", .{vs_source});
-
-            const fs_source = loadShaderSource(smpt.app_ctx.io, "src/rendering/shaders/procedural_texturing/fs.glsl") catch unreachable;
-            defer smpt.app_ctx.allocator.free(fs_source);
-
-            tnb_data.procedural_texturing_parameters.shader.program.setShader(.vertex, vs_source) catch unreachable;
-            tnb_data.procedural_texturing_parameters.shader.program.setShader(.fragment, fs_source) catch unreachable;
-            tnb_data.procedural_texturing_parameters.shader.program.linkProgram() catch unreachable;
-
-            gl.UseProgram(tnb_data.procedural_texturing_parameters.shader.program.index);
+            tnb_data.procedural_texturing_parameters.shader.reload(vs_source, fs_source) catch unreachable;
 
             smpt.app_ctx.requestRedraw();
         }

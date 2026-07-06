@@ -117,7 +117,7 @@ pub fn draw(view: *View, modules: []*Module) void {
         }
         gl.Disable(gl.DEPTH_TEST);
 
-        //view.needs_redraw = false;
+        view.needs_redraw = false;
     }
     gl.Clear(gl.COLOR_BUFFER_BIT);
     view.fullscreen_texture_shader_parameters.draw();
