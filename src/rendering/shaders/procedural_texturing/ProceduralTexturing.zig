@@ -11,6 +11,7 @@ const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 const TEXTURE2D = @import("../../Texture2D.zig");
 const SSBO = @import("../../SSBO.zig");
+const c = @import("c");
 
 const vec = @import("../../../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
@@ -42,7 +43,7 @@ pub fn instance() *ProceduralTexturing {
 
 program: Shader,
 
-model_view_matrix_uniform: c_int = undefined,
+view_matrix_uniform: c_int = undefined,
 projection_matrix_uniform: c_int = undefined,
 ambiant_color_uniform: c_int = undefined,
 min_max_energy_uniform: c_int = undefined,
@@ -56,11 +57,11 @@ distorsions_computed_uniform: c_int = undefined,
 tiles_transform_per_vertex_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
-vector_attrib: VAO.VertexAttribInfo = undefined,
 scaling_field_attrib: VAO.VertexAttribInfo = undefined,
 rotation_field_attrib: VAO.VertexAttribInfo = undefined,
+edge_ref_attrib: VAO.VertexAttribInfo = undefined,
 
-const VertexAttrib = enum { position, vector, scaling_field, rotation_field };
+const VertexAttrib = enum { position, edge_ref, scaling_field, rotation_field };
 
 fn init() !ProceduralTexturing {
     var pt: ProceduralTexturing = .{
@@ -74,7 +75,7 @@ fn init() !ProceduralTexturing {
     try pt.program.setShader(.fragment, fragment_shader_source);
     try pt.program.linkProgram();
 
-    pt.model_view_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_model_view_matrix");
+    pt.view_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_view_matrix");
     pt.projection_matrix_uniform = gl.GetUniformLocation(pt.program.index, "u_projection_matrix");
     pt.ambiant_color_uniform = gl.GetUniformLocation(pt.program.index, "u_ambiant_color");
     pt.min_max_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_minmax_energy");
@@ -106,12 +107,12 @@ fn init() !ProceduralTexturing {
         .normalized = false,
     };
 
-    // pt.vector_attrib = .{
-    //     .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_edge_ref")),
-    //     .size = 3,
-    //     .type = gl.FLOAT,
-    //     .normalized = false,
-    // };
+    pt.edge_ref_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_edge_ref")),
+        .size = 3,
+        .type = gl.FLOAT,
+        .normalized = false,
+    };
 
     return pt;
 }
@@ -124,7 +125,7 @@ pub const Parameters = struct {
     shader: *ProceduralTexturing,
     vao: VAO,
     exemplar_texture: TEXTURE2D,
-    model_view_matrix: [16]f32 = undefined,
+    view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
     light_position: [3]f32 = .{ 10, 0, 100 },
@@ -187,7 +188,7 @@ pub const Parameters = struct {
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
-            .vector => p.shader.vector_attrib,
+            .edge_ref => p.shader.edge_ref_attrib,
             .scaling_field => p.shader.scaling_field_attrib,
             .rotation_field => p.shader.rotation_field_attrib,
         };
@@ -196,7 +197,7 @@ pub const Parameters = struct {
     pub fn unsetVertexAttribArray(p: *Parameters, attrib: VertexAttrib) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
-            .vector => p.shader.vector_attrib,
+            .edge_ref => p.shader.edge_ref_attrib,
             .scaling_field => p.shader.scaling_field_attrib,
             .rotation_field => p.shader.rotation_field_attrib,
         };
@@ -385,7 +386,7 @@ pub const Parameters = struct {
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
         p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
         p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.?.index);
-        p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
+        //p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
         p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.?.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, p.ssbo_distorsion_primitives.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, p.ssbo_neigh_selected_vertices.index);
@@ -407,7 +408,7 @@ pub const Parameters = struct {
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform2fv(p.shader.min_max_energy_uniform, 1, @ptrCast(&p.minmax_energy));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
-        gl.UniformMatrix4fv(p.shader.model_view_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.model_view_matrix));
+        gl.UniformMatrix4fv(p.shader.view_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.view_matrix));
         gl.UniformMatrix4fv(p.shader.projection_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.projection_matrix));
         gl.Uniform1f(p.shader.scale_tex_coords_uniform, p.scale_tex_coords);
         gl.Uniform1i(p.shader.visu_arap_energy_uniform, @intFromBool(p.visu_arap_energy));

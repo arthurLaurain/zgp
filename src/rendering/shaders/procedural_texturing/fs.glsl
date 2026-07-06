@@ -4,7 +4,7 @@
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
 uniform sampler2D u_exemplar_texture;
-uniform mat4 u_model_view_matrix;
+uniform mat4 u_view_matrix;
 uniform float u_scale_tex_coords;
 uniform float u_scale_distorsion;
 uniform bool u_visu_arap_energy;
@@ -14,6 +14,7 @@ uniform bool u_distorsions_computed;
 uniform bool u_tiles_transform_per_vertex;
 
 in vec3 frag_position;
+in vec3 edge_ref;
 in vec3 v_frag_position;
 in float scaling_field;
 in float rotation_field;
@@ -39,7 +40,6 @@ layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
 {
   float vertices_normal[];
 };
-
 
 struct SSBO_distorsion
 {
@@ -80,12 +80,11 @@ vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
   
 }
 
-vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N)
+vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N, vec3 v)
 {
     vec3 projPoint = P - dot(P - A, N) * N;
 
-    vec3 d = vec3(0,1,0);
-    if(abs(N.y) >= 0.99) d = vec3(1,0,0);
+    vec3 d = vec3(0,1,0) + 0.0000001 * v;
     vec3 T = normalize(cross(N, d));
     vec3 BT = cross(N, T);
 
@@ -211,17 +210,17 @@ void main() {
     mat2 ro1 = rotate(rotation_value[id_vertices.x]);
     mat2 ro2 = rotate(rotation_value[id_vertices.y]);
     mat2 ro3 = rotate(rotation_value[id_vertices.z]);
-    u1 = ro1 * getTexCoordFromVertexPlane(frag_position, p1, n1) * u_scale_tex_coords * scaling_value[id_vertices.x];
-    u2 = ro2 * getTexCoordFromVertexPlane(frag_position, p2, n2) * u_scale_tex_coords * scaling_value[id_vertices.y];
-    u3 = ro3 * getTexCoordFromVertexPlane(frag_position, p3, n3) * u_scale_tex_coords * scaling_value[id_vertices.z];
+    u1 = ro1 * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * u_scale_tex_coords * scaling_value[id_vertices.x];
+    u2 = ro2 * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * u_scale_tex_coords * scaling_value[id_vertices.y];
+    u3 = ro3 * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * u_scale_tex_coords * scaling_value[id_vertices.z];
   }
   else
   {
   
     mat2 rotation_transform = rotate(rotation_field);
-    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1) * u_scale_tex_coords * scaling_field;
-    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2) * u_scale_tex_coords * scaling_field;
-    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3) * u_scale_tex_coords * scaling_field;
+    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * u_scale_tex_coords * scaling_field;
+    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * u_scale_tex_coords * scaling_field;
+    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * u_scale_tex_coords * scaling_field;
   }
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 

@@ -283,7 +283,7 @@ fn setSurfaceMeshVectorData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh:
     if (vertex_vector) |v| {
         p.vertex_ref_edge_vec = vertex_vector;
         const vector_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, v);
-        p.procedural_texturing_parameters.setVertexAttribArray(.vector, vector_vbo, 0, 0);
+        p.procedural_texturing_parameters.setVertexAttribArray(.edge_ref, vector_vbo, 0, 0);
         p.procedural_texturing_parameters.edge_ref_vbo = vector_vbo;
         smpt.app_ctx.requestRedraw();
     }
@@ -470,7 +470,7 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
 
         const p = smpt.surface_meshes_data.getPtr(sm).?;
         if (p.draw_texture and p.initialized and p.texture_initialized) {
-            p.procedural_texturing_parameters.model_view_matrix = @bitCast(view_matrix);
+            p.procedural_texturing_parameters.view_matrix = @bitCast(view_matrix);
             p.procedural_texturing_parameters.projection_matrix = @bitCast(projection_matrix);
             p.procedural_texturing_parameters.draw(info.triangles_ibo);
         }
