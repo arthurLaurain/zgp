@@ -256,6 +256,10 @@ pub fn mul4d(a: Mat4d, b: Mat4d) Mat4d {
     return result;
 }
 
+pub fn mulVec2f(m: Mat2f, v: Vec2f) Vec2f {
+    return .{ m[0][0] * v[0] + m[0][1] * v[1], m[1][0] * v[0] + m[1][1] * v[1] };
+}
+
 pub fn mulVec3f(m: Mat3f, v: Vec3f) Vec3f {
     return .{
         m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2],

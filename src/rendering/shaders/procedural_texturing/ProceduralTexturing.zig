@@ -158,7 +158,7 @@ pub const Parameters = struct {
     compense_distorsions: bool = false,
     minmax_energy: Vec2f = .{ 0, 0 },
     distorsions_computed: bool = false,
-    tiles_transform_per_vertex: bool = true,
+    tiles_transform_per_vertex: bool = false,
 
     pub fn init() Parameters {
         return .{
@@ -397,7 +397,7 @@ pub const Parameters = struct {
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
         p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
         p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.?.index);
-        //p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
+        p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
         p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.?.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, p.ssbo_distorsion_primitives.index);
         gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, p.ssbo_neigh_selected_vertices.index);

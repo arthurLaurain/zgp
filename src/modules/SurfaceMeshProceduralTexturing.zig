@@ -20,6 +20,7 @@ const Texture2D = @import("../rendering/Texture2D");
 const Shader = @import("../rendering/Shader.zig");
 
 const vec = @import("../geometry/vec.zig");
+const Vec2f = vec.Vec2f;
 const Vec3f = vec.Vec3f;
 const Vec3d = vec.Vec3d;
 const mat = @import("../geometry/mat.zig");
@@ -32,16 +33,16 @@ const SSBO = @import("../rendering/SSBO.zig");
 const TnBData = struct {
     surface_mesh: *SurfaceMesh,
     vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
-    vertex_normal: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
     exemplar_texture_path: [128]u8 = std.mem.zeroes([128]u8),
     scaling_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
     rotation_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    rotation_3D_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     texture_initialized: bool = false,
-    position_vbo: VBO = undefined,
-    normal_vbo: VBO = undefined,
+    position_vbo: ?VBO = null,
+    normal_vbo: ?VBO = null,
     cellset_selection_visualized: ?*SurfaceMesh.CellSet = null,
     draw_texture: bool = true,
     initialized: bool = false,
@@ -65,6 +66,7 @@ const TnBData = struct {
             tbd.surface_mesh.removeData(.vertex, SurfaceMesh.Cell, tbd.vertex_ref_edge.?);
             tbd.surface_mesh.removeData(.vertex, Vec3f, tbd.vertex_ref_edge_vec.?);
             tbd.initialized = false;
+
             tbd.procedural_texturing_parameters.deinit();
         }
     }
@@ -117,6 +119,7 @@ pub fn deinit(smpt: *SurfaceMeshProceduralTexturing) void {
         var d = entry.value_ptr.*;
         d.deinit();
     }
+
     smpt.surface_meshes_data.deinit(smpt.app_ctx.allocator);
 }
 
@@ -171,21 +174,41 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
     const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
     const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
     if (!tnb_data.initialized or celltype != .vertex) return;
-    if (tnb_data.scaling_fieldData) |scaling_field| {
-        if (scaling_field.gen() == data) {
-            const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, scaling_field);
-            tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scaling_field, field_vbo, 0, 0);
+    if (tnb_data.rotation_fieldData) |rotation_field| {
+        if (rotation_field.gen() == data) {
+
+            // Update 3D rotation field
+            smpt.compute3DRotationFieldFromScalarField(sm);
             smpt.app_ctx.requestRedraw();
             return;
         }
     }
-    if (tnb_data.rotation_fieldData) |rotation_field| {
-        if (rotation_field.gen() == data) {
-            const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, rotation_field);
-            tnb_data.procedural_texturing_parameters.setVertexAttribArray(.rotation_field, field_vbo, 0, 0);
-            smpt.app_ctx.requestRedraw();
-            return;
-        }
+}
+
+pub fn compute3DRotationFieldFromScalarField(smpt: SurfaceMeshProceduralTexturing, sm: *SurfaceMesh) void {
+    var cell_it = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
+    const tnb_data = smpt.surface_meshes_data.getPtr(sm).?;
+    const info = smpt.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
+    while (cell_it.next()) |cell| {
+        const edgeRef = tnb_data.vertex_ref_edge_vec.?.value(cell);
+
+        const T = vec.normalized3f(tnb_data.vertex_ref_edge_vec.?.value(cell));
+        const t = vec.dot3f(edgeRef, T);
+        const B = vec.normalized3f(vec.cross3f(T, info.std_datas.vertex_normal.?.value(cell)));
+        const b = vec.dot3f(edgeRef, B);
+
+        const theta = tnb_data.rotation_fieldData.?.value(cell);
+
+        const R: Mat2f = .{ .{ @cos(theta), -@sin(theta) }, .{ @sin(theta), @cos(theta) } };
+
+        var v: Vec2f = .{ t, b };
+        v = mat.mulVec2f(R, v);
+
+        const t_rot = v[0];
+        const b_rot = v[1];
+        const value: Vec3f = vec.add3f(vec.mulScalar3f(T, t_rot), vec.mulScalar3f(B, b_rot));
+        tnb_data.rotation_3D_fieldData.?.valuePtr(cell).* = vec.normalized3f(value);
+        smpt.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, tnb_data.rotation_3D_fieldData.?);
     }
 }
 
@@ -326,9 +349,9 @@ pub fn rightPanel(m: *Module) void {
 
         // We assign VBOs stored in module before parameters init
         tnb_data.procedural_texturing_parameters.vertices_position_vbo = tnb_data.position_vbo;
-        tnb_data.procedural_texturing_parameters.setVertexAttribArray(.position, tnb_data.position_vbo, 0, 0);
+        tnb_data.procedural_texturing_parameters.setVertexAttribArray(.position, tnb_data.position_vbo.?, 0, 0);
         smpt.setSurfaceMeshVectorData(sm, .{ .surface_mesh = sm, .data = tnb_data.vertex_ref_edge_vec.?.data });
-        tnb_data.procedural_texturing_parameters.vertices_normal_vbo = tnb_data.normal_vbo;
+        tnb_data.procedural_texturing_parameters.vertices_normal_vbo = tnb_data.normal_vbo.?;
     }
     if (disabled) {
         c.ImGui_EndDisabled();
@@ -338,8 +361,8 @@ pub fn rightPanel(m: *Module) void {
             smpt.app_ctx.requestRedraw();
 
         if (c.ImGui_ButtonEx("Reload shader", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            var buf_vs_source: [40960]u8 = undefined;
-            var buf_fs_source: [40960]u8 = undefined;
+            var buf_vs_source: [16384]u8 = undefined;
+            var buf_fs_source: [16384]u8 = undefined;
             const vs_source = loadShaderSource(smpt.app_ctx.io, "src/rendering/shaders/procedural_texturing/vs.glsl", &buf_vs_source) catch unreachable;
             const fs_source = loadShaderSource(smpt.app_ctx.io, "src/rendering/shaders/procedural_texturing/fs.glsl", &buf_fs_source) catch unreachable;
 
@@ -350,7 +373,7 @@ pub fn rightPanel(m: *Module) void {
 
         c.ImGui_Text("Scale length texture coordinates");
         c.ImGui_PushID("Scale length texture coordinates");
-        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
+        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 5))
             smpt.app_ctx.requestRedraw();
         c.ImGui_PopID();
 
@@ -438,6 +461,7 @@ pub fn rightPanel(m: *Module) void {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.rotation_fieldData = null;
+                    tnb_data.rotation_3D_fieldData = null;
                     tnb_data.procedural_texturing_parameters.vertices_rotation_vbo = null;
                     tnb_data.procedural_texturing_parameters.unsetVertexAttribArray(.rotation_field);
                     smpt.app_ctx.requestRedraw();
@@ -446,6 +470,8 @@ pub fn rightPanel(m: *Module) void {
                     tnb_data.rotation_fieldData = field;
                     if (tnb_data.rotation_fieldData) |rotation_field| {
                         const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, rotation_field);
+                        tnb_data.rotation_3D_fieldData = tnb_data.surface_mesh.getOrAddData(.vertex, Vec3f, "3D_rotation_field") catch unreachable;
+                        smpt.compute3DRotationFieldFromScalarField(sm);
                         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.rotation_field, field_vbo, 0, 0);
                         tnb_data.procedural_texturing_parameters.vertices_rotation_vbo = field_vbo;
                         smpt.app_ctx.requestRedraw();

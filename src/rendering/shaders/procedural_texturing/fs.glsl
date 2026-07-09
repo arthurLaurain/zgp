@@ -204,22 +204,24 @@ void main() {
   vec2 u2;
   vec2 u3;
 
-  
+  float scale_tex_coords = max(0.1,u_scale_tex_coords);
+  float scale = max(0.1,scaling_field);
+
   if(u_tiles_transform_per_vertex)
   {
     mat2 ro1 = rotate(rotation_value[id_vertices.x]);
     mat2 ro2 = rotate(rotation_value[id_vertices.y]);
     mat2 ro3 = rotate(rotation_value[id_vertices.z]);
-    u1 = ro1 * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * u_scale_tex_coords * scaling_value[id_vertices.x];
-    u2 = ro2 * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * u_scale_tex_coords * scaling_value[id_vertices.y];
-    u3 = ro3 * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * u_scale_tex_coords * scaling_value[id_vertices.z];
+    u1 = ro1 * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * scaling_value[id_vertices.x] * scale_tex_coords;
+    u2 = ro2 * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * scaling_value[id_vertices.y] * scale_tex_coords;
+    u3 = ro3 * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * scaling_value[id_vertices.z] * scale_tex_coords;
   }
   else
   {
     mat2 rotation_transform = rotate(rotation_field);
-    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * u_scale_tex_coords * scaling_field * 50.;
-    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * u_scale_tex_coords * scaling_field * 50.;
-    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * u_scale_tex_coords * scaling_field * 50.;
+    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * scale_tex_coords * scale;
+    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * scale_tex_coords * scale;
+    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * scale_tex_coords * scale;
   }
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 

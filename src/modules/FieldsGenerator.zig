@@ -117,17 +117,17 @@ fn exponential_decay(x: f32, p: FieldOperationParam) f32 {
 }
 
 /// Part of the Module interface.
-/// Create and store a TnBData for the created SurfaceMesh.
+/// Create and store a FieldGeneratorData for the created SurfaceMesh.
 pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
     fg.surface_meshes_data.put(fg.app_ctx.allocator, surface_mesh, FieldGeneratorData.init()) catch |err| {
-        std.debug.print("Failed to store TnBData for new SurfaceMesh: {}\n", .{err});
+        std.debug.print("Failed to store FieldGeneratorData for new SurfaceMesh: {}\n", .{err});
         return;
     };
 }
 
 /// Part of the Module interface.
-/// Remove the TnBData associated to the destroyed SurfaceMesh.
+/// Remove the FieldGeneratorData associated to the destroyed SurfaceMesh.
 pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
     const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
     const p = fg.surface_meshes_data.getPtr(surface_mesh) orelse return;

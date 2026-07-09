@@ -653,6 +653,7 @@ pub fn main(init: std.process.Init) !u8 {
 
     const io = init.io;
     const allocator = init.gpa;
+    // const allocator = std.heap.c_allocator;
 
     app_ctx = try .init(io, allocator);
     app_ctx.wireUp();
