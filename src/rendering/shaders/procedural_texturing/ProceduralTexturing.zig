@@ -50,11 +50,15 @@ min_max_energy_uniform: c_int = undefined,
 light_position_uniform: c_int = undefined,
 id_exemplar_texture: c_int = undefined,
 exemplar_texture_uniform: c_int = undefined,
+exemplar_texture_priority_uniform: c_int = undefined,
+exemplar_texture_normal_uniform: c_int = undefined,
+exemplar_texture_roughness_uniform: c_int = undefined,
 scale_tex_coords_uniform: c_int = undefined,
 visu_arap_energy_uniform: c_int = undefined,
 compense_distorsions_uniform: c_int = undefined,
 distorsions_computed_uniform: c_int = undefined,
 tiles_transform_per_vertex_uniform: c_int = undefined,
+micro_priority_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 scaling_field_attrib: VAO.VertexAttribInfo = undefined,
@@ -94,11 +98,15 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.min_max_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_minmax_energy");
     pt.light_position_uniform = gl.GetUniformLocation(pt.program.index, "u_light_position");
     pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture");
+    pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture_priority");
+    pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture_normal");
+    pt.exemplar_texture_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture_roughness");
     pt.scale_tex_coords_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_tex_coords");
     pt.visu_arap_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_arap_energy");
     pt.compense_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_compense_distorsions");
     pt.distorsions_computed_uniform = gl.GetUniformLocation(pt.program.index, "u_distorsions_computed");
     pt.tiles_transform_per_vertex_uniform = gl.GetUniformLocation(pt.program.index, "u_tiles_transform_per_vertex");
+    pt.micro_priority_uniform = gl.GetUniformLocation(pt.program.index, "u_micro_priority");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -136,6 +144,9 @@ pub const Parameters = struct {
     shader: *ProceduralTexturing,
     vao: VAO,
     exemplar_texture: TEXTURE2D,
+    exemplar_texture_priority: TEXTURE2D,
+    exemplar_texture_normal: TEXTURE2D,
+    exemplar_texture_roughness: TEXTURE2D,
     view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
@@ -159,12 +170,31 @@ pub const Parameters = struct {
     minmax_energy: Vec2f = .{ 0, 0 },
     distorsions_computed: bool = false,
     tiles_transform_per_vertex: bool = false,
+    mixmax_micro_priority: f32 = 0.02,
 
     pub fn init() Parameters {
         return .{
             .shader = instance(),
             .vao = VAO.init(),
             .exemplar_texture = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
+                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
+                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
+            }),
+            .exemplar_texture_priority = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
+                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
+                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
+            }),
+            .exemplar_texture_normal = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
+                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
+                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
+            }),
+            .exemplar_texture_roughness = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
                 .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
                 .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
                 .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
@@ -192,6 +222,9 @@ pub const Parameters = struct {
         p.ssbo_scaling_tile.deinit();
         p.ssbo_rotation_tile.deinit();
         p.exemplar_texture.deinit();
+        p.exemplar_texture_normal.deinit();
+        p.exemplar_texture_priority.deinit();
+        p.exemplar_texture_roughness.deinit();
         p.shader.deinit();
         p.edge_ref_vbo.deinit();
     }
@@ -395,6 +428,14 @@ pub const Parameters = struct {
         defer gl.UseProgram(0);
         gl.ActiveTexture(gl.TEXTURE0);
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
+        gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
+        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_priority.index);
+        gl.Uniform1i(p.shader.exemplar_texture_priority_uniform, 0);
+        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_normal.index);
+        gl.Uniform1i(p.shader.exemplar_texture_normal_uniform, 0);
+        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_roughness.index);
+        gl.Uniform1i(p.shader.exemplar_texture_roughness_uniform, 0);
+        defer gl.BindTexture(gl.TEXTURE_2D, 0);
         p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
         p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.?.index);
         p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
@@ -413,9 +454,6 @@ pub const Parameters = struct {
             p.ssbo_rotation_tile.bindBufferToShader(7, 0);
         }
 
-        gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
-        defer gl.BindTexture(gl.TEXTURE_2D, 0);
-
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform2fv(p.shader.min_max_energy_uniform, 1, @ptrCast(&p.minmax_energy));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
@@ -426,6 +464,7 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.compense_distorsions_uniform, @intFromBool(p.compense_distorsions));
         gl.Uniform1i(p.shader.distorsions_computed_uniform, @intFromBool(p.distorsions_computed));
         gl.Uniform1i(p.shader.tiles_transform_per_vertex_uniform, @intFromBool(p.tiles_transform_per_vertex));
+        gl.Uniform1f(p.shader.micro_priority_uniform, p.mixmax_micro_priority);
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);

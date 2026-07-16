@@ -36,7 +36,6 @@ const TnBData = struct {
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
-    exemplar_texture_path: [128]u8 = std.mem.zeroes([128]u8),
     scaling_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
     rotation_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
     rotation_3D_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
@@ -46,11 +45,12 @@ const TnBData = struct {
     cellset_selection_visualized: ?*SurfaceMesh.CellSet = null,
     draw_texture: bool = true,
     initialized: bool = false,
+    exemplar_texture_path: [128]u8 = std.mem.zeroes([128]u8),
 
     pub fn init(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
-        const s = "gravel";
+        const s = "rock";
         std.mem.copyBackwards(u8, tbd.exemplar_texture_path[0..s.len], s); // default value to speed up debug
         if (!tbd.initialized) {
             tbd.vertex_ref_edge = try tbd.surface_mesh.getOrAddData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
@@ -400,16 +400,32 @@ pub fn rightPanel(m: *Module) void {
 
             const nul_index = std.mem.indexOfScalar(u8, tnb_data.exemplar_texture_path[0..], 0).?;
             var path_buffer: [128]u8 = undefined;
-            const path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
-
+            var path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
             tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path) catch {}; // loadFromFile method already print error
+            path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}_p.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
+            tnb_data.procedural_texturing_parameters.exemplar_texture_priority.loadFromFile(path) catch {};
+            path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}_n.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
+            tnb_data.procedural_texturing_parameters.exemplar_texture_normal.loadFromFile(path) catch {};
+            path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}_r.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
+            tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.loadFromFile(path) catch {};
+
             smpt.app_ctx.requestRedraw();
         }
         if (tnb_data.texture_initialized) {
             c.ImGui_Text("Exemplar texture: ");
             const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
             c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+            c.ImGui_Text("Exemplar priority texture: ");
+            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_priority.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+            c.ImGui_Text("Exemplar normal texture: ");
+            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_normal.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+            c.ImGui_Text("Exemplar roughness texture: ");
+            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
+            c.ImGui_Text("Mixmax micro priority");
+            if (c.ImGui_SliderFloat("Mixmax micro priority", &tnb_data.procedural_texturing_parameters.mixmax_micro_priority, 0, 0.5)) {
+                smpt.app_ctx.requestRedraw();
+            }
             c.ImGui_Text("Visualize cellset");
             c.ImGui_PushID("Visualize cellset");
             switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, tnb_data.cellset_selection_visualized)) {

@@ -3,7 +3,6 @@
 
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
-uniform sampler2D u_exemplar_texture;
 uniform mat4 u_view_matrix;
 uniform float u_scale_tex_coords;
 uniform float u_scale_distorsion;
@@ -12,6 +11,11 @@ uniform bool u_compense_distorsions;
 uniform vec2 u_minmax_energy;
 uniform bool u_distorsions_computed;
 uniform bool u_tiles_transform_per_vertex;
+uniform sampler2D u_exemplar_texture;
+uniform sampler2D u_exemplar_texture_priority;
+uniform sampler2D u_exemplar_texture_normal;
+uniform sampler2D u_exemplar_texture_roughness;
+uniform float u_micro_priority;
 
 in vec3 frag_position;
 in vec3 edge_ref;
@@ -68,16 +72,92 @@ layout(std430, binding = 7) readonly buffer ssbo_rotation_value
   float rotation_value[];
 };
 
-vec2 getTexCoord(vec3 P, vec3 A, vec3 B, vec3 C)
+
+struct gaussian_distribution {
+	float mean;
+	float variance;
+};
+
+// Rough but good enough approximation for the CDF of a centered and normalized Gaussian distribution
+float CDF(float x) {
+	return 0.5 + 0.5 * tanh(0.85 * x);
+}
+
+float PDF(float x) {
+	return exp(-(x * x * 0.5)) / sqrt(2.0 * PI);
+}
+
+//See equation (13) in the paper.
+float proba_a_over_b(gaussian_distribution A, gaussian_distribution B) {
+	float w = max(sqrt(A.variance + B.variance), 0.001);
+
+	return 1.0 - CDF((A.mean - B.mean) / w); 
+}
+
+
+//See equation (15) and (16) in the paper.
+gaussian_distribution distribution_max_ab(gaussian_distribution A, gaussian_distribution B) {
+	gaussian_distribution G;
+	
+	float w = max(sqrt(A.variance + B.variance), 0.001);
+	G.mean = A.mean * CDF((A.mean - B.mean) / w)
+	         + B.mean * CDF((B.mean - A.mean) / w)
+	         + w * PDF((A.mean - B.mean) / w);
+	
+	G.variance = (A.variance + A.mean * A.mean) * CDF((A.mean - B.mean) / w)
+	        + (B.variance + B.mean * B.mean) * CDF((B.mean - A.mean) / w)
+	        + (A.mean + B.mean) * w * PDF((A.mean - B.mean) / w)
+	        - (G.mean * G.mean);
+	return G;
+}
+
+// Merci Romain <3
+struct mixmaxdata {
+	vec3 color; // Mean value of the texture over the footprint
+	gaussian_distribution priorities; // Gaussian distribution of the priorities over the footprint   
+	vec3 normal;
+	float roughness;
+};
+
+mixmaxdata make_mixmaxdata(vec2 uv, sampler2D color, sampler2D priority, sampler2D normal, sampler2D roughness, float base) {
+	float B = texture(priority, uv).r; //mean of the priorities
+	float M = texture(priority, uv).g; //mean of the priorities squared (see LEAN-mapping)
+	
+	mixmaxdata m;
+	m.color = texture(color, uv).rgb;
+	m.normal = texture(normal, uv).rgb;
+	m.roughness = texture(roughness, uv).r;
+	m.priorities.mean = B;
+	m.priorities.variance = M - B * B + base;
+	return m;
+}
+
+void bias(inout mixmaxdata M, float v) {
+	M.priorities.mean += v;
+}
+
+mixmaxdata compute_mixmax(mixmaxdata A, mixmaxdata B)
 {
-  vec3 N = normalize(cross(B - A, C - A));
-  vec3 T = normalize(B - A);
-  vec3 BT = cross(N,T);
+  mixmaxdata result;
+	float t = proba_a_over_b(A.priorities, B.priorities);
+	result.color = mix(A.color, B.color, t);
+	result.normal = mix(A.normal, B.normal, t);
+	result.roughness = mix(A.roughness, B.roughness, t);
+	result.priorities = distribution_max_ab(A.priorities, B.priorities);
+	return result;
+}
 
-  vec3 AP = P - A;
+mixmaxdata mixMax(vec2 uvA, vec2 uvB, vec2 uvC, vec3 bary, sampler2D albedo, sampler2D priority, sampler2D normal, sampler2D roughness, float micro_priority)
+{
+  mixmaxdata A = make_mixmaxdata(uvA, albedo, priority, normal, roughness, micro_priority);
+	mixmaxdata B = make_mixmaxdata(uvB, albedo, priority, normal, roughness, micro_priority);
+  mixmaxdata C = make_mixmaxdata(uvC, albedo, priority, normal, roughness, micro_priority);
+	
+	bias(A, bary.x);
+	bias(B, bary.y);
+  bias(C, bary.z);
 
-  return vec2(dot(AP,T), dot(AP,BT));
-  
+  return compute_mixmax(compute_mixmax(A,B), C);
 }
 
 vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N, vec3 v)
@@ -237,19 +317,24 @@ void main() {
   float w2 = bary.y;
   float w3 = bary.z;
 
+  vec2 uv1 = u1 + r1;
+  vec2 uv2 = u2 + r2;
+  vec2 uv3 = u3 + r3;
+
+
   SSBO_distorsion distorsion;
   if(u_compense_distorsions && u_distorsions_computed)
   {
     distorsion = distorsions[id_triangle];
-    c1 = texture(u_exemplar_texture, distorsion.S[0] * u1.xy + r1).xyz;
-    c2 = texture(u_exemplar_texture, distorsion.S[1] * u2.xy + r2).xyz;
-    c3 = texture(u_exemplar_texture, distorsion.S[2] * u3.xy + r3).xyz;
+    c1 = texture(u_exemplar_texture, distorsion.S[0] * uv1).xyz;
+    c2 = texture(u_exemplar_texture, distorsion.S[1] * uv2).xyz;
+    c3 = texture(u_exemplar_texture, distorsion.S[2] * uv3).xyz;
   }
   else
   {
-    c1 = texture(u_exemplar_texture, u1.xy + r1).xyz;
-    c2 = texture(u_exemplar_texture, u2.xy + r2).xyz;
-    c3 = texture(u_exemplar_texture, u3.xy + r3).xyz;
+    c1 = texture(u_exemplar_texture, uv1).xyz;
+    c2 = texture(u_exemplar_texture, uv2).xyz;
+    c3 = texture(u_exemplar_texture, uv3).xyz;
   }
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
@@ -263,6 +348,7 @@ void main() {
   else
     f_color = vec4(result);
 
-  
-  f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
+  mixmaxdata M = mixMax(uv1,uv2,uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+
+  f_color = u_micro_priority *f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
 }
