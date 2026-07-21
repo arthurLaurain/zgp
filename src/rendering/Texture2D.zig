@@ -37,7 +37,7 @@ pub fn loadFromFile(t: *Texture2D, filename: [:0]const u8) !void {
 
     t.width = tex_image.width;
     t.height = tex_image.height;
-    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, @intCast(tex_image.width), @intCast(tex_image.height), 0, gl.RGB, gl.UNSIGNED_BYTE, @ptrCast(tex_image.data));
+    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, @intCast(tex_image.width), @intCast(tex_image.height), 0, gl.RGB, gl.UNSIGNED_SHORT, @ptrCast(tex_image.data));
     gl.GenerateMipmap(gl.TEXTURE_2D);
 }
 

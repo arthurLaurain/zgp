@@ -350,5 +350,5 @@ void main() {
 
   mixmaxdata M = mixMax(uv1,uv2,uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
 
-  f_color = u_micro_priority *f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
+  f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
 }

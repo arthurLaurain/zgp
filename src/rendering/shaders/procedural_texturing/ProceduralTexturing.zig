@@ -429,10 +429,13 @@ pub const Parameters = struct {
         gl.ActiveTexture(gl.TEXTURE0);
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
-        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_priority.index);
-        gl.Uniform1i(p.shader.exemplar_texture_priority_uniform, 0);
+        gl.ActiveTexture(gl.TEXTURE1);
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_normal.index);
         gl.Uniform1i(p.shader.exemplar_texture_normal_uniform, 0);
+        gl.ActiveTexture(gl.TEXTURE2);
+        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_priority.index);
+        gl.Uniform1i(p.shader.exemplar_texture_priority_uniform, 0);
+        gl.ActiveTexture(gl.TEXTURE3);
         gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_roughness.index);
         gl.Uniform1i(p.shader.exemplar_texture_roughness_uniform, 0);
         defer gl.BindTexture(gl.TEXTURE_2D, 0);

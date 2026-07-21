@@ -45,13 +45,15 @@ const TnBData = struct {
     cellset_selection_visualized: ?*SurfaceMesh.CellSet = null,
     draw_texture: bool = true,
     initialized: bool = false,
-    exemplar_texture_path: [128]u8 = std.mem.zeroes([128]u8),
+    exemplar_texture_path: [128]u8 = undefined,
 
     pub fn init(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
+
         const s = "rock";
-        std.mem.copyBackwards(u8, tbd.exemplar_texture_path[0..s.len], s); // default value to speed up debug
+        @memcpy(tbd.exemplar_texture_path[0..s.len], s);
+
         if (!tbd.initialized) {
             tbd.vertex_ref_edge = try tbd.surface_mesh.getOrAddData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
             tbd.vertex_ref_edge_vec = try tbd.surface_mesh.getOrAddData(.vertex, Vec3f, "vertex_ref_edge_vec");
@@ -373,7 +375,7 @@ pub fn rightPanel(m: *Module) void {
 
         c.ImGui_Text("Scale length texture coordinates");
         c.ImGui_PushID("Scale length texture coordinates");
-        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 5))
+        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
             smpt.app_ctx.requestRedraw();
         c.ImGui_PopID();
 
@@ -393,20 +395,21 @@ pub fn rightPanel(m: *Module) void {
 
         c.ImGui_Text("Exemplar texture path");
         c.ImGui_PushID("Exemplar texture path");
-        _ = c.ImGui_InputText("", &tnb_data.exemplar_texture_path[0], @sizeOf([128]u8), 0);
+        _ = c.ImGui_InputText("", &tnb_data.exemplar_texture_path, @sizeOf([128]u8), 0);
         c.ImGui_PopID();
         if (c.ImGui_Button("Init texture")) {
             tnb_data.texture_initialized = true;
 
-            const nul_index = std.mem.indexOfScalar(u8, tnb_data.exemplar_texture_path[0..], 0).?;
             var path_buffer: [128]u8 = undefined;
-            var path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
+            const path_str = std.mem.sliceTo(&tnb_data.exemplar_texture_path, 0);
+
+            var path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}.png", .{path_str}, 0) catch unreachable;
             tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path) catch {}; // loadFromFile method already print error
-            path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}_p.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
+            path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.png", .{path_str}, 0) catch unreachable;
             tnb_data.procedural_texturing_parameters.exemplar_texture_priority.loadFromFile(path) catch {};
-            path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}_n.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
+            path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_n.png", .{path_str}, 0) catch unreachable;
             tnb_data.procedural_texturing_parameters.exemplar_texture_normal.loadFromFile(path) catch {};
-            path = std.fmt.bufPrintZ(&path_buffer, "src/utils/textures/{s}_r.png", .{tnb_data.exemplar_texture_path[0..nul_index]}) catch unreachable;
+            path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_r.png", .{path_str}, 0) catch unreachable;
             tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.loadFromFile(path) catch {};
 
             smpt.app_ctx.requestRedraw();
