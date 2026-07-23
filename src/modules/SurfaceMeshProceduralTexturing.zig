@@ -404,19 +404,19 @@ pub fn rightPanel(m: *Module) void {
             const path_str = std.mem.sliceTo(&tnb_data.exemplar_texture_path, 0);
 
             var path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}.png", .{path_str}, 0) catch unreachable;
-            tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path) catch {}; // loadFromFile method already print error
-            path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.png", .{path_str}, 0) catch unreachable;
-            tnb_data.procedural_texturing_parameters.exemplar_texture_priority.loadFromFile(path) catch {};
+            tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path, smpt.app_ctx.allocator); // loadFromFile method already print error
+            path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.exr", .{path_str}, 0) catch unreachable;
+            tnb_data.procedural_texturing_parameters.exemplar_texture_priority.loadFromFile(path, smpt.app_ctx.allocator);
             path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_n.png", .{path_str}, 0) catch unreachable;
-            tnb_data.procedural_texturing_parameters.exemplar_texture_normal.loadFromFile(path) catch {};
+            tnb_data.procedural_texturing_parameters.exemplar_texture_normal.loadFromFile(path, smpt.app_ctx.allocator);
             path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_r.png", .{path_str}, 0) catch unreachable;
-            tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.loadFromFile(path) catch {};
+            tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.loadFromFile(path, smpt.app_ctx.allocator);
 
             smpt.app_ctx.requestRedraw();
         }
         if (tnb_data.texture_initialized) {
             c.ImGui_Text("Exemplar texture: ");
-            const ratio: f32 = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
+            const ratio = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
             c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
             c.ImGui_Text("Exemplar priority texture: ");
             c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_priority.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });

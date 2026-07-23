@@ -131,6 +131,16 @@ pub fn build(b: *std.Build) void {
     const zstbi = b.dependency("zstbi", .{});
     exe.root_module.addImport("zstbi", zstbi.module("root"));
 
+    // TINYEXR
+    const tinyexr_dep = b.dependency("tinyexr", .{
+        .target = target,
+        .optimize = optimize,
+        // .lto = lto,
+    });
+    const tinyexr_lib = tinyexr_dep.artifact("tinyexr");
+    addIncludePathsToTranslateC(translate_c, tinyexr_lib);
+    c_mod.linkLibrary(tinyexr_lib);
+
     b.installArtifact(exe);
 
     // RUN CMD

@@ -3,7 +3,7 @@ const Texture2D = @This();
 const std = @import("std");
 const zstbi = @import("zstbi");
 const gl = @import("gl");
-
+const Reader = @import("../utils/reader.zig");
 index: c_uint = 0,
 width: u32 = 0,
 height: u32 = 0,
@@ -24,20 +24,48 @@ pub fn init(parameters: []const Parameter) Texture2D {
     return t;
 }
 
-pub fn loadFromFile(t: *Texture2D, filename: [:0]const u8) !void {
-    var tex_image = zstbi.Image.loadFromFile(filename, 3) catch |err|
-        {
-            std.debug.print("Failed to load texture: {s}\n", .{filename});
-            return err;
-        };
-    defer tex_image.deinit();
-
+pub fn loadFromFile(t: *Texture2D, filename: [:0]u8, allocator: std.mem.Allocator) void {
+    const tex_image = Reader.loadFile(filename, allocator) catch unreachable;
     gl.BindTexture(gl.TEXTURE_2D, t.index);
     defer gl.BindTexture(gl.TEXTURE_2D, 0);
+    switch (tex_image) {
+        .png => |img| {
+            t.width = img.width;
+            t.height = img.height;
+            gl.TexImage2D(
+                gl.TEXTURE_2D,
+                0,
+                gl.RGB,
+                @intCast(img.width),
+                @intCast(img.height),
+                0,
+                gl.RGB,
+                gl.UNSIGNED_SHORT,
+                @ptrCast(img.data.ptr),
+            );
 
-    t.width = tex_image.width;
-    t.height = tex_image.height;
-    gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB, @intCast(tex_image.width), @intCast(tex_image.height), 0, gl.RGB, gl.UNSIGNED_SHORT, @ptrCast(tex_image.data));
+            allocator.free(img.data);
+        },
+
+        .exr => |img| {
+            t.width = img.width;
+            t.height = img.height;
+
+            gl.TexImage2D(
+                gl.TEXTURE_2D,
+                0,
+                gl.RGBA32F,
+                @intCast(img.width),
+                @intCast(img.height),
+                0,
+                gl.RGBA,
+                gl.FLOAT,
+                @ptrCast(img.data.ptr),
+            );
+            allocator.free(img.data);
+        },
+    }
+
     gl.GenerateMipmap(gl.TEXTURE_2D);
 }
 

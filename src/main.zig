@@ -674,6 +674,7 @@ pub fn main(init: std.process.Init) !u8 {
     };
 
     zstbi.init(io, allocator);
+    defer zstbi.deinit();
 
     const status: u8 = @truncate(@as(c_uint, @bitCast(c.SDL_RunApp(@intCast(empty_argv.len), @ptrCast(&empty_argv), sdlMainC, null))));
     return app_err.load() orelse status;

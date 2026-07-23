@@ -1,0 +1,17 @@
+.{
+    .name = .tinyexr,
+    .version = "0.0.0",
+    .fingerprint = 0x8d74b9cb3dfb0777, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "include",
+        "lib",
+        // For example...
+        //"LICENSE",
+        //"README.md",
+    },
+}

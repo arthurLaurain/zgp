@@ -25,6 +25,9 @@
         .predicates = .{
             .path = "src/thirdparty/predicates",
         },
+        .tinyexr = .{
+            .path = "src/thirdparty/tinyexr",
+        },
         .zstbi = .{
             .url = "git+https://github.com/zig-gamedev/zstbi#3813f5f113b26f644cfa01a30155cc76b3526e91",
             .hash = "zstbi-0.11.0-dev-L0Ea_3GWBwAh7m54XX055vwLKPTPij5hyqyeq92MXPE2",
