@@ -377,7 +377,7 @@ pub fn rightPanel(m: *Module) void {
 
         c.ImGui_Text("Scale length texture coordinates");
         c.ImGui_PushID("Scale length texture coordinates");
-        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 500))
+        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
             smpt.app_ctx.requestRedraw();
         c.ImGui_PopID();
 

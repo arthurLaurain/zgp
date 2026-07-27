@@ -498,7 +498,7 @@ pub fn rightPanel(m: *Module) void {
         }
 
         c.ImGui_SeparatorText("Fields operations parameters");
-        if (fg.field_edited) |field| {
+        if (fg.field_edited) |_| {
             _ = c.ImGui_SliderFloat(" Value increment", &fg.value_increment, 0, 10);
             switch (fg.op) {
                 exponential_decay => {
@@ -507,12 +507,12 @@ pub fn rightPanel(m: *Module) void {
                 else => {},
             }
 
-            _ = c.ImGui_SliderInt("K-neighborhood", &fg.k_neighborhood, 1, 5);
-            if (c.ImGui_Button("Smooth Field")) {
-                smoothField(field, sm, @intCast(fg.k_neighborhood)) catch unreachable;
-                fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, field);
-                fg.app_ctx.requestRedraw();
-            }
+            // _ = c.ImGui_SliderInt("K-neighborhood", &fg.k_neighborhood, 1, 5);
+            // if (c.ImGui_Button("Smooth Field")) {
+            //     smoothField(field, sm, @intCast(fg.k_neighborhood)) catch unreachable;
+            //     fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, field);
+            //     fg.app_ctx.requestRedraw();
+            // }
         }
     }
 }
