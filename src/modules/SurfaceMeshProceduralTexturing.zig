@@ -30,6 +30,8 @@ const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
 const SSBO = @import("../rendering/SSBO.zig");
 
+pub const BlendingMode = enum { LINEAR, MIXMAX };
+
 const TnBData = struct {
     surface_mesh: *SurfaceMesh,
     vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
@@ -375,7 +377,7 @@ pub fn rightPanel(m: *Module) void {
 
         c.ImGui_Text("Scale length texture coordinates");
         c.ImGui_PushID("Scale length texture coordinates");
-        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
+        if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 500))
             smpt.app_ctx.requestRedraw();
         c.ImGui_PopID();
 
@@ -414,20 +416,40 @@ pub fn rightPanel(m: *Module) void {
 
             smpt.app_ctx.requestRedraw();
         }
+
         if (tnb_data.texture_initialized) {
+            c.ImGui_Text("Blending mode");
+            c.ImGui_PushID("Blending mode");
+            if (c.ImGui_BeginCombo("Blending", @tagName(tnb_data.procedural_texturing_parameters.blending_mode), 0)) {
+                inline for (std.meta.fields(BlendingMode)) |f| {
+                    const mode = @field(BlendingMode, f.name);
+                    const is_selected = tnb_data.procedural_texturing_parameters.blending_mode == mode;
+
+                    if (c.ImGui_SelectableEx(f.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                        tnb_data.procedural_texturing_parameters.blending_mode = mode;
+                        smpt.app_ctx.requestRedraw();
+                    }
+                }
+                c.ImGui_EndCombo();
+            }
+            c.ImGui_PopID();
+
             c.ImGui_Text("Exemplar texture: ");
             const ratio = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
             c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
-            c.ImGui_Text("Exemplar priority texture: ");
-            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_priority.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
-            c.ImGui_Text("Exemplar normal texture: ");
-            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_normal.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
-            c.ImGui_Text("Exemplar roughness texture: ");
-            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
-            c.ImGui_Text("Mixmax micro priority");
-            if (c.ImGui_SliderFloat("Mixmax micro priority", &tnb_data.procedural_texturing_parameters.mixmax_micro_priority, 0, 0.5)) {
-                smpt.app_ctx.requestRedraw();
+            if (tnb_data.procedural_texturing_parameters.blending_mode == BlendingMode.MIXMAX) {
+                c.ImGui_Text("Exemplar priority texture: ");
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_priority.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+                c.ImGui_Text("Exemplar normal texture: ");
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_normal.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+                c.ImGui_Text("Exemplar roughness texture: ");
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+
+                c.ImGui_Text("Mixmax micro priority");
+                if (c.ImGui_SliderFloat("Mixmax micro priority", &tnb_data.procedural_texturing_parameters.mixmax_micro_priority, 0, 0.5)) {
+                    smpt.app_ctx.requestRedraw();
+                }
             }
             c.ImGui_Text("Visualize cellset");
             c.ImGui_PushID("Visualize cellset");

@@ -62,6 +62,7 @@ pub fn loadFromFile(t: *Texture2D, filename: [:0]u8, allocator: std.mem.Allocato
                 gl.FLOAT,
                 @ptrCast(img.data.ptr),
             );
+
             allocator.free(img.data);
         },
     }

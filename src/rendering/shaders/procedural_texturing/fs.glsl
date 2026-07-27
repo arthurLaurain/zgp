@@ -16,6 +16,7 @@ uniform sampler2D u_exemplar_texture_priority;
 uniform sampler2D u_exemplar_texture_normal;
 uniform sampler2D u_exemplar_texture_roughness;
 uniform float u_micro_priority;
+uniform int u_blending_mode;
 
 in vec3 frag_position;
 in vec3 edge_ref;
@@ -89,7 +90,7 @@ float PDF(float x) {
 
 //See equation (13) in the paper.
 float proba_a_over_b(gaussian_distribution A, gaussian_distribution B) {
-	float w = max(sqrt(A.variance + B.variance), 0.001);
+	float w = max(sqrt(A.variance + B.variance), 0.0001);
 
 	return 1.0 - CDF((A.mean - B.mean) / w); 
 }
@@ -160,12 +161,18 @@ mixmaxdata mixMax(vec2 uvA, vec2 uvB, vec2 uvC, vec3 bary, sampler2D albedo, sam
   return compute_mixmax(compute_mixmax(A,B), C);
 }
 
+mat3 compute_TBN(vec3 N, vec3 v)
+{
+    vec3 T = normalize(cross(N, vec3(0,1,0)) + v * 0.00001);
+    vec3 B = cross(N, T);
+    return mat3(T, B, N);
+}
+
 vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N, vec3 v)
 {
     vec3 projPoint = P - dot(P - A, N) * N;
 
-    vec3 d = vec3(0,1,0) + 0.0000001 * v;
-    vec3 T = normalize(cross(N, d));
+    vec3 T = normalize(cross(N, vec3(0,1,0)) + v * 0.00001);
     vec3 BT = cross(N, T);
 
     vec3 AP = projPoint - A;
@@ -292,16 +299,16 @@ void main() {
     mat2 ro1 = rotate(rotation_value[id_vertices.x]);
     mat2 ro2 = rotate(rotation_value[id_vertices.y]);
     mat2 ro3 = rotate(rotation_value[id_vertices.z]);
-    u1 = ro1 * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * scaling_value[id_vertices.x] * scale_tex_coords;
-    u2 = ro2 * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * scaling_value[id_vertices.y] * scale_tex_coords;
-    u3 = ro3 * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * scaling_value[id_vertices.z] * scale_tex_coords;
+    u1 = ro1 * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * scaling_value[id_vertices.x] * scale_tex_coords;
+    u2 = ro2 * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * scaling_value[id_vertices.y] * scale_tex_coords;
+    u3 = ro3 * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * scaling_value[id_vertices.z] * scale_tex_coords;
   }
   else
   {
     mat2 rotation_transform = rotate(rotation_field);
-    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, n1, edge_ref) * scale_tex_coords * scale;
-    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, n2, edge_ref) * scale_tex_coords * scale;
-    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, n3, edge_ref) * scale_tex_coords * scale;
+    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * scale_tex_coords * scale;
+    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * scale_tex_coords * scale;
+    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * scale_tex_coords * scale;
   }
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 
@@ -348,7 +355,17 @@ void main() {
   else
     f_color = vec4(result);
 
-  mixmaxdata M = mixMax(uv1,uv2,uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
 
-  f_color =  f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
+  if(u_blending_mode == 1)
+  {
+    mixmaxdata M = mixMax(uv1,uv2,uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+
+    // Normal mapping
+    vec3 normal = normalize(M.normal * 2. - 1.);
+    mat3 TBN = compute_TBN(N,edge_ref);
+    vec3 normalWS = normalize(TBN * normal);
+    f_color = vec4(M.color * dot(normalWS, L),1);
+  }
+  f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
+  
 }
