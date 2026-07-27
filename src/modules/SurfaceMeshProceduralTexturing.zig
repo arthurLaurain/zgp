@@ -381,15 +381,16 @@ pub fn rightPanel(m: *Module) void {
             smpt.app_ctx.requestRedraw();
         c.ImGui_PopID();
 
-        c.ImGui_Text("Visualize As-Rigid-As-Possible energy");
-        c.ImGui_PushID("Visualize As-Rigid-As-Possible energy");
-        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_arap_energy)) {
-            smpt.app_ctx.requestRedraw();
-        }
-        c.ImGui_PopID();
+        // TODO: remove arap energy
+        // c.ImGui_Text("Visualize As-Rigid-As-Possible energy");
+        // c.ImGui_PushID("Visualize As-Rigid-As-Possible energy");
+        // if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_arap_energy)) {
+        //     smpt.app_ctx.requestRedraw();
+        // }
+        // c.ImGui_PopID();
 
-        c.ImGui_Text("Compensating distorsions");
-        c.ImGui_PushID("Compensatind distorsions");
+        c.ImGui_Text("Compensate distorsions");
+        c.ImGui_PushID("Compensate distorsions");
         if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compense_distorsions)) {
             smpt.app_ctx.requestRedraw();
         }
@@ -469,9 +470,10 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_PopID();
             c.ImGui_SeparatorText("Field");
 
-            if (c.ImGui_Checkbox("Compute tiles transformations per vertex", &tnb_data.procedural_texturing_parameters.tiles_transform_per_vertex)) {
-                smpt.app_ctx.requestRedraw();
-            }
+            //TODO remove this part
+            // if (c.ImGui_Checkbox("Compute tiles transformations per vertex", &tnb_data.procedural_texturing_parameters.tiles_transform_per_vertex)) {
+            //     smpt.app_ctx.requestRedraw();
+            // }
             c.ImGui_Text("Scalar field:");
             c.ImGui_SameLine();
             c.ImGui_PushID("scaling field");
