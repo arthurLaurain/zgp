@@ -32,7 +32,7 @@ fn raySegmentIntersect(p: Vec2f, dir: Vec2f, a: Vec2f, b: Vec2f) ?struct { f32, 
 /// Trace a geodesic on the surface of the given SurfaceMesh starting from the given SurfacePoint.
 /// The SurfaceMesh is assumed to be triangulated.
 /// The given angle encodes the direction of the geodesic to trace, in the tangent space of the source SurfacePoint
-/// (for vertex SurfacePoints, the angle is denormalized, meaning it is not in [0, 2π) but in [0, angle_sum_at_vertex)).
+/// (the angle is expressed in [0, angle_sum_at_vertex) for vertex SurfacePoints, and in [0, 2π) for edge and face SurfacePoints).
 /// The given length encodes the length of the geodesic to trace.
 /// The SurfacePoints that compose the traced path are stored in the given ArrayList (if a trace pointer is provided).
 /// Returns:
@@ -56,7 +56,7 @@ pub fn traceGeodesic(
     // current SurfacePoint of the trace, updated at each step of the tracing
     var current_sp = src_sp;
     // the tracing direction is determined by the current angle,
-    // expressed in the tangent space of the current SurfacePoint (denormalized for vertex SurfacePoints)
+    // expressed in the tangent space of the current SurfacePoint
     // (the reference Dart being the one representing the underlying Cell of the SurfacePoint)
     var current_angle = angle;
     // the remaining geodesic length to trace

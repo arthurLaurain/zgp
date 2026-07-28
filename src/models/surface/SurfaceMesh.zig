@@ -1418,7 +1418,7 @@ pub fn cutEdge(sm: *SurfaceMesh, edge: Cell) !Cell {
     return .{ .vertex = d1 };
 }
 
-/// Flips the given edge.
+/// Flips the given edge (following the orientation of the faces).
 /// Should only be called after a call to `canFlipEdge`.
 /// TODO: write a more detailed comment
 pub fn flipEdge(sm: *SurfaceMesh, edge: Cell) void {

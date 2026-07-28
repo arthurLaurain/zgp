@@ -34,20 +34,28 @@ const distance = @import("../models/surface/distance.zig");
 const ITData = struct {
     app_ctx: *AppContext,
 
-    // a SurfacePoint on the extrinsic SurfaceMesh can be of vertex, edge or face type
-    // tangent vectors at SurfacePoints are expressed by an angle w.r.t. the Dart that represents the Cell of the SurfacePoint
-    // - for face SurfacePoints, the angle is measured CCW from the direction of the reference Dart of the face ; the value is in [0, 2π) (locally flat)
-    // - for edge SurfacePoints, the angle is measured CCW from the direction of the reference Dart of the edge ; the value is in [0, 2π) (locally flat on the 2D layout of the incident faces)
-    // - for vertex SurfacePoints, the angle is measured CCW from the direction of the reference Dart of the vertex ; the value is in [0, angle_sum_around_vertex)
+    // the extrinsic SurfaceMesh is the triangular mesh on which the intrinsic triangulation is built
+    // it is considered as read-only, and its geometry is not modified by the intrinsic triangulation module
 
-    // TODO: manage boundary vertices (the reference Dart of a boundary vertex might not be on the boundary,
-    // which causes issues if we want to use it as reference for the angles of the halfedges around the vertex)
+    // the intrinsic SurfaceMesh is initialized as a clone of the extrinsic SurfaceMesh
+    // each vertex of the extrinsic SurfaceMesh is associated with a vertex of the intrinsic SurfaceMesh, as the operators of the intrinsic triangulation cannot remove any original vertex
+    // each vertex of the intrinsic SurfaceMesh is associated with a SurfacePoint on the extrinsic SurfaceMesh which can be of vertex, edge or face type
+    // directions of intrinsic halfedges are expressed as angles in the tangent space of the SurfacePoint of the intrinsic halfedge's vertex
+    // tangent vectors at SurfacePoints are expressed by an angle w.r.t. the Dart that represents the Cell of the SurfacePoint
+    // - for face SurfacePoints, the angle is measured CCW from the direction of the representative Dart of the face ; the value is in [0, 2π) (locally flat)
+    // - for edge SurfacePoints, the angle is measured CCW from the direction of the representative Dart of the edge ; the value is in [0, 2π) (locally flat on the 2D layout of the incident faces)
+    // - for vertex SurfacePoints, the angle is measured CCW from the direction of the representative Dart of the vertex ; the value is in [0, angle_sum_around_vertex)
+
+    // TODO: manage boundary vertices (the representative Dart of a boundary vertex might not be on the boundary,
+    // which causes issues if we want to use it as representative for the angles of the halfedges around the vertex)
 
     extrinsic_surface_mesh: *SurfaceMesh = undefined,
     extrinsic_vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
     extrinsic_edge_length: SurfaceMesh.CellData(.edge, f32) = undefined,
     extrinsic_corner_angle: SurfaceMesh.CellData(.corner, f32) = undefined,
     extrinsic_vertex_angle_sum: SurfaceMesh.CellData(.vertex, f32) = undefined,
+    // maps each extrinsic vertex to the corresponding intrinsic vertex
+    extrinsic_vertex_intrinsic_vertex: SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = undefined,
 
     intrinsic_surface_mesh: *SurfaceMesh = undefined,
     intrinsic_edge_length: SurfaceMesh.CellData(.edge, f32) = undefined,
@@ -55,17 +63,14 @@ const ITData = struct {
     intrinsic_face_area: SurfaceMesh.CellData(.face, f32) = undefined,
     intrinsic_halfedge_cotan_weight: SurfaceMesh.CellData(.halfedge, f32) = undefined,
     // each intrinsic vertex is mapped to a SurfacePoint on the extrinsic mesh
-    intrinsic_vertex_sp: SurfaceMesh.CellData(.vertex, SurfacePoint) = undefined,
+    intrinsic_vertex_extrinsic_sp: SurfaceMesh.CellData(.vertex, SurfacePoint) = undefined,
     // each intrinsic halfedge is associated with an angle (tangent vector) that expresses the direction towards the intrinsic vertex on the other side of the edge
     // this angle is expressed in the tangent space of the SurfacePoint of the intrinsic vertex of the intrinsic halfedge
-    intrinsic_halfedge_sp_angle: SurfaceMesh.CellData(.halfedge, f32) = undefined,
+    intrinsic_halfedge_extrinsic_sp_angle: SurfaceMesh.CellData(.halfedge, f32) = undefined,
     // a boolean to mark the edges of the intrinsic triangulation that are also edges of the extrinsic mesh
     intrinsic_edge_is_original: SurfaceMesh.CellData(.edge, bool) = undefined,
     // for each intrinsic edge, we store the trace of the edge as a sequence of SurfacePoints on the extrinsic mesh
     intrinsic_edge_trace: SurfaceMesh.CellData(.edge, std.ArrayList(SurfacePoint)) = undefined,
-
-    // tmp
-    // intrinsic_vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
 
     common_subd_ig: *IncidenceGraph = undefined,
     ig_vertex_position: IncidenceGraph.CellData(.vertex, Vec3f) = undefined,
@@ -95,6 +100,7 @@ const ITData = struct {
             }
             itd.extrinsic_vertex_angle_sum.valuePtr(v).* = angle_sum;
         }
+        itd.extrinsic_vertex_intrinsic_vertex = try itd.extrinsic_surface_mesh.addData(.vertex, SurfaceMesh.Cell, "intrinsic_vertex");
 
         if (itd.initialized) {
             itd.intrinsic_surface_mesh.deinit();
@@ -105,8 +111,8 @@ const ITData = struct {
         itd.intrinsic_corner_angle = try itd.intrinsic_surface_mesh.addData(.corner, f32, "corner_angle");
         itd.intrinsic_face_area = try itd.intrinsic_surface_mesh.addData(.face, f32, "area");
         itd.intrinsic_halfedge_cotan_weight = try itd.intrinsic_surface_mesh.addData(.halfedge, f32, "cotan_weight");
-        itd.intrinsic_vertex_sp = try itd.intrinsic_surface_mesh.addData(.vertex, SurfacePoint, "sp");
-        itd.intrinsic_halfedge_sp_angle = try itd.intrinsic_surface_mesh.addData(.halfedge, f32, "sp_angle");
+        itd.intrinsic_vertex_extrinsic_sp = try itd.intrinsic_surface_mesh.addData(.vertex, SurfacePoint, "extrinsic_sp");
+        itd.intrinsic_halfedge_extrinsic_sp_angle = try itd.intrinsic_surface_mesh.addData(.halfedge, f32, "extrinsic_sp_angle");
         itd.intrinsic_edge_is_original = try itd.intrinsic_surface_mesh.addData(.edge, bool, "is_original");
         itd.intrinsic_edge_trace = try itd.intrinsic_surface_mesh.addData(.edge, std.ArrayList(SurfacePoint), "trace");
 
@@ -120,21 +126,23 @@ const ITData = struct {
         // compute intrinsic halfedge cotan weights
         try laplacian.computeHalfedgeCotanWeightsIntrinsic(itd.app_ctx, itd.intrinsic_surface_mesh, itd.intrinsic_edge_length, itd.intrinsic_face_area, itd.intrinsic_halfedge_cotan_weight);
 
-        // initialize intrinsic vertex SurfacePoint (all are initially of vertex type, i.e. sit on extrinsic vertices)
-        // initialize intrinsic halfedge SurfacePoint angle (expressed in the underlying SurfacePoint tangent space)
+        // initialize extrinsic to intrinsic vertex mapping & intrinsic vertex extrinsic SurfacePoint (all are initially of vertex type, i.e. sit on extrinsic vertices)
+        // initialize intrinsic halfedge extrinsic SurfacePoint angle (expressed in the underlying SurfacePoint tangent space)
         var int_vertex_it: SurfaceMesh.CellIterator = try .init(itd.intrinsic_surface_mesh, .vertex);
         defer int_vertex_it.deinit();
         while (int_vertex_it.next()) |v| {
-            itd.intrinsic_vertex_sp.valuePtr(v).* = .{
+            // the two following expressions rely on the fact that after cloning, intrinsic vertex v.dart() is equal to extrinsic vertex v.dart()
+            itd.extrinsic_vertex_intrinsic_vertex.valuePtr(v).* = v; // WARNING: this mapping must be updated after intrinsic edge flips (the representative Dart of the intrinsic vertex might have moved to a different vertex)
+            itd.intrinsic_vertex_extrinsic_sp.valuePtr(v).* = .{
                 .surface_mesh = itd.extrinsic_surface_mesh,
-                .type = .{ .vertex = v }, // intrinsic vertex v.dart() corresponds to extrinsic vertex v.dart() after cloning
+                .type = .{ .vertex = v },
             };
-            // v.dart() is the reference Dart of the vertex (its halfedge angle is 0 within the tangent space of the SurfacePoint)
+            // v.dart() is the representative Dart of the vertex (its halfedge angle is 0 within the tangent space of the SurfacePoint)
             // the CellDartIterator iterates around the vertex in CCW order starting from this Dart
             var angle_sum: f32 = 0.0;
             var d_it = itd.intrinsic_surface_mesh.cellDartIterator(v);
             while (d_it.next()) |d| {
-                itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = d }).* = angle_sum;
+                itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = d }).* = angle_sum;
                 angle_sum += itd.extrinsic_corner_angle.value(.{ .corner = d });
             }
         }
@@ -155,15 +163,6 @@ const ITData = struct {
         itd.app_ctx.incidence_graph_store.setIncidenceGraphStdData(itd.common_subd_ig, .{ .vertex_position = itd.ig_vertex_position });
         itd.app_ctx.incidence_graph_store.incidenceGraphConnectivityUpdated(itd.common_subd_ig);
 
-        // // registers the cloned intrinsic SurfaceMesh in the SurfaceMeshStore to make it available in the UI and for other modules
-        // var buf: [64]u8 = undefined;
-        // const intrinsic_sm_name = std.fmt.bufPrint(&buf, "{s}_intrinsic", .{itd.app_ctx.surface_mesh_store.surfaceMeshName(itd.extrinsic_surface_mesh).?}) catch "__intrinsic";
-        // itd.intrinsic_vertex_position = try itd.intrinsic_surface_mesh.addData(.vertex, Vec3f, "position");
-        // itd.intrinsic_vertex_position.data.copyFrom(extrinsic_vertex_position.data);
-        // try itd.app_ctx.surface_mesh_store.registerSurfaceMesh(intrinsic_sm_name, itd.intrinsic_surface_mesh);
-        // itd.app_ctx.surface_mesh_store.setSurfaceMeshStdData(itd.intrinsic_surface_mesh, .{ .vertex_position = itd.intrinsic_vertex_position });
-        // itd.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(itd.intrinsic_surface_mesh);
-
         itd.app_ctx.requestRedraw();
     }
 
@@ -178,8 +177,6 @@ const ITData = struct {
             }
             edge_it.deinit(); // this deinit is not deferred because it must not be called after the intrinsic_surface_mesh is deinit and destroyed
 
-            // // unregister the intrinsic SurfaceMesh from the SurfaceMeshStore, deinit and destroy it
-            // itd.app_ctx.surface_mesh_store.unregisterSurfaceMesh(itd.intrinsic_surface_mesh);
             itd.intrinsic_surface_mesh.deinit();
             itd.app_ctx.allocator.destroy(itd.intrinsic_surface_mesh);
         }
@@ -206,8 +203,8 @@ const ITData = struct {
         while (edge_it.next()) |e| {
             const d = e.dart();
 
-            const src_sp = itd.intrinsic_vertex_sp.value(.{ .vertex = d });
-            const dst_sp = itd.intrinsic_vertex_sp.value(.{ .vertex = itd.intrinsic_surface_mesh.phi2(d) });
+            const src_sp = itd.intrinsic_vertex_extrinsic_sp.value(.{ .vertex = d });
+            const dst_sp = itd.intrinsic_vertex_extrinsic_sp.value(.{ .vertex = itd.intrinsic_surface_mesh.phi2(d) });
 
             // original edges trace trivially
             if (itd.intrinsic_edge_is_original.value(e)) {
@@ -231,7 +228,7 @@ const ITData = struct {
                 itd.app_ctx,
                 itd.extrinsic_surface_mesh,
                 src_sp,
-                itd.intrinsic_halfedge_sp_angle.value(.{ .halfedge = d }),
+                itd.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = d }),
                 itd.intrinsic_edge_length.value(e),
                 itd.extrinsic_corner_angle,
                 itd.extrinsic_edge_length,
@@ -267,7 +264,7 @@ const ITData = struct {
         var edge_it: SurfaceMesh.CellIterator = try .init(itd.intrinsic_surface_mesh, .edge);
         defer edge_it.deinit();
         while (edge_it.next()) |e| {
-            try edges_queue.append(itd.app_ctx.allocator, e);
+            try edges_queue.append(itd.app_ctx.allocator, e); // all edges are initially added to the queue
         }
         try flipEdgesToDelaunay(itd, &edges_queue, null);
     }
@@ -283,14 +280,16 @@ const ITData = struct {
             edge_in_queue.mark(e);
         }
 
+        var nb_flips: u32 = 0;
+
         while (edges_queue.pop()) |e| {
             edge_in_queue.unmark(e);
             // check if the edge can flip (i.e. not a boundary edge and incident vertices of degree > 2)
             if (!itd.intrinsic_surface_mesh.canFlipEdge(e)) {
                 continue;
             }
-            const edge_cotan_weight = laplacian.edgeCotanWeight(itd.intrinsic_surface_mesh, e, itd.intrinsic_halfedge_cotan_weight);
 
+            const edge_cotan_weight = laplacian.edgeCotanWeight(itd.intrinsic_surface_mesh, e, itd.intrinsic_halfedge_cotan_weight);
             // TODO: all the isFinite checks in this file are a workaround for numerical issues, should be fixed properly by using more robust geometric predicates
             if (!std.math.isFinite(edge_cotan_weight)) {
                 continue;
@@ -301,7 +300,7 @@ const ITData = struct {
                 continue;
             }
 
-            // TODO: check if the flip would create negative area faces (maybe test this in flipEdge once the triangles are laid out in 2D?)
+            // non-Delaunay edges are contained in convex quadrilaterals, so there is no need to check for convexity before flipping
 
             if (comptime std.meta.hasFn(@TypeOf(callbacks), "beforeEdgeFlip")) {
                 callbacks.beforeEdgeFlip(e);
@@ -309,6 +308,7 @@ const ITData = struct {
 
             // flip the edge (updates the intrinsic geometry data accordingly)
             itd.flipEdge(e);
+            nb_flips += 1;
 
             if (comptime std.meta.hasFn(@TypeOf(callbacks), "afterEdgeFlip")) {
                 callbacks.afterEdgeFlip(e);
@@ -330,20 +330,36 @@ const ITData = struct {
                 }
             }
         }
+
+        zgp_log.info("Flipped {d} edges to intrinsic Delaunay", .{nb_flips});
     }
 
+    // performs intrinsic edge flips to shorten the path between the two extrinsic vertices in the given vertex set (which must contain exactly 2 vertices)
+    // TODO: manage boundary (for now, assumes that the path is not on the boundary)
     fn flipOutShortestGeodesic(itd: *ITData, vertex_set: *SurfaceMesh.CellSet) !void {
-        assert(vertex_set.cells.items.len == 2);
-        const start_v = vertex_set.cells.items[0];
-        const end_v = vertex_set.cells.items[1];
+        if (vertex_set.cells.items.len != 2) {
+            return error.VertexSetShouldContainExactlyTwoVertices;
+        }
+        // get the 2 intrinsic vertices corresponding to the 2 extrinsic vertices given in the vertex set
+        const start_v = itd.extrinsic_vertex_intrinsic_vertex.value(vertex_set.cells.items[0]);
+        const end_v = itd.extrinsic_vertex_intrinsic_vertex.value(vertex_set.cells.items[1]);
+        // compute the shortest edge path between the two intrinsic vertices
         var path = try distance.shortestEdgePathBetweenVertices(
             itd.app_ctx,
-            itd.extrinsic_surface_mesh,
+            itd.intrinsic_surface_mesh,
             start_v,
             end_v,
-            itd.extrinsic_edge_length,
+            itd.intrinsic_edge_length,
         );
         defer path.deinit(itd.app_ctx.allocator);
+        if (path.items.len == 0) {
+            return error.NoPathFoundBetweenVertices;
+        }
+        if (path.items.len == 1) {
+            // the two vertices are connected by a single edge, so the path is already shortest
+            return;
+        }
+
         const shortest_path_set = try itd.extrinsic_surface_mesh.getOrAddCellSet(.edge, "shortest_path");
         shortest_path_set.clear();
         for (path.items) |d| {
@@ -351,6 +367,230 @@ const ITData = struct {
         }
         itd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(itd.extrinsic_surface_mesh, shortest_path_set);
         itd.app_ctx.requestRedraw();
+
+        // Priority queue type for joints of the path, ordered by their ascending minimum wedge angle (to flip out the most "bent" joints first)
+        const JointQueueContext = struct {
+            // surface_mesh: *const SurfaceMesh,
+            joint_queue_index: SurfaceMesh.CellData(.halfedge, ?usize),
+        };
+        // a Joint is associated to a Dart of the path (except the first Dart)
+        // the index of a Joint in the queue is stored in the joint_queue_index data of the halfedge of the Dart
+        // - dart is the Dart of the path that belongs to the Joint vertex
+        // - prev_dart is the Dart of the path that precedes the Dart of the Joint
+        // - min_angle is the minimum angle formed by one of the two wedges between the incoming and outgoing halfedges of the joint
+        // - min_angle_side is the side of the minimum angle wedge (left or right)
+        // - flippable is a boolean that indicates whether the joint is flippable
+        //   -> non-flippable joints include non-flexible joints (i.e. where an edge incident to the joint vertex in the smallest wedge is part of the path) and straight joints
+        //   -> these joints are nonetheless put in the queue so that they can be updated when the path changes and they could become flippable
+        // => execution finishes when the queue is empty or all remaining joints are non-flippable (i.e. the path is locally shortest)
+        const JointInfo = struct {
+            const JointInfo = @This();
+            dart: SurfaceMesh.Dart,
+            prev_dart: SurfaceMesh.Dart, // the first Dart of the path is not a joint, so prev_dart is always defined
+            next_dart: ?SurfaceMesh.Dart, // the next Dart of the path after dart (null if dart is the last Dart of the path)
+            min_angle: f32,
+            min_angle_side: enum { left, right },
+            flippable: bool,
+            pub fn cmp(_: JointQueueContext, a: JointInfo, b: JointInfo) std.math.Order {
+                const min_angle_order = std.math.order(a.min_angle, b.min_angle);
+                if (min_angle_order != .eq) return min_angle_order;
+                // tie-breaker: use dart indices to have a deterministic order
+                return std.math.order(a.dart, b.dart);
+            }
+            pub fn setJointIndexInQueue(ctx: JointQueueContext, a: JointInfo, index: usize) void {
+                ctx.joint_queue_index.valuePtr(.{ .halfedge = a.dart }).* = index;
+            }
+        };
+        const JointQueue = PriorityQueue(JointInfo, JointQueueContext, JointInfo.cmp, JointInfo.setJointIndexInQueue);
+        const JointQueueUtils = struct {
+            fn addJointToQueue(itdata: *ITData, queue: *JointQueue, d: SurfaceMesh.Dart, prev_d: SurfaceMesh.Dart, next_d: ?SurfaceMesh.Dart) !void {
+                // assert that the joint is not already in the queue
+                assert(queue.context.joint_queue_index.value(.{ .halfedge = d }) == null);
+                // angles of the incoming and outgoing halfedges of the joint (expressed in the tangent space of the SurfacePoint of the vertex of the joint)
+                const angle_in = itdata.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = itdata.intrinsic_surface_mesh.phi2(prev_d) });
+                const angle_out = itdata.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = d });
+                const angle_sum = switch (itdata.intrinsic_vertex_extrinsic_sp.value(.{ .vertex = d }).type) {
+                    .vertex => |v| itdata.extrinsic_vertex_angle_sum.value(v),
+                    else => std.math.tau, // for non-vertex SurfacePoints, the angle sum is 2π (locally flat)
+                };
+                const left_angle = if (angle_out < angle_in) angle_in - angle_out else angle_sum - angle_out + angle_in;
+                const right_angle = if (angle_in < angle_out) angle_out - angle_in else angle_sum - angle_in + angle_out;
+                if (left_angle < right_angle and left_angle < std.math.pi - geometry_utils.epsilon) {
+                    // the min angle wedge should contain at least one other edge between the incoming and outgoing halfedges of the joint (otherwise the joint is not flippable)
+                    // TODO: should also check that no edge in the min angle wedge is part of the path, otherwise the joint is not flippable
+                    const flippable = d != itdata.intrinsic_surface_mesh.phi1(prev_d);
+                    try queue.push(itdata.app_ctx.allocator, .{
+                        .dart = d,
+                        .prev_dart = prev_d,
+                        .next_dart = next_d,
+                        .min_angle = if (flippable) left_angle else std.math.tau, // greater than π, so that non-flippable joints are at the end of the queue
+                        .min_angle_side = .left,
+                        .flippable = flippable,
+                    });
+                } else if (right_angle < left_angle and right_angle < std.math.pi - geometry_utils.epsilon) {
+                    const flippable = d != itdata.intrinsic_surface_mesh.phi2(itdata.intrinsic_surface_mesh.phi_1(itdata.intrinsic_surface_mesh.phi2(prev_d)));
+                    try queue.push(itdata.app_ctx.allocator, .{
+                        .dart = d,
+                        .prev_dart = prev_d,
+                        .next_dart = next_d,
+                        .min_angle = if (flippable) right_angle else std.math.tau, // greater than π, so that non-flippable joints are at the end of the queue
+                        .min_angle_side = .right,
+                        .flippable = flippable,
+                    });
+                } else {
+                    try queue.push(itdata.app_ctx.allocator, .{
+                        .dart = d,
+                        .prev_dart = prev_d,
+                        .next_dart = next_d,
+                        .min_angle = std.math.tau, // greater than π, so that non-flippable joints are at the end of the queue
+                        .min_angle_side = .left, // arbitrary
+                        .flippable = false,
+                    });
+                }
+            }
+        };
+
+        var joint_queue_index = try itd.intrinsic_surface_mesh.addData(.halfedge, ?usize, "__joint_queue_index");
+        defer itd.intrinsic_surface_mesh.removeData(.halfedge, ?usize, joint_queue_index);
+        joint_queue_index.data.fill(null);
+
+        // initialize the joint queue with the joints of the path
+        var queue: JointQueue = .initContext(.{
+            // .surface_mesh = itd.intrinsic_surface_mesh,
+            .joint_queue_index = joint_queue_index,
+        });
+        defer queue.deinit(itd.app_ctx.allocator);
+        for (path.items, 0..) |d, idx| {
+            if (idx == 0) continue; // skip the first Dart of the path, as it is not a joint
+            const prev_d = path.items[idx - 1];
+            const next_d = if (idx + 1 < path.items.len) path.items[idx + 1] else null;
+            // assert the consistency of the path (the vertex of d must be the same as the vertex of phi1(prev_d))
+            assert(itd.intrinsic_surface_mesh.cellIndex(.{ .vertex = d }) == itd.intrinsic_surface_mesh.cellIndex(.{ .vertex = itd.intrinsic_surface_mesh.phi1(prev_d) }));
+            try JointQueueUtils.addJointToQueue(itd, &queue, d, prev_d, next_d);
+        }
+
+        // var first_path_dart = path.items[0]; // to check the first joint prev_dart consistency
+        // var first_joint_dart: ?SurfaceMesh.Dart = path.items[1]; // the first Dart of the path is not a joint, so the first joint is the second Dart of the path
+
+        while (queue.items.len > 0) {
+            // // check path global consistency (following the info found in the queue)
+            // var nb_joints: u32 = 0;
+            // var cur_dart: ?SurfaceMesh.Dart = first_joint_dart;
+            // var prev_dart: SurfaceMesh.Dart = first_path_dart;
+            // while (cur_dart) |d| {
+            //     const cur_joint_index = queue.context.joint_queue_index.value(.{ .halfedge = d });
+            //     assert(cur_joint_index != null);
+            //     const joint = queue.items[cur_joint_index.?];
+            //     assert(joint.dart == d);
+            //     assert(joint.prev_dart == prev_dart);
+            //     assert(itd.intrinsic_surface_mesh.cellIndex(.{ .vertex = joint.dart }) == itd.intrinsic_surface_mesh.cellIndex(.{ .vertex = itd.intrinsic_surface_mesh.phi1(joint.prev_dart) }));
+            //     nb_joints += 1;
+            //     prev_dart = cur_dart.?;
+            //     cur_dart = joint.next_dart;
+            // }
+            // assert(nb_joints == queue.items.len);
+
+            // if all the joints left in the queue are non-flippable, then the path is locally shortest and we can stop
+            const no_flippable_joint = for (queue.items) |joint| {
+                if (joint.flippable) break false;
+            } else true;
+            if (no_flippable_joint) {
+                std.debug.print("No flippable joint left in the queue, path is locally shortest with {} joints left\n", .{queue.items.len});
+                break;
+            }
+
+            const joint = queue.pop().?;
+            joint_queue_index.valuePtr(.{ .halfedge = joint.dart }).* = null; // the joint is no longer in the priority queue
+            assert(joint.flippable); // if there is still at least one flippable joint in the queue, it must be the one with the smallest minimum angle
+
+            // the flip out is performed CW in the min angle wedge, so consider the joint in the other orientation if the min angle wedge is on the right side of the path
+            // (the new path will be reversed when inserting the new subpath after the flips)
+            const cw_dart, const cw_prev_dart = if (joint.min_angle_side == .left) .{ joint.dart, joint.prev_dart } else .{ itd.intrinsic_surface_mesh.phi2(joint.prev_dart), itd.intrinsic_surface_mesh.phi2(joint.dart) };
+
+            var cw_cur_dart = itd.intrinsic_surface_mesh.phi1(cw_prev_dart);
+            while (cw_cur_dart != cw_dart) {
+                // check if the edge can flip (i.e. not a boundary edge and incident vertices of degree > 2)
+                if (!itd.intrinsic_surface_mesh.canFlipEdge(.{ .edge = cw_cur_dart })) {
+                    cw_cur_dart = itd.intrinsic_surface_mesh.phi1(itd.intrinsic_surface_mesh.phi2(cw_cur_dart));
+                    continue;
+                }
+                // do not flip if the edge is not in a convex quadrilateral (i.e. if the sum of the two corner angles opposite to the joint is greater than or equal to π)
+                if (itd.intrinsic_corner_angle.value(.{ .corner = itd.intrinsic_surface_mesh.phi1(cw_cur_dart) }) + itd.intrinsic_corner_angle.value(.{ .corner = itd.intrinsic_surface_mesh.phi2(cw_cur_dart) }) >= std.math.pi - geometry_utils.epsilon) {
+                    cw_cur_dart = itd.intrinsic_surface_mesh.phi1(itd.intrinsic_surface_mesh.phi2(cw_cur_dart));
+                    continue;
+                }
+                itd.flipEdge(.{ .edge = cw_cur_dart });
+                cw_cur_dart = itd.intrinsic_surface_mesh.phi_1(cw_cur_dart);
+            }
+
+            // build the new subpath
+            var new_subpath: std.ArrayList(SurfaceMesh.Dart) = .empty;
+            defer new_subpath.deinit(itd.app_ctx.allocator);
+            cw_cur_dart = itd.intrinsic_surface_mesh.phi1(cw_prev_dart);
+            while (true) : ({
+                if (cw_cur_dart == cw_dart) break;
+                cw_cur_dart = itd.intrinsic_surface_mesh.phi1(itd.intrinsic_surface_mesh.phi2(cw_cur_dart));
+            }) {
+                try new_subpath.append(itd.app_ctx.allocator, itd.intrinsic_surface_mesh.phi2(itd.intrinsic_surface_mesh.phi1(cw_cur_dart)));
+            }
+            // reverse the new subpath if the min angle wedge was on the right side of the path (so that it can be inserted in the correct orientation)
+            if (joint.min_angle_side == .right) {
+                std.mem.reverse(SurfaceMesh.Dart, new_subpath.items);
+                for (new_subpath.items) |*d| {
+                    d.* = itd.intrinsic_surface_mesh.phi2(d.*);
+                }
+            }
+            assert(new_subpath.items.len > 0); // the new subpath must contain at least one Dart
+
+            // if (first_joint_dart != null and joint.dart == first_joint_dart.?) {
+            //     first_path_dart = new_subpath.items[0];
+            //     first_joint_dart = if (new_subpath.items.len > 1) new_subpath.items[1] else joint.next_dart;
+            // } else if (first_joint_dart != null and joint.prev_dart == first_joint_dart.?) {
+            //     // the previous joint was the first joint and has been removed from the queue;
+            //     // the first dart of the new subpath takes its place as the new first joint
+            //     first_joint_dart = new_subpath.items[0];
+            //     // first_path_dart doesn't change: prev_prev_dart != null here, so new_subpath[0] is added as a joint
+            // }
+
+            // update the joint queue (the current joint has already been removed from the queue)
+
+            // the previous joint (if it exists) must be removed from the queue
+            // it will be replaced by the first new joint of the new subpath (with updated min angle, side and flippable status)
+            // we first need to get its previous Dart in the path (the Dart that precedes joint.prev_dart) to be able to add the first new joint to the queue
+            var prev_prev_dart: ?SurfaceMesh.Dart = null;
+            // if joint.prev_dart is the first Dart of the path (i.e. joint is the first joint), joint.prev_dart is not a joint and prev_prev_dart will remain null
+            if (joint_queue_index.value(.{ .halfedge = joint.prev_dart })) |index| {
+                prev_prev_dart = queue.items[index].prev_dart;
+                // the joint at prev_prev_dart (if it's in the queue) still has next_dart pointing to the to-be-removed joint.prev_dart;
+                // update it in-place to the first dart of the new subpath (next_dart is not part of the priority comparison so the heap is unaffected)
+                if (joint_queue_index.value(.{ .halfedge = prev_prev_dart.? })) |ppd_idx| {
+                    queue.items[ppd_idx].next_dart = new_subpath.items[0];
+                }
+                _ = queue.popIndex(index);
+                queue.context.joint_queue_index.valuePtr(.{ .halfedge = joint.prev_dart }).* = null;
+            }
+            for (new_subpath.items, 0..) |d, idx| {
+                if (idx == 0 and prev_prev_dart == null) continue; // the first Dart of the new subpath is the first Dart of the path, so it is not a joint
+                const prev_d: SurfaceMesh.Dart = if (idx == 0) prev_prev_dart.? else new_subpath.items[idx - 1];
+                const next_d = if (idx + 1 < new_subpath.items.len) new_subpath.items[idx + 1] else joint.next_dart;
+                // assert the consistency of the path (the vertex of d must be the same as the vertex of phi1(prev_d))
+                assert(itd.intrinsic_surface_mesh.cellIndex(.{ .vertex = d }) == itd.intrinsic_surface_mesh.cellIndex(.{ .vertex = itd.intrinsic_surface_mesh.phi1(prev_d) }));
+                try JointQueueUtils.addJointToQueue(itd, &queue, d, prev_d, next_d);
+            }
+            // the next joint (if it exists) must be removed from the queue and added again (with updated prev_dart, min angle, side and flippable status)
+            if (joint.next_dart) |next_dart| {
+                const next_joint_index = joint_queue_index.value(.{ .halfedge = next_dart });
+                assert(next_joint_index != null); // if the current joint has a next dart, the corresponding next joint must be in the queue
+                const next_joint = queue.items[next_joint_index.?];
+                _ = queue.popIndex(next_joint_index.?);
+                queue.context.joint_queue_index.valuePtr(.{ .halfedge = next_dart }).* = null;
+                const next_prev_d = new_subpath.items[new_subpath.items.len - 1]; // the previous Dart of the next joint is now the last Dart of the new subpath
+                const next_next_d = next_joint.next_dart; // the next Dart of the next joint is not affected by the flips, so it remains the same (potentially null if the next joint was the last joint of the path)
+                // assert the consistency of the path (the vertex of next_dart must be the same as the vertex of phi1(next_prev_d))
+                assert(itd.intrinsic_surface_mesh.cellIndex(.{ .vertex = next_dart }) == itd.intrinsic_surface_mesh.cellIndex(.{ .vertex = itd.intrinsic_surface_mesh.phi1(next_prev_d) }));
+                try JointQueueUtils.addJointToQueue(itd, &queue, next_dart, next_prev_d, next_next_d);
+            }
+        }
     }
 
     // flip the given edge and update the intrinsic geometry data accordingly
@@ -409,33 +649,24 @@ const ITData = struct {
             );
         }
         // update intrinsic halfedge SurfacePoint angles of the flipped halfedges
-        itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = dA0 }).* =
-            itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = dB2 }).* + itd.intrinsic_corner_angle.value(.{ .corner = dB2 });
-        itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = dB0 }).* =
-            itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = dA2 }).* + itd.intrinsic_corner_angle.value(.{ .corner = dA2 });
+        itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = dA0 }).* =
+            itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = dB2 }).* + itd.intrinsic_corner_angle.value(.{ .corner = dB2 });
+        itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = dB0 }).* =
+            itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = dA2 }).* + itd.intrinsic_corner_angle.value(.{ .corner = dA2 });
+
+        // if the endpoints of the flipped edge are mapped to extrinsic vertices (SurfacePoints of vertex type), then the extrinsic to intrinsic vertex mapping must be updated
+        // (the representative Dart of the intrinsic vertex might might be the flipped edge's Dart, which has moved to a different vertex after the flip)
+        const p0sp = itd.intrinsic_vertex_extrinsic_sp.value(.{ .vertex = dA1 });
+        if (p0sp.type == .vertex) {
+            itd.extrinsic_vertex_intrinsic_vertex.valuePtr(p0sp.type.vertex).* = .{ .vertex = dA1 };
+        }
+        const p2sp = itd.intrinsic_vertex_extrinsic_sp.value(.{ .vertex = dB1 });
+        if (p2sp.type == .vertex) {
+            itd.extrinsic_vertex_intrinsic_vertex.valuePtr(p2sp.type.vertex).* = .{ .vertex = dB1 };
+        }
     }
 
-    // Priority queue of triangles to refine, ordered by the circumradius-to-shortest-edge ratio (rho)
-    const TriangleInfo = struct {
-        face: SurfaceMesh.Cell,
-        rho_sq: f32,
-        pub fn cmpDesc(ctx: FacePriorityQueueContext, a: TriangleInfo, b: TriangleInfo) std.math.Order {
-            const rho_order = std.math.order(b.rho_sq, a.rho_sq);
-            if (rho_order != .eq) return rho_order;
-            // tie-breaker: use face indices to order faces
-            return std.math.order(ctx.surface_mesh.cellIndex(a.face), ctx.surface_mesh.cellIndex(b.face));
-        }
-        pub fn setFaceIndexInQueue(ctx: FacePriorityQueueContext, a: TriangleInfo, index: usize) void {
-            ctx.face_queue_index.valuePtr(a.face).* = index;
-        }
-    };
-    const FacePriorityQueueContext = struct {
-        surface_mesh: *SurfaceMesh,
-        face_queue_index: SurfaceMesh.CellData(.face, ?usize),
-    };
-    const FacePriorityQueueDesc = PriorityQueue(TriangleInfo, FacePriorityQueueContext, TriangleInfo.cmpDesc, TriangleInfo.setFaceIndexInQueue);
-
-    // computes the sqaured circumradius-to-shortest-edge ratio of a triangle
+    // computes the squared circumradius-to-shortest-edge ratio of a triangle
     // it is used as a cost in the priority queue of triangles in the Delaunay refinement algorithm
     pub fn triangleCircumradiusToShortestEdgeRatioSquared(
         itd: *ITData,
@@ -484,6 +715,27 @@ const ITData = struct {
 
         // start with a Delaunay triangulation (flip edges to Delaunay)
         try flipEdgesToDelaunay(itd, &flip_edge_queue, null);
+
+        // Priority queue type for triangles to refine, ordered by the circumradius-to-shortest-edge ratio (rho)
+        const FacePriorityQueueContext = struct {
+            surface_mesh: *SurfaceMesh,
+            face_queue_index: SurfaceMesh.CellData(.face, ?usize),
+        };
+        const TriangleInfo = struct {
+            const TriangleInfo = @This();
+            face: SurfaceMesh.Cell,
+            rho_sq: f32,
+            pub fn cmpDesc(ctx: FacePriorityQueueContext, a: TriangleInfo, b: TriangleInfo) std.math.Order {
+                const rho_order = std.math.order(b.rho_sq, a.rho_sq);
+                if (rho_order != .eq) return rho_order;
+                // tie-breaker: use face indices to order faces
+                return std.math.order(ctx.surface_mesh.cellIndex(a.face), ctx.surface_mesh.cellIndex(b.face));
+            }
+            pub fn setFaceIndexInQueue(ctx: FacePriorityQueueContext, a: TriangleInfo, index: usize) void {
+                ctx.face_queue_index.valuePtr(a.face).* = index;
+            }
+        };
+        const FacePriorityQueueDesc = PriorityQueue(TriangleInfo, FacePriorityQueueContext, TriangleInfo.cmpDesc, TriangleInfo.setFaceIndexInQueue);
 
         var refine_triangle_pq_index = try itd.intrinsic_surface_mesh.addData(.face, ?usize, "__refine_triangle_pq_index");
         refine_triangle_pq_index.data.fill(null);
@@ -710,9 +962,9 @@ const ITData = struct {
         const dst_d2 = itd.intrinsic_surface_mesh.phi2(dst_d);
         // save halfedge angles before removing the face (they will be restored on the new halfedges created by the umbrella triangulation)
         const dst_tri_he_angles: [3]f32 = .{
-            itd.intrinsic_halfedge_sp_angle.value(.{ .halfedge = dst_d }),
-            itd.intrinsic_halfedge_sp_angle.value(.{ .halfedge = itd.intrinsic_surface_mesh.phi1(dst_d) }),
-            itd.intrinsic_halfedge_sp_angle.value(.{ .halfedge = itd.intrinsic_surface_mesh.phi_1(dst_d) }),
+            itd.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = dst_d }),
+            itd.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = itd.intrinsic_surface_mesh.phi1(dst_d) }),
+            itd.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = itd.intrinsic_surface_mesh.phi_1(dst_d) }),
         };
 
         // remove the triangle face
@@ -730,9 +982,9 @@ const ITData = struct {
         itd.intrinsic_edge_length.valuePtr(.{ .edge = cvd1 }).* = dst_l_v1c;
         itd.intrinsic_edge_length.valuePtr(.{ .edge = cvd2 }).* = dst_l_v2c;
         // restore the halfedge angles of the removed triangle
-        itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = itd.intrinsic_surface_mesh.phi1(cvd0) }).* = dst_tri_he_angles[0];
-        itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = itd.intrinsic_surface_mesh.phi1(cvd1) }).* = dst_tri_he_angles[1];
-        itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = itd.intrinsic_surface_mesh.phi1(cvd2) }).* = dst_tri_he_angles[2];
+        itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = itd.intrinsic_surface_mesh.phi1(cvd0) }).* = dst_tri_he_angles[0];
+        itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = itd.intrinsic_surface_mesh.phi1(cvd1) }).* = dst_tri_he_angles[1];
+        itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = itd.intrinsic_surface_mesh.phi1(cvd2) }).* = dst_tri_he_angles[2];
 
         // update intrinsic mesh data (corner angles, face areas, halfedge cotan weights, halfedge SurfacePoint angles)
         var central_vertex_dart_it = itd.intrinsic_surface_mesh.cellDartIterator(central_vertex);
@@ -766,8 +1018,8 @@ const ITData = struct {
             // update incoming intrinsic halfedge SurfacePoint angle
             const cvdart1 = itd.intrinsic_surface_mesh.phi1(cvdart);
             const cvdart2 = itd.intrinsic_surface_mesh.phi2(cvdart);
-            itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = cvdart2 }).* =
-                itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = cvdart1 }).* + itd.intrinsic_corner_angle.value(.{ .corner = cvdart1 });
+            itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = cvdart2 }).* =
+                itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = cvdart1 }).* + itd.intrinsic_corner_angle.value(.{ .corner = cvdart1 });
             // initialize intrinsic edge data:
             // - original edge boolean
             // - edge traces (empty for now)
@@ -777,8 +1029,8 @@ const ITData = struct {
         }
 
         // get the SurfacePoint on the extrinsic mesh of the first vertex of the destination intrinsic triangle to trace from
-        const dst_sp0 = itd.intrinsic_vertex_sp.value(.{ .vertex = itd.intrinsic_surface_mesh.phi2(cvd0) });
-        const dst_dir_angle = itd.intrinsic_halfedge_sp_angle.value(.{ .halfedge = itd.intrinsic_surface_mesh.phi2(cvd0) });
+        const dst_sp0 = itd.intrinsic_vertex_extrinsic_sp.value(.{ .vertex = itd.intrinsic_surface_mesh.phi2(cvd0) });
+        const dst_dir_angle = itd.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = itd.intrinsic_surface_mesh.phi2(cvd0) });
 
         // trace the first new intrinsic edge on the extrinsic mesh
         const circumcenter_sp_ext, const last_entry_angle, _ = try geodesic.traceGeodesic(
@@ -793,15 +1045,15 @@ const ITData = struct {
         );
 
         // set the reached extrinsic SurfacePoint to the new intrinsic central vertex
-        itd.intrinsic_vertex_sp.valuePtr(central_vertex).* = circumcenter_sp_ext;
+        itd.intrinsic_vertex_extrinsic_sp.valuePtr(central_vertex).* = circumcenter_sp_ext;
         // set the intrinsic halfedge SurfacePoint angles of the three new outgoing intrinsic halfedges incident to the central vertex
         // (total angle around the central vertex, a face SurfacePoint, is 2π)
-        const cvd0_angle = @mod(last_entry_angle + std.math.pi, 2.0 * std.math.pi); // modulo 2π should not be needed here because the entry angle is always < π
-        const cvd1_angle = @mod(cvd0_angle + itd.intrinsic_corner_angle.value(.{ .corner = cvd0 }), 2.0 * std.math.pi);
-        const cvd2_angle = @mod(cvd1_angle + itd.intrinsic_corner_angle.value(.{ .corner = cvd1 }), 2.0 * std.math.pi);
-        itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = cvd0 }).* = cvd0_angle;
-        itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = cvd1 }).* = cvd1_angle;
-        itd.intrinsic_halfedge_sp_angle.valuePtr(.{ .halfedge = cvd2 }).* = cvd2_angle;
+        const cvd0_angle = @mod(last_entry_angle + std.math.pi, std.math.tau); // modulo 2π should not be needed here because the entry angle is always < π
+        const cvd1_angle = @mod(cvd0_angle + itd.intrinsic_corner_angle.value(.{ .corner = cvd0 }), std.math.tau);
+        const cvd2_angle = @mod(cvd1_angle + itd.intrinsic_corner_angle.value(.{ .corner = cvd1 }), std.math.tau);
+        itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = cvd0 }).* = cvd0_angle;
+        itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = cvd1 }).* = cvd1_angle;
+        itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = cvd2 }).* = cvd2_angle;
 
         return central_vertex;
     }
