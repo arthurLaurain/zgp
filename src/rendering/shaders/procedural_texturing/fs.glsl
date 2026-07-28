@@ -353,10 +353,19 @@ void main() {
   else
     f_color = vec4(result);
 
+  mixmaxdata M;
 
   if(u_blending_mode == 1)
   {
-    mixmaxdata M = mixMax(uv1,uv2,uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+    if(u_compense_distorsions)
+    {
+      distorsion = distorsions[id_triangle];
+      M = mixMax(distorsion.S[0] * uv1, distorsion.S[1] * uv2,distorsion.S[2] * uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+    }
+    else
+    {
+      M = mixMax(uv1,uv2,uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+    }
 
     // Normal mapping
     vec3 normal = normalize(M.normal * 2. - 1.);
