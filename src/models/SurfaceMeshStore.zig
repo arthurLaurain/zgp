@@ -718,8 +718,8 @@ pub fn loadSurfaceMeshFromFile(sms: *SurfaceMeshStore, filename: []const u8) !*S
 
     for (import_data.vertices_position.items) |pos| {
         const vertex_index = try sm.getDataIndex(.vertex);
-        vertex_position.data.valuePtr(vertex_index).* = pos;
-        darts_of_vertex.data.valuePtr(vertex_index).* = .empty;
+        vertex_position.valuePtrByIndex(vertex_index).* = pos;
+        darts_of_vertex.valuePtrByIndex(vertex_index).* = .empty;
     }
 
     var i: u32 = 0;
@@ -729,7 +729,7 @@ pub fn loadSurfaceMeshFromFile(sms: *SurfaceMeshStore, filename: []const u8) !*S
         for (import_data.faces_vertex_indices.items[i .. i + face_nb_vertices]) |index| {
             // sm.dart_vertex_index.valuePtr(d).* = index;
             sm.setDartCellIndex(d, .vertex, index);
-            try darts_of_vertex.data.valuePtr(index).append(darts_array_lists_arena.allocator(), d);
+            try darts_of_vertex.valuePtrByIndex(index).append(darts_array_lists_arena.allocator(), d);
             d = sm.phi1(d);
         }
         i += face_nb_vertices;
@@ -742,7 +742,7 @@ pub fn loadSurfaceMeshFromFile(sms: *SurfaceMeshStore, filename: []const u8) !*S
         if (sm.phi2(d) == d) {
             const vertex_index = sm.dartCellIndex(d, .vertex);
             const next_vertex_index = sm.dartCellIndex(sm.phi1(d), .vertex);
-            const next_vertex_darts = darts_of_vertex.data.valuePtr(next_vertex_index).*;
+            const next_vertex_darts = darts_of_vertex.valueByIndex(next_vertex_index);
             const opposite_dart = for (next_vertex_darts.items) |d2| {
                 if (sm.dartCellIndex(sm.phi1(d2), .vertex) == vertex_index) {
                     break d2;

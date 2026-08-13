@@ -26,6 +26,9 @@ pub fn shortestEdgePathBetweenVertices(
     assert(v_start.cellType() == .vertex);
     assert(v_end.cellType() == .vertex);
 
+    const v_start_idx = sm.cellIndex(v_start);
+    const v_end_idx = sm.cellIndex(v_end);
+
     // this data is used to store the incoming dart for each vertex in the shortest path tree
     // a null value indicates a vertex that has not been reached yet
     var incoming_dart = try sm.addData(.vertex, ?SurfaceMesh.Dart, "__incoming_dart");
@@ -60,13 +63,14 @@ pub fn shortestEdgePathBetweenVertices(
     }
     while (queue.pop()) |d_info| {
         const pointed_v: SurfaceMesh.Cell = .{ .vertex = sm.phi1(d_info.dart) };
-        if (incoming_dart.value(pointed_v) != null or sm.cellIndex(pointed_v) == sm.cellIndex(v_start)) {
+        const pointed_v_idx = sm.cellIndex(pointed_v);
+        if (incoming_dart.value(pointed_v) != null or pointed_v_idx == v_start_idx) {
             // this vertex has already been reached, or is the starting vertex, skip it
             continue;
         }
         // the queue is ordered by distance, so the first time we reach a vertex is the shortest path to it
         incoming_dart.valuePtr(pointed_v).* = d_info.dart;
-        if (sm.cellIndex(pointed_v) == sm.cellIndex(v_end)) {
+        if (pointed_v_idx == v_end_idx) {
             // reconstruct the path from v_end to v_start using the incoming_dart data
             var path: std.ArrayList(SurfaceMesh.Dart) = try .initCapacity(app_ctx.allocator, 16);
             try path.append(app_ctx.allocator, d_info.dart);
@@ -145,7 +149,7 @@ pub fn multiSourceDijkstraDistancesAndSources(
 
     while (queue.pop()) |v_info| {
         const v = v_info.vertex;
-        if (v_info.distance > vertex_distance.value(v)) {
+        if (vertex_distance.value(v) < v_info.distance) {
             continue; // this vertex has already been reached with a smaller distance, skip it
         }
         // expand the neighbors of the current vertex

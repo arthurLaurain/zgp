@@ -2,6 +2,7 @@ const SurfaceMeshSampling = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
+const builtin = @import("builtin");
 
 const imgui_utils = @import("../ui/imgui.zig");
 const zgp_log = std.log.scoped(.zgp);
@@ -13,7 +14,8 @@ const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfacePoint = @import("../models/surface/SurfacePoint.zig");
 const PointCloud = @import("../models/point/PointCloud.zig");
-const IncidenceGraph = @import("../models/incidenceGraph/IncidenceGraph.zig");
+// const IncidenceGraph = @import("../models/incidenceGraph/IncidenceGraph.zig");
+const SurfaceMeshImportData = @import("../models/SurfaceMeshStore.zig").SurfaceMeshImportData;
 
 const Data = @import("../utils/data.zig").Data;
 const DataGen = @import("../utils/data.zig").DataGen;
@@ -35,11 +37,13 @@ const SamplingData = struct {
     point_color: PointCloud.CellData(Vec3f) = undefined,
     point_surface_point: PointCloud.CellData(SurfacePoint) = undefined,
 
-    vertex_closest_sample: SurfaceMesh.CellData(.vertex, PointCloud.Point) = undefined,
     vertex_color: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
 
-    samples_connection_graph: *IncidenceGraph = undefined,
-    scg_vertex_position: IncidenceGraph.CellData(.vertex, Vec3f) = undefined,
+    samples_surface_mesh: *SurfaceMesh = undefined,
+    ssm_vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
+    ssm_vertex_sample: SurfaceMesh.CellData(.vertex, PointCloud.Point) = undefined,
+    // samples_connection_graph: *IncidenceGraph = undefined,
+    // scg_vertex_position: IncidenceGraph.CellData(.vertex, Vec3f) = undefined,
 
     initialized: bool = false,
 
@@ -53,28 +57,39 @@ const SamplingData = struct {
             sd.app_ctx.point_cloud_store.setPointCloudStdData(sd.samples, .{ .position = sd.point_position });
 
             // create SurfaceMesh data to store the closest sample for each vertex of the SurfaceMesh
-            sd.vertex_closest_sample = try sd.surface_mesh.addData(.vertex, PointCloud.Point, "closest_sample");
             sd.vertex_color = try sd.surface_mesh.addData(.vertex, Vec3f, "closest_sample_color");
 
-            // create samples connection IncidenceGraph & data
+            // create samples SurfaceMesh & data
             var buf: [64]u8 = undefined;
-            const scg_name = std.fmt.bufPrint(&buf, "{s}_scg", .{pointcloud_name}) catch "__scg";
-            sd.samples_connection_graph = try sd.app_ctx.incidence_graph_store.createIncidenceGraph(scg_name);
-            sd.scg_vertex_position = try sd.samples_connection_graph.addData(.vertex, Vec3f, "position");
-            sd.app_ctx.incidence_graph_store.setIncidenceGraphStdData(sd.samples_connection_graph, .{ .vertex_position = sd.scg_vertex_position });
+            const ssm_name = std.fmt.bufPrint(&buf, "{s}_ssm", .{pointcloud_name}) catch "__ssm";
+            sd.samples_surface_mesh = try sd.app_ctx.surface_mesh_store.createSurfaceMesh(ssm_name);
+            sd.ssm_vertex_position = try sd.samples_surface_mesh.addData(.vertex, Vec3f, "position");
+            sd.ssm_vertex_sample = try sd.samples_surface_mesh.addData(.vertex, PointCloud.Point, "sample");
+            sd.app_ctx.surface_mesh_store.setSurfaceMeshStdData(sd.samples_surface_mesh, .{ .vertex_position = sd.ssm_vertex_position });
+
+            // // create samples connection IncidenceGraph & data
+            // var buf: [64]u8 = undefined;
+            // const scg_name = std.fmt.bufPrint(&buf, "{s}_scg", .{pointcloud_name}) catch "__scg";
+            // sd.samples_connection_graph = try sd.app_ctx.incidence_graph_store.createIncidenceGraph(scg_name);
+            // sd.scg_vertex_position = try sd.samples_connection_graph.addData(.vertex, Vec3f, "position");
+            // sd.app_ctx.incidence_graph_store.setIncidenceGraphStdData(sd.samples_connection_graph, .{ .vertex_position = sd.scg_vertex_position });
 
             sd.initialized = true;
         } else {
             sd.samples.clearRetainingCapacity();
-            sd.samples_connection_graph.clearRetainingCapacity();
+            sd.samples_surface_mesh.clearRetainingCapacity();
+            // sd.samples_connection_graph.clearRetainingCapacity();
         }
 
         sd.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(sd.samples);
         sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.point_position);
         sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.point_color);
 
-        sd.app_ctx.incidence_graph_store.incidenceGraphConnectivityUpdated(sd.samples_connection_graph);
-        sd.app_ctx.incidence_graph_store.incidenceGraphDataUpdated(sd.samples_connection_graph, .vertex, Vec3f, sd.scg_vertex_position);
+        sd.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sd.samples_surface_mesh);
+        sd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sd.samples_surface_mesh, .vertex, Vec3f, sd.ssm_vertex_position);
+
+        // sd.app_ctx.incidence_graph_store.incidenceGraphConnectivityUpdated(sd.samples_connection_graph);
+        // sd.app_ctx.incidence_graph_store.incidenceGraphDataUpdated(sd.samples_connection_graph, .vertex, Vec3f, sd.scg_vertex_position);
     }
 
     // do not destroy the PointCloud here
@@ -85,7 +100,7 @@ const SamplingData = struct {
         sd.point_color = undefined;
         sd.point_surface_point = undefined;
         if (sd.initialized) {
-            sd.surface_mesh.removeData(.vertex, PointCloud.Point, sd.vertex_closest_sample);
+            sd.surface_mesh.removeData(.vertex, Vec3f, sd.vertex_color);
         }
         sd.initialized = false;
     }
@@ -180,6 +195,8 @@ const SamplingData = struct {
         defer sd.surface_mesh.removeData(.vertex, ?SurfaceMesh.Cell, closest_source_vertex);
         var source_vertices: std.ArrayList(SurfaceMesh.Cell) = try .initCapacity(sd.app_ctx.allocator, sd.samples.nbPoints());
         defer source_vertices.deinit(sd.app_ctx.allocator);
+        // use a hashmap to map each source vertex to its corresponding sample
+        // could have use a VertexData but there are not so many vertices that correspond to samples, so it would have been mostly empty
         var source_vertex_sample: std.AutoArrayHashMapUnmanaged(SurfaceMesh.Cell, PointCloud.Point) = .empty;
         defer source_vertex_sample.deinit(sd.app_ctx.allocator);
         var point_it = sd.samples.pointIterator();
@@ -193,87 +210,125 @@ const SamplingData = struct {
         }
         try distance.multiSourceDijkstraDistancesAndSources(sd.app_ctx, sd.surface_mesh, source_vertices.items, edge_length, closest_source_distance, closest_source_vertex);
 
-        // update the samples connection graph
-        var sample_neighbors = try sd.samples.addData(std.AutoArrayHashMapUnmanaged(PointCloud.Point, void), "__sample_neighbors");
-        defer sd.samples.removeData(std.AutoArrayHashMapUnmanaged(PointCloud.Point, void), sample_neighbors);
+        // assign to each vertex the color of its closest sample
+        var v_it: SurfaceMesh.CellIterator = try .init(sd.surface_mesh, .vertex);
+        defer v_it.deinit();
+        while (v_it.next()) |v| {
+            // if the closest source vertex is not defined, it means vertex v is not reachable from any source vertex
+            if (closest_source_vertex.value(v)) |source| {
+                const sample = source_vertex_sample.get(source).?; // get the sample corresponding to the closest source vertex
+                sd.vertex_color.valuePtr(v).* = sd.point_color.value(sample);
+            }
+        }
+        sd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sd.surface_mesh, .vertex, Vec3f, sd.vertex_color);
+
+        // update the samples SurfaceMesh
+        sd.samples_surface_mesh.clearRetainingCapacity();
+        const darts_of_vertex = try sd.samples_surface_mesh.addData(.vertex, std.ArrayList(SurfaceMesh.Dart), "darts_of_vertex");
+        defer sd.samples_surface_mesh.removeData(.vertex, std.ArrayList(SurfaceMesh.Dart), darts_of_vertex);
+        var darts_array_lists_arena = std.heap.ArenaAllocator.init(sd.app_ctx.allocator);
+        defer darts_array_lists_arena.deinit();
+        // map each sample point to its corresponding vertex index in the samples SurfaceMesh
+        const sample_surface_mesh_vertex_index = try sd.samples.addData(u32, "sample_surface_mesh_vertex_index");
+        defer sd.samples.removeData(u32, sample_surface_mesh_vertex_index);
         point_it.reset();
         while (point_it.next()) |point| {
-            sample_neighbors.valuePtr(point).* = .empty;
-        }
-        defer {
-            point_it.reset();
-            while (point_it.next()) |point| {
-                sample_neighbors.valuePtr(point).deinit(sd.app_ctx.allocator);
+            const sp = sd.point_surface_point.value(point);
+            if (sp.type == .vertex) {
+                const vertex_index = try sd.samples_surface_mesh.getDataIndex(.vertex); // get a new vertex index
+                sd.ssm_vertex_position.valuePtrByIndex(vertex_index).* = sd.point_position.value(point); // copy the position of the sample point to the new vertex
+                sd.ssm_vertex_sample.valuePtrByIndex(vertex_index).* = point; // map the new vertex to the sample point
+                sample_surface_mesh_vertex_index.valuePtr(point).* = vertex_index; // map the sample point to the new vertex index
+                darts_of_vertex.valuePtrByIndex(vertex_index).* = .empty; // no darts yet for this vertex
             }
         }
-        var e_it: SurfaceMesh.CellIterator = try .init(sd.surface_mesh, .edge);
-        defer e_it.deinit();
-        while (e_it.next()) |e| {
-            const v1 = closest_source_vertex.value(.{ .vertex = e.dart() });
-            const v2 = closest_source_vertex.value(.{ .vertex = sd.surface_mesh.phi1(e.dart()) });
-            if (v1 == null or v2 == null) {
-                continue; // one of the vertices is not reachable from any sample, skip this edge
-            }
-            const s1 = source_vertex_sample.get(v1.?).?;
-            const s2 = source_vertex_sample.get(v2.?).?;
-            if (s1 != s2) {
-                try sample_neighbors.valuePtr(s1).put(sd.app_ctx.allocator, s2, {});
-                try sample_neighbors.valuePtr(s2).put(sd.app_ctx.allocator, s1, {});
-            }
-        }
-        var sample_scg_vertex = try sd.samples.addData(IncidenceGraph.Cell, "__sample_scg_vertex");
-        defer sd.samples.removeData(IncidenceGraph.Cell, sample_scg_vertex);
-        sd.samples_connection_graph.clearRetainingCapacity();
-        point_it.reset();
-        while (point_it.next()) |point| {
-            const v = try sd.samples_connection_graph.addVertex();
-            sample_scg_vertex.valuePtr(point).* = v;
-            sd.scg_vertex_position.valuePtr(v).* = sd.point_position.value(point);
-            const p_neighbors = sample_neighbors.valuePtr(point);
-            for (p_neighbors.keys()) |pn| {
-                if (pn < point) {
-                    const sn_v = sample_scg_vertex.value(pn);
-                    _ = try sd.samples_connection_graph.addEdge(v, sn_v);
+        // create a face in the samples SurfaceMesh for each face in the original SurfaceMesh that has 3 different closest source vertices
+        var f_it: SurfaceMesh.CellIterator = try .init(sd.surface_mesh, .face);
+        defer f_it.deinit();
+        while (f_it.next()) |f| {
+            const v0 = closest_source_vertex.value(.{ .vertex = f.dart() });
+            const v1 = closest_source_vertex.value(.{ .vertex = sd.surface_mesh.phi1(f.dart()) });
+            const v2 = closest_source_vertex.value(.{ .vertex = sd.surface_mesh.phi_1(f.dart()) });
+            if (v0 != null and v1 != null and v2 != null) {
+                const s0 = source_vertex_sample.get(v0.?).?;
+                const s1 = source_vertex_sample.get(v1.?).?;
+                const s2 = source_vertex_sample.get(v2.?).?;
+                if (s0 != s1 and s1 != s2 and s2 != s0) {
+                    const s0_vertex_index = sample_surface_mesh_vertex_index.value(s0);
+                    const s1_vertex_index = sample_surface_mesh_vertex_index.value(s1);
+                    const s2_vertex_index = sample_surface_mesh_vertex_index.value(s2);
+                    const face = try sd.samples_surface_mesh.addUnboundedFace(3);
+                    const d0 = face.dart();
+                    const d1 = sd.samples_surface_mesh.phi1(d0);
+                    const d2 = sd.samples_surface_mesh.phi1(d1);
+                    // index the darts of the new face with the corresponding vertex indices in the samples SurfaceMesh
+                    sd.samples_surface_mesh.setDartCellIndex(d0, .vertex, s0_vertex_index);
+                    sd.samples_surface_mesh.setDartCellIndex(d1, .vertex, s1_vertex_index);
+                    sd.samples_surface_mesh.setDartCellIndex(d2, .vertex, s2_vertex_index);
+                    // register the new darts in the darts_of_vertex data of the vertices of the samples SurfaceMesh (used to reconstruct phi2)
+                    try darts_of_vertex.valuePtrByIndex(s0_vertex_index).append(darts_array_lists_arena.allocator(), d0);
+                    try darts_of_vertex.valuePtrByIndex(s1_vertex_index).append(darts_array_lists_arena.allocator(), d1);
+                    try darts_of_vertex.valuePtrByIndex(s2_vertex_index).append(darts_array_lists_arena.allocator(), d2);
                 }
             }
         }
-        sd.app_ctx.incidence_graph_store.incidenceGraphConnectivityUpdated(sd.samples_connection_graph);
-        sd.app_ctx.incidence_graph_store.incidenceGraphDataUpdated(sd.samples_connection_graph, .vertex, Vec3f, sd.scg_vertex_position);
-
-        // assign to each vertex the color of its closest sample
-        var vertex_it: SurfaceMesh.CellIterator = try .init(sd.surface_mesh, .vertex);
-        defer vertex_it.deinit();
-        while (vertex_it.next()) |v| {
-            const cv = closest_source_vertex.value(v);
-            if (cv == null) {
-                continue; // this vertex is not reachable from any sample, skip it
+        var nb_boundary_edges: u32 = 0;
+        var dart_it = sd.samples_surface_mesh.dartIterator();
+        while (dart_it.next()) |d| {
+            if (sd.samples_surface_mesh.phi2(d) == d) {
+                const vertex_index = sd.samples_surface_mesh.dartCellIndex(d, .vertex);
+                const next_vertex_index = sd.samples_surface_mesh.dartCellIndex(sd.samples_surface_mesh.phi1(d), .vertex);
+                const next_vertex_darts = darts_of_vertex.valueByIndex(next_vertex_index);
+                const opposite_dart = for (next_vertex_darts.items) |d2| {
+                    if (sd.samples_surface_mesh.dartCellIndex(sd.samples_surface_mesh.phi1(d2), .vertex) == vertex_index) {
+                        break d2;
+                    }
+                } else null;
+                if (opposite_dart) |d2| {
+                    sd.samples_surface_mesh.phi2Sew(d, d2);
+                } else {
+                    nb_boundary_edges += 1;
+                }
             }
-            sd.vertex_color.valuePtr(v).* = sd.point_color.value(source_vertex_sample.get(cv.?).?);
         }
-        sd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sd.surface_mesh, .vertex, Vec3f, sd.vertex_color);
+        if (nb_boundary_edges > 0) {
+            zgp_log.info("found {d} boundary edges", .{nb_boundary_edges});
+            const nb_boundary_faces = try sd.samples_surface_mesh.close();
+            zgp_log.info("closed {d} boundary faces", .{nb_boundary_faces});
+        }
+        // vertices were already indexed above
+        try sd.samples_surface_mesh.indexCells(.edge);
+        try sd.samples_surface_mesh.indexCells(.face);
+
+        if (builtin.mode == .Debug) {
+            const ok = try sd.samples_surface_mesh.checkIntegrity();
+            if (!ok) {
+                zgp_log.err("Samples SurfaceMesh integrity check failed", .{});
+                return error.InvalidSamplesSurfaceMesh;
+            }
+        }
+
+        sd.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sd.samples_surface_mesh);
+        sd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sd.samples_surface_mesh, .vertex, Vec3f, sd.ssm_vertex_position);
 
         // first version of on surface edge paths between connected samples
         const shortest_paths_set = try sd.surface_mesh.getOrAddCellSet(.edge, "shortest_paths");
         shortest_paths_set.clear();
-        point_it.reset();
-        while (point_it.next()) |point| {
-            const p_neighbors = sample_neighbors.valuePtr(point);
-            for (p_neighbors.keys()) |pn| {
-                if (pn < point) {
-                    const start_v = sd.point_surface_point.value(point).type.vertex;
-                    const end_v = sd.point_surface_point.value(pn).type.vertex;
-                    var path = try distance.shortestEdgePathBetweenVertices(
-                        sd.app_ctx,
-                        sd.surface_mesh,
-                        start_v,
-                        end_v,
-                        edge_length,
-                    );
-                    defer path.deinit(sd.app_ctx.allocator);
-                    for (path.items) |d| {
-                        try shortest_paths_set.add(.{ .edge = d });
-                    }
-                }
+        var e_it: SurfaceMesh.CellIterator = try .init(sd.samples_surface_mesh, .edge);
+        defer e_it.deinit();
+        while (e_it.next()) |e| {
+            const start_v: SurfaceMesh.Cell = sd.point_surface_point.value(sd.ssm_vertex_sample.value(.{ .vertex = e.dart() })).type.vertex;
+            const end_v: SurfaceMesh.Cell = sd.point_surface_point.value(sd.ssm_vertex_sample.value(.{ .vertex = sd.samples_surface_mesh.phi1(e.dart()) })).type.vertex;
+            var path = try distance.shortestEdgePathBetweenVertices(
+                sd.app_ctx,
+                sd.surface_mesh,
+                start_v,
+                end_v,
+                edge_length,
+            );
+            defer path.deinit(sd.app_ctx.allocator);
+            for (path.items) |d| {
+                try shortest_paths_set.add(.{ .edge = d });
             }
         }
         sd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(sd.surface_mesh, shortest_paths_set);
@@ -283,189 +338,6 @@ const SamplingData = struct {
 
         sd.app_ctx.requestRedraw();
     }
-
-    // fn connectSamples(
-    //     sd: *SamplingData,
-    //     halfedge_cotan_weight: SurfaceMesh.CellData(.halfedge, f32),
-    //     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    //     vertex_area: SurfaceMesh.CellData(.vertex, f32),
-    //     edge_length: SurfaceMesh.CellData(.edge, f32),
-    //     face_area: SurfaceMesh.CellData(.face, f32),
-    //     face_normal: SurfaceMesh.CellData(.face, Vec3f),
-    // ) !void {
-    //     const t = std.Io.Timestamp.now(sd.app_ctx.io, .real);
-
-    //     // first compute the closest sample for each vertex of the SurfaceMesh
-
-    //     // compute the geodesic distance from each vertex of the SurfaceMesh to its closest sample
-    //     // (only consider samples that are vertex SurfacePoints for now)
-    //     // TODO: support samples that are edge or face SurfacePoints
-    //     const closest_sample_distance = try sd.surface_mesh.addData(.vertex, f32, "closest_sample_distance");
-    //     defer sd.surface_mesh.removeData(.vertex, f32, closest_sample_distance);
-    //     var source_vertices: std.ArrayList(SurfaceMesh.Cell) = try .initCapacity(sd.app_ctx.allocator, sd.samples.nbPoints());
-    //     defer source_vertices.deinit(sd.app_ctx.allocator);
-    //     var point_it = sd.samples.pointIterator();
-    //     while (point_it.next()) |point| {
-    //         const sp = sd.point_surface_point.value(point);
-    //         if (sp.type == .vertex) {
-    //             try source_vertices.append(sd.app_ctx.allocator, sp.type.vertex);
-    //         }
-    //     }
-    //     try distance.computeVertexGeodesicDistancesFromSource(
-    //         sd.app_ctx,
-    //         sd.surface_mesh,
-    //         source_vertices.items, // source should be SurfacePoints (for now they are SurfaceMesh Cells of type vertex)
-    //         1.0,
-    //         halfedge_cotan_weight,
-    //         vertex_position,
-    //         vertex_area,
-    //         edge_length,
-    //         face_area,
-    //         face_normal,
-    //         closest_sample_distance,
-    //     );
-
-    //     // starting from each sample, assign its closest sample to each vertex of the SurfaceMesh by making a
-    //     // flood fill using the geodesic distances computed above as the priority for the flood fill
-
-    //     // Priority queue type for vertices of the SurfaceMesh to expand from, ordered by their distance to their closest sample
-    //     const VertexQueueContext = struct {
-    //         surface_mesh: *SurfaceMesh,
-    //     };
-    //     const VertexInfo = struct {
-    //         const VertexInfo = @This();
-    //         vertex: SurfaceMesh.Cell,
-    //         point: PointCloud.Point,
-    //         distance: f32,
-    //         pub fn cmp(ctx: VertexQueueContext, a: VertexInfo, b: VertexInfo) std.math.Order {
-    //             const distance_order = std.math.order(a.distance, b.distance);
-    //             if (distance_order != .eq) return distance_order;
-    //             // tie-breaker: use vertex indices to have a deterministic order
-    //             return std.math.order(ctx.surface_mesh.cellIndex(a.vertex), ctx.surface_mesh.cellIndex(b.vertex));
-    //         }
-    //     };
-    //     const VertexQueue = std.PriorityQueue(VertexInfo, VertexQueueContext, VertexInfo.cmp);
-
-    //     var queue: VertexQueue = .initContext(.{ .surface_mesh = sd.surface_mesh });
-    //     defer queue.deinit(sd.app_ctx.allocator);
-    //     var vertex_marker: SurfaceMesh.CellMarker = try .init(sd.surface_mesh, .vertex);
-    //     defer vertex_marker.deinit();
-    //     point_it.reset();
-    //     while (point_it.next()) |point| {
-    //         const sp = sd.point_surface_point.value(point);
-    //         if (sp.type == .vertex) {
-    //             const v = sp.type.vertex;
-    //             try queue.push(sd.app_ctx.allocator, .{
-    //                 .vertex = v,
-    //                 .point = point,
-    //                 .distance = closest_sample_distance.value(v),
-    //             });
-    //         }
-    //     }
-    //     while (queue.pop()) |v_info| {
-    //         if (vertex_marker.isMarked(v_info.vertex)) {
-    //             continue;
-    //         }
-    //         vertex_marker.mark(v_info.vertex);
-    //         sd.vertex_closest_sample.valuePtr(v_info.vertex).* = v_info.point;
-    //         const cur_dist = closest_sample_distance.value(v_info.vertex);
-    //         var dart_it = sd.surface_mesh.cellDartIterator(v_info.vertex);
-    //         while (dart_it.next()) |d| {
-    //             const next_v: SurfaceMesh.Cell = .{ .vertex = sd.surface_mesh.phi1(d) };
-    //             if (!vertex_marker.isMarked(next_v)) {
-    //                 const next_dist = closest_sample_distance.value(next_v);
-    //                 if (next_dist > cur_dist) { // only expand to vertices that are further away from their closest sample
-    //                     try queue.push(sd.app_ctx.allocator, .{
-    //                         .vertex = next_v,
-    //                         .point = v_info.point,
-    //                         .distance = next_dist,
-    //                     });
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     // update the samples connection graph
-    //     var sample_neighbors = try sd.samples.addData(std.AutoArrayHashMapUnmanaged(PointCloud.Point, void), "__sample_neighbors");
-    //     defer sd.samples.removeData(std.AutoArrayHashMapUnmanaged(PointCloud.Point, void), sample_neighbors);
-    //     point_it.reset();
-    //     while (point_it.next()) |point| {
-    //         sample_neighbors.valuePtr(point).* = .empty;
-    //     }
-    //     defer {
-    //         point_it.reset();
-    //         while (point_it.next()) |point| {
-    //             sample_neighbors.valuePtr(point).deinit(sd.app_ctx.allocator);
-    //         }
-    //     }
-    //     var e_it: SurfaceMesh.CellIterator = try .init(sd.surface_mesh, .edge);
-    //     defer e_it.deinit();
-    //     while (e_it.next()) |e| {
-    //         const s1 = sd.vertex_closest_sample.value(.{ .vertex = e.dart() });
-    //         const s2 = sd.vertex_closest_sample.value(.{ .vertex = sd.surface_mesh.phi1(e.dart()) });
-    //         if (s1 != s2) {
-    //             try sample_neighbors.valuePtr(s1).put(sd.app_ctx.allocator, s2, {});
-    //             try sample_neighbors.valuePtr(s2).put(sd.app_ctx.allocator, s1, {});
-    //         }
-    //     }
-    //     var sample_scg_vertex = try sd.samples.addData(IncidenceGraph.Cell, "__sample_scg_vertex");
-    //     defer sd.samples.removeData(IncidenceGraph.Cell, sample_scg_vertex);
-    //     sd.samples_connection_graph.clearRetainingCapacity();
-    //     point_it.reset();
-    //     while (point_it.next()) |point| {
-    //         const v = try sd.samples_connection_graph.addVertex();
-    //         sample_scg_vertex.valuePtr(point).* = v;
-    //         sd.scg_vertex_position.valuePtr(v).* = sd.point_position.value(point);
-    //         const p_neighbors = sample_neighbors.valuePtr(point);
-    //         for (p_neighbors.keys()) |pn| {
-    //             if (pn < point) {
-    //                 const sn_v = sample_scg_vertex.value(pn);
-    //                 _ = try sd.samples_connection_graph.addEdge(v, sn_v);
-    //             }
-    //         }
-    //     }
-    //     sd.app_ctx.incidence_graph_store.incidenceGraphConnectivityUpdated(sd.samples_connection_graph);
-    //     sd.app_ctx.incidence_graph_store.incidenceGraphDataUpdated(sd.samples_connection_graph, .vertex, Vec3f, sd.scg_vertex_position);
-
-    //     // assign to each vertex the color of its closest sample
-    //     var vertex_it: SurfaceMesh.CellIterator = try .init(sd.surface_mesh, .vertex);
-    //     defer vertex_it.deinit();
-    //     while (vertex_it.next()) |v| {
-    //         sd.vertex_color.valuePtr(v).* = sd.point_color.value(sd.vertex_closest_sample.value(v));
-    //     }
-    //     sd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sd.surface_mesh, .vertex, Vec3f, sd.vertex_color);
-
-    //     // first version of on surface edge paths between connected samples
-    //     const shortest_paths_set = try sd.surface_mesh.getOrAddCellSet(.edge, "shortest_paths");
-    //     shortest_paths_set.clear();
-    //     point_it.reset();
-    //     while (point_it.next()) |point| {
-    //         const p_neighbors = sample_neighbors.valuePtr(point);
-    //         for (p_neighbors.keys()) |pn| {
-    //             if (pn < point) {
-    //                 const start_v = sd.point_surface_point.value(point).type.vertex;
-    //                 const end_v = sd.point_surface_point.value(pn).type.vertex;
-    //                 var path = try distance.shortestEdgePathBetweenVertices(
-    //                     sd.app_ctx,
-    //                     sd.surface_mesh,
-    //                     start_v,
-    //                     end_v,
-    //                     edge_length,
-    //                 );
-    //                 defer path.deinit(sd.app_ctx.allocator);
-    //                 for (path.items) |d| {
-    //                     try shortest_paths_set.add(.{ .edge = d });
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     sd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(sd.surface_mesh, shortest_paths_set);
-
-    //     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, sd.app_ctx.io, .real).nanoseconds);
-    //     zgp_log.info("Samples connection graph computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
-
-    //     sd.app_ctx.requestRedraw();
-    // }
 };
 
 app_ctx: *AppContext,
