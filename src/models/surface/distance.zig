@@ -113,12 +113,8 @@ pub fn multiSourceDijkstraDistancesAndSources(
     assert(source_vertices.len > 0);
 
     // initialize all vertex distances to infinity and sources to null
-    var vertex_it: SurfaceMesh.CellIterator = try .init(sm, .vertex);
-    defer vertex_it.deinit();
-    while (vertex_it.next()) |v| {
-        vertex_distance.valuePtr(v).* = std.math.inf(f32);
-        vertex_source.valuePtr(v).* = null;
-    }
+    vertex_distance.data.fill(std.math.inf(f32));
+    vertex_source.data.fill(null);
 
     // Priority queue type for vertices of the SurfaceMesh, ordered by their distance from the closest source vertex
     const VertexQueueContext = struct {

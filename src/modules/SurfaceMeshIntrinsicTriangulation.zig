@@ -31,7 +31,7 @@ const laplacian = @import("../models/surface/laplacian.zig");
 const geodesic = @import("../models/surface/geodesic.zig");
 const distance = @import("../models/surface/distance.zig");
 
-const ITData = struct {
+pub const ITData = struct {
     app_ctx: *AppContext,
 
     // the extrinsic SurfaceMesh is the triangular mesh on which the intrinsic triangulation is built
@@ -49,8 +49,7 @@ const ITData = struct {
     // TODO: manage boundary vertices (the representative Dart of a boundary vertex might not be on the boundary,
     // which causes issues if we want to use it as representative for the angles of the halfedges around the vertex)
 
-    extrinsic_surface_mesh: *SurfaceMesh = undefined,
-    extrinsic_vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
+    extrinsic_surface_mesh: *SurfaceMesh,
     extrinsic_edge_length: SurfaceMesh.CellData(.edge, f32) = undefined,
     extrinsic_corner_angle: SurfaceMesh.CellData(.corner, f32) = undefined,
     extrinsic_vertex_angle_sum: SurfaceMesh.CellData(.vertex, f32) = undefined,
@@ -77,15 +76,11 @@ const ITData = struct {
 
     initialized: bool = false,
 
-    fn init(
+    pub fn init(
         itd: *ITData,
-        extrinsic_surface_mesh: *SurfaceMesh,
-        extrinsic_vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
         extrinsic_edge_length: SurfaceMesh.CellData(.edge, f32),
         extrinsic_corner_angle: SurfaceMesh.CellData(.corner, f32),
     ) !void {
-        itd.extrinsic_surface_mesh = extrinsic_surface_mesh;
-        itd.extrinsic_vertex_position = extrinsic_vertex_position;
         itd.extrinsic_edge_length = extrinsic_edge_length;
         itd.extrinsic_corner_angle = extrinsic_corner_angle;
         // create and compute extrinsic vertex angle sums
@@ -106,7 +101,7 @@ const ITData = struct {
             itd.intrinsic_surface_mesh.deinit();
             itd.app_ctx.allocator.destroy(itd.intrinsic_surface_mesh);
         }
-        itd.intrinsic_surface_mesh = try extrinsic_surface_mesh.cloneWithoutCellData(itd.app_ctx.allocator);
+        itd.intrinsic_surface_mesh = try itd.extrinsic_surface_mesh.cloneWithoutCellData(itd.app_ctx.allocator);
         itd.intrinsic_edge_length = try itd.intrinsic_surface_mesh.addData(.edge, f32, "length");
         itd.intrinsic_corner_angle = try itd.intrinsic_surface_mesh.addData(.corner, f32, "corner_angle");
         itd.intrinsic_face_area = try itd.intrinsic_surface_mesh.addData(.face, f32, "area");
@@ -119,7 +114,7 @@ const ITData = struct {
         // initialize intrinsic edge lengths from extrinsic edge lengths
         // (indices coincide after cloning so we can directly copy the raw data)
         itd.intrinsic_edge_length.data.copyFrom(extrinsic_edge_length.data);
-        // compute intrinsic corner angles
+        // compute intrinsic corner angles (could be copied from extrinsic corner angles)
         try angle.computeCornerAnglesIntrinsic(itd.app_ctx, itd.intrinsic_surface_mesh, itd.intrinsic_edge_length, itd.intrinsic_corner_angle);
         // compute intrinsic face areas
         try area.computeFaceAreasIntrinsic(itd.app_ctx, itd.intrinsic_surface_mesh, itd.intrinsic_edge_length, itd.intrinsic_face_area);
@@ -158,6 +153,7 @@ const ITData = struct {
 
         itd.initialized = true;
 
+        // the common subdivision incidence graph is only used when tracing the intrinsic edges on the extrinsic mesh
         itd.common_subd_ig = try itd.app_ctx.incidence_graph_store.createIncidenceGraph("common_subd");
         itd.ig_vertex_position = try itd.common_subd_ig.addData(.vertex, Vec3f, "position");
         itd.app_ctx.incidence_graph_store.setIncidenceGraphStdData(itd.common_subd_ig, .{ .vertex_position = itd.ig_vertex_position });
@@ -175,7 +171,7 @@ const ITData = struct {
             while (edge_it.next()) |e| {
                 itd.intrinsic_edge_trace.valuePtr(e).deinit(itd.app_ctx.allocator);
             }
-            edge_it.deinit(); // this deinit is not deferred because it must not be called after the intrinsic_surface_mesh is deinit and destroyed
+            edge_it.deinit(); // this deinit is not deferred because it must be called before the intrinsic_surface_mesh is deinit and destroyed
 
             itd.intrinsic_surface_mesh.deinit();
             itd.app_ctx.allocator.destroy(itd.intrinsic_surface_mesh);
@@ -194,7 +190,7 @@ const ITData = struct {
         return .{ t_ray, t_seg };
     }
 
-    fn traceIntrinsicEdges(itd: *ITData) !void {
+    fn traceIntrinsicEdges(itd: *ITData, extrinsic_vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
         // clear the common subdivision incidence graph
         itd.common_subd_ig.clearRetainingCapacity();
 
@@ -212,8 +208,8 @@ const ITData = struct {
                 try itd.intrinsic_edge_trace.valuePtr(e).append(itd.app_ctx.allocator, dst_sp);
 
                 // add the vertices and edge to the common subdivision incidence graph
-                const p1 = src_sp.readData(Vec3f, .vertex, itd.extrinsic_vertex_position);
-                const p2 = dst_sp.readData(Vec3f, .vertex, itd.extrinsic_vertex_position);
+                const p1 = src_sp.readData(Vec3f, .vertex, extrinsic_vertex_position);
+                const p2 = dst_sp.readData(Vec3f, .vertex, extrinsic_vertex_position);
                 const igv1 = try itd.common_subd_ig.addVertex();
                 const igv2 = try itd.common_subd_ig.addVertex();
                 itd.ig_vertex_position.valuePtr(igv1).* = p1;
@@ -242,7 +238,7 @@ const ITData = struct {
             var previous_sp: ?SurfacePoint = null;
             var previous_igv: ?IncidenceGraph.Cell = null;
             for (itd.intrinsic_edge_trace.value(e).items) |sp| {
-                const pos = sp.readData(Vec3f, .vertex, itd.extrinsic_vertex_position);
+                const pos = sp.readData(Vec3f, .vertex, extrinsic_vertex_position);
                 const igv = try itd.common_subd_ig.addVertex();
                 itd.ig_vertex_position.valuePtr(igv).* = pos;
                 if (previous_sp) |_| {
@@ -258,7 +254,7 @@ const ITData = struct {
         itd.app_ctx.requestRedraw();
     }
 
-    fn flipToDelaunay(itd: *ITData) !void {
+    pub fn flipToDelaunay(itd: *ITData) !void {
         var edges_queue: std.ArrayList(SurfaceMesh.Cell) = try .initCapacity(itd.app_ctx.allocator, itd.intrinsic_surface_mesh.nbCells(.edge));
         defer edges_queue.deinit(itd.app_ctx.allocator);
         var edge_it: SurfaceMesh.CellIterator = try .init(itd.intrinsic_surface_mesh, .edge);
@@ -314,7 +310,7 @@ const ITData = struct {
                 callbacks.afterEdgeFlip(e);
             }
 
-            // the 4 incident edges of the flipped edge might not be Delaunay anymore, so we add them to the queue if they are not already in
+            // the 4 incident edges of the flipped edge might not be Delaunay anymore, so we add them to the queue if they are not already
             const d = e.dart();
             const dd = itd.intrinsic_surface_mesh.phi2(d);
             const edges: [4]SurfaceMesh.Cell = .{
@@ -655,7 +651,7 @@ const ITData = struct {
             itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = dA2 }).* + itd.intrinsic_corner_angle.value(.{ .corner = dA2 });
 
         // if the endpoints of the flipped edge are mapped to extrinsic vertices (SurfacePoints of vertex type), then the extrinsic to intrinsic vertex mapping must be updated
-        // (the representative Dart of the intrinsic vertex might might be the flipped edge's Dart, which has moved to a different vertex after the flip)
+        // (the representative Dart of the intrinsic vertex might be the flipped edge's Dart, which has moved to a different vertex after the flip)
         const p0sp = itd.intrinsic_vertex_extrinsic_sp.value(.{ .vertex = dA1 });
         if (p0sp.type == .vertex) {
             itd.extrinsic_vertex_intrinsic_vertex.valuePtr(p0sp.type.vertex).* = .{ .vertex = dA1 };
@@ -1085,11 +1081,18 @@ pub fn deinit(smit: *SurfaceMeshIntrinsicTriangulation) void {
     smit.surface_meshes_data.deinit(smit.app_ctx.allocator);
 }
 
+pub fn surfaceMeshIntrinsicTriangulationData(smit: *SurfaceMeshIntrinsicTriangulation, surface_mesh: *SurfaceMesh) *ITData {
+    return smit.surface_meshes_data.getPtr(surface_mesh).?;
+}
+
 /// Part of the Module interface.
 /// Create and store a ITData for the created SurfaceMesh.
 pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const smit: *SurfaceMeshIntrinsicTriangulation = @alignCast(@fieldParentPtr("module", m));
-    smit.surface_meshes_data.put(smit.app_ctx.allocator, surface_mesh, .{ .app_ctx = smit.app_ctx }) catch |err| {
+    smit.surface_meshes_data.put(smit.app_ctx.allocator, surface_mesh, .{
+        .app_ctx = smit.app_ctx,
+        .extrinsic_surface_mesh = surface_mesh,
+    }) catch |err| {
         std.debug.print("Failed to store ITData for new SurfaceMesh: {}\n", .{err});
         return;
     };
@@ -1126,7 +1129,6 @@ pub fn rightPanel(m: *Module) void {
 
     if (!itd.initialized) {
         const disabled =
-            info.std_datas.vertex_position == null or
             info.std_datas.edge_length == null or
             info.std_datas.corner_angle == null;
         if (disabled) {
@@ -1134,8 +1136,6 @@ pub fn rightPanel(m: *Module) void {
         }
         if (c.ImGui_ButtonEx("Initialize intrinsic triangulation", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
             itd.init(
-                sm,
-                info.std_datas.vertex_position.?,
                 info.std_datas.edge_length.?,
                 info.std_datas.corner_angle.?,
             ) catch |err| {
@@ -1145,7 +1145,6 @@ pub fn rightPanel(m: *Module) void {
         if (disabled) {
             imgui_utils.tooltip(
                 \\ Following data should be available:
-                \\ - std vertex_position
                 \\ - std edge_length
                 \\ - std corner_angle
             );
@@ -1194,10 +1193,23 @@ pub fn rightPanel(m: *Module) void {
                 c.ImGui_EndDisabled();
             }
         }
-        if (c.ImGui_ButtonEx("Trace intrinsic edges", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            itd.traceIntrinsicEdges() catch |err| {
-                std.debug.print("Error tracing intrinsic edges: {}\n", .{err});
-            };
+        {
+            const disabled = info.std_datas.vertex_position == null;
+            if (disabled) {
+                c.ImGui_BeginDisabled(true);
+            }
+            if (c.ImGui_ButtonEx("Trace intrinsic edges", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                itd.traceIntrinsicEdges(info.std_datas.vertex_position.?) catch |err| {
+                    std.debug.print("Error tracing intrinsic edges: {}\n", .{err});
+                };
+            }
+            if (disabled) {
+                imgui_utils.tooltip(
+                    \\ Following data should be available:
+                    \\ - std vertex_position
+                );
+                c.ImGui_EndDisabled();
+            }
         }
     }
 }

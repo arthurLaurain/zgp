@@ -15,6 +15,8 @@ const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfacePoint = @import("../models/surface/SurfacePoint.zig");
 const PointCloud = @import("../models/point/PointCloud.zig");
 
+const SurfaceMeshIntrinsicTriangulation = @import("../modules/SurfaceMeshIntrinsicTriangulation.zig");
+
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 const bvh = @import("../geometry/bvh.zig");
@@ -24,9 +26,7 @@ const distance = @import("../models/surface/distance.zig");
 
 const ParameterizationData = struct {
     app_ctx: *AppContext,
-
     surface_mesh: *SurfaceMesh,
-    sm_vertex_color: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
 
     samples: ?*PointCloud = null,
     sample_position: PointCloud.CellData(Vec3f) = undefined,
@@ -121,11 +121,24 @@ const ParameterizationData = struct {
     fn connectSamples(
         pd: *ParameterizationData,
         edge_length: SurfaceMesh.CellData(.edge, f32),
+        corner_angle: SurfaceMesh.CellData(.corner, f32),
+        itd: *SurfaceMeshIntrinsicTriangulation.ITData,
     ) !void {
         if (pd.samples == null) {
             return error.SamplesNotGenerated;
         }
 
+        // if needed, initialize the intrinsic triangulation and flip edges to make it Delaunay
+        if (!itd.initialized) {
+            itd.init(edge_length, corner_angle) catch |err| {
+                std.debug.print("Error during intrinsic triangulation initialization: {}\n", .{err});
+            };
+            itd.flipToDelaunay() catch |err| {
+                std.debug.print("Error during intrinsic triangulation Delaunay flip: {}\n", .{err});
+            };
+        }
+
+        // create or clear the samples SurfaceMesh and its associated data
         if (pd.samples_surface_mesh) |ssm| {
             var e_it = try SurfaceMesh.CellIterator.init(ssm, .edge);
             defer e_it.deinit();
@@ -141,50 +154,75 @@ const ParameterizationData = struct {
             pd.ssm_vertex_sample = try pd.samples_surface_mesh.?.addData(.vertex, PointCloud.Point, "sample");
             pd.ssm_edge_path = try pd.samples_surface_mesh.?.addData(.edge, std.ArrayList(SurfaceMesh.Dart), "edge_path");
             pd.app_ctx.surface_mesh_store.setSurfaceMeshStdData(pd.samples_surface_mesh.?, .{ .vertex_position = pd.ssm_vertex_position });
-
-            pd.sm_vertex_color = try pd.surface_mesh.addData(.vertex, Vec3f, "closest_sample_color");
         }
 
         const t = std.Io.Timestamp.now(pd.app_ctx.io, .real);
 
         // each sample corresponds to a vertex in the underlying SurfaceMesh (samples have been snapped to vertices)
-        // these vertices are the source vertices
-        var source_vertices: std.ArrayList(SurfaceMesh.Cell) = try .initCapacity(pd.app_ctx.allocator, pd.samples.?.nbPoints());
-        defer source_vertices.deinit(pd.app_ctx.allocator);
-        // use a hashmap to map each source vertex back to its corresponding sample
-        // (could have use a VertexData but there are not so many vertices that correspond to samples, so it would have been mostly empty)
-        var source_vertex_sample: std.AutoArrayHashMapUnmanaged(SurfaceMesh.Cell, PointCloud.Point) = .empty;
+        // these vertices are used as the source vertices of a multi-source Dijkstra algorithm
+        // that is performed on the intrinsic triangulation
+
+        var it_source_vertices: std.ArrayList(SurfaceMesh.Cell) = try .initCapacity(pd.app_ctx.allocator, pd.samples.?.nbPoints());
+        defer it_source_vertices.deinit(pd.app_ctx.allocator);
+
+        // a hashmap to map each source vertex (represented by its index) back to its corresponding sample
+        var source_vertex_sample: std.AutoArrayHashMapUnmanaged(u32, PointCloud.Point) = .empty;
         defer source_vertex_sample.deinit(pd.app_ctx.allocator);
+
         var point_it = pd.samples.?.pointIterator();
         while (point_it.next()) |sample| {
             const sp = pd.sample_surface_point.value(sample);
             // TODO: support samples that are edge or face SurfacePoints
             if (sp.type == .vertex) {
-                try source_vertices.append(pd.app_ctx.allocator, sp.type.vertex);
-                try source_vertex_sample.put(pd.app_ctx.allocator, sp.type.vertex, sample);
+                const it_v = itd.extrinsic_vertex_intrinsic_vertex.value(sp.type.vertex);
+                try it_source_vertices.append(pd.app_ctx.allocator, it_v);
+                try source_vertex_sample.put(pd.app_ctx.allocator, pd.surface_mesh.cellIndex(sp.type.vertex), sample);
             }
         }
-        // compute the closest source vertex and distance to it for each vertex of the underlying SurfaceMesh
-        const closest_source_distance = try pd.surface_mesh.addData(.vertex, f32, "closest_source_distance");
-        defer pd.surface_mesh.removeData(.vertex, f32, closest_source_distance);
-        const closest_source_vertex = try pd.surface_mesh.addData(.vertex, ?SurfaceMesh.Cell, "closest_source_vertex");
-        defer pd.surface_mesh.removeData(.vertex, ?SurfaceMesh.Cell, closest_source_vertex);
-        try distance.multiSourceDijkstraDistancesAndSources(pd.app_ctx, pd.surface_mesh, source_vertices.items, edge_length, closest_source_distance, closest_source_vertex);
 
-        // assign to each vertex of the underlying SurfaceMesh the color of its closest sample
-        var sm_v_it: SurfaceMesh.CellIterator = try .init(pd.surface_mesh, .vertex);
-        defer sm_v_it.deinit();
-        while (sm_v_it.next()) |v| {
-            // if the closest source vertex is not defined, it means vertex v is not reachable from any source vertex
-            if (closest_source_vertex.value(v)) |sv| {
-                const sample = source_vertex_sample.get(sv).?; // get the sample corresponding to the closest source vertex
-                pd.sm_vertex_color.valuePtr(v).* = pd.sample_color.value(sample);
+        // compute the closest source vertex and distance to it for each vertex in the intrinsic triangulation
+        const it_closest_source_distance = try itd.intrinsic_surface_mesh.addData(.vertex, f32, "it_closest_source_distance");
+        defer itd.intrinsic_surface_mesh.removeData(.vertex, f32, it_closest_source_distance);
+        const it_closest_source_vertex = try itd.intrinsic_surface_mesh.addData(.vertex, ?SurfaceMesh.Cell, "it_closest_source_vertex");
+        defer itd.intrinsic_surface_mesh.removeData(.vertex, ?SurfaceMesh.Cell, it_closest_source_vertex);
+        try distance.multiSourceDijkstraDistancesAndSources(
+            pd.app_ctx,
+            itd.intrinsic_surface_mesh,
+            it_source_vertices.items,
+            itd.intrinsic_edge_length,
+            it_closest_source_distance,
+            it_closest_source_vertex,
+        );
+
+        // copy back the data in the underlying SurfaceMesh, so that it can be used to inspect the distance or the color of the closest sample
+        const vertex_distance = try pd.surface_mesh.getOrAddData(.vertex, f32, "closest_source_distance");
+        const vertex_color = try pd.surface_mesh.getOrAddData(.vertex, Vec3f, "closest_sample_color");
+        var it_v_it: SurfaceMesh.CellIterator = try .init(itd.intrinsic_surface_mesh, .vertex);
+        defer it_v_it.deinit();
+        while (it_v_it.next()) |it_v| {
+            // v is the vertex in the underlying SurfaceMesh corresponding to the intrinsic vertex it_v
+            const v = itd.intrinsic_vertex_extrinsic_sp.value(it_v).type.vertex;
+            vertex_distance.valuePtr(v).* = it_closest_source_distance.value(it_v);
+            // if the closest source vertex of it_v is not defined, it means it was not reachable from any source vertex
+            if (it_closest_source_vertex.value(it_v)) |it_sv| {
+                // sv is the vertex in the underlying SurfaceMesh corresponding to the intrinsic source vertex it_sv
+                const sv = itd.intrinsic_vertex_extrinsic_sp.value(it_sv).type.vertex;
+                const sample = source_vertex_sample.get(pd.surface_mesh.cellIndex(sv)).?; // get the sample corresponding to the closest source vertex
+                vertex_color.valuePtr(v).* = pd.sample_color.value(sample);
+            } else {
+                std.debug.print("Vertex {d} is not reachable from any source vertex\n", .{pd.surface_mesh.cellIndex(v)});
             }
         }
-        pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.surface_mesh, .vertex, Vec3f, pd.sm_vertex_color);
+        pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.surface_mesh, .vertex, f32, vertex_distance);
+        pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.surface_mesh, .vertex, Vec3f, vertex_color);
 
         // build the samples SurfaceMesh as the dual of the partition of the underlying SurfaceMesh induced by the computed closest source vertices
-        // this data is used to reconstruct the adjacency between faces after they have been created
+        defer {
+            // declare connectivity and position update after the samples SurfaceMesh has been built
+            pd.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(pd.samples_surface_mesh.?);
+            pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.samples_surface_mesh.?, .vertex, Vec3f, pd.ssm_vertex_position);
+        }
+        // the following data is used to reconstruct the adjacency between faces after they have been created
         const ssm_darts_of_vertex = try pd.samples_surface_mesh.?.addData(.vertex, std.ArrayList(SurfaceMesh.Dart), "darts_of_vertex");
         defer pd.samples_surface_mesh.?.removeData(.vertex, std.ArrayList(SurfaceMesh.Dart), ssm_darts_of_vertex);
         var darts_array_lists_arena = std.heap.ArenaAllocator.init(pd.app_ctx.allocator);
@@ -201,36 +239,39 @@ const ParameterizationData = struct {
                 pd.ssm_vertex_position.valuePtrByIndex(vertex_index).* = pd.sample_position.value(sample); // copy the position of the sample to the new vertex
                 pd.ssm_vertex_sample.valuePtrByIndex(vertex_index).* = sample; // map the new vertex to the sample
                 sample_ssm_vertex_index.valuePtr(sample).* = vertex_index; // map the sample to the new vertex index
-                ssm_darts_of_vertex.valuePtrByIndex(vertex_index).* = .empty; // no darts yet for this vertex
+                ssm_darts_of_vertex.valuePtrByIndex(vertex_index).* = try .initCapacity(darts_array_lists_arena.allocator(), 8);
             }
         }
-        // create a face in the samples SurfaceMesh for each face in the underlying SurfaceMesh that has 3 different closest source vertices
-        var sm_f_it: SurfaceMesh.CellIterator = try .init(pd.surface_mesh, .face);
-        defer sm_f_it.deinit();
-        while (sm_f_it.next()) |f| {
-            const v0 = closest_source_vertex.value(.{ .vertex = f.dart() });
-            const v1 = closest_source_vertex.value(.{ .vertex = pd.surface_mesh.phi1(f.dart()) });
-            const v2 = closest_source_vertex.value(.{ .vertex = pd.surface_mesh.phi_1(f.dart()) });
-            if (v0 != null and v1 != null and v2 != null) {
-                const s0 = source_vertex_sample.get(v0.?).?; // these vertices are source vertices, so they must have a corresponding sample
-                const s1 = source_vertex_sample.get(v1.?).?;
-                const s2 = source_vertex_sample.get(v2.?).?;
+        // create a face in the samples SurfaceMesh for each face in the intrinsic triangulation that has 3 different closest source vertices
+        var it_f_it: SurfaceMesh.CellIterator = try .init(itd.intrinsic_surface_mesh, .face);
+        defer it_f_it.deinit();
+        while (it_f_it.next()) |f| {
+            const it_sv0 = it_closest_source_vertex.value(.{ .vertex = f.dart() });
+            const it_sv1 = it_closest_source_vertex.value(.{ .vertex = itd.intrinsic_surface_mesh.phi1(f.dart()) });
+            const it_sv2 = it_closest_source_vertex.value(.{ .vertex = itd.intrinsic_surface_mesh.phi_1(f.dart()) });
+            if (it_sv0 != null and it_sv1 != null and it_sv2 != null) {
+                const sv0 = itd.intrinsic_vertex_extrinsic_sp.value(it_sv0.?).type.vertex; // get the corresponding vertex in the underlying SurfaceMesh
+                const sv1 = itd.intrinsic_vertex_extrinsic_sp.value(it_sv1.?).type.vertex;
+                const sv2 = itd.intrinsic_vertex_extrinsic_sp.value(it_sv2.?).type.vertex;
+                const s0 = source_vertex_sample.get(pd.surface_mesh.cellIndex(sv0)).?; // these vertices are source vertices, so they must have a corresponding sample
+                const s1 = source_vertex_sample.get(pd.surface_mesh.cellIndex(sv1)).?;
+                const s2 = source_vertex_sample.get(pd.surface_mesh.cellIndex(sv2)).?;
                 if (s0 != s1 and s1 != s2 and s2 != s0) {
-                    const s0_vertex_index = sample_ssm_vertex_index.value(s0); // get the vertex indices in the samples SurfaceMesh corresponding to the samples
-                    const s1_vertex_index = sample_ssm_vertex_index.value(s1);
-                    const s2_vertex_index = sample_ssm_vertex_index.value(s2);
+                    const s0_ssm_vertex_index = sample_ssm_vertex_index.value(s0); // get the vertex indices in the samples SurfaceMesh corresponding to the samples
+                    const s1_ssm_vertex_index = sample_ssm_vertex_index.value(s1);
+                    const s2_ssm_vertex_index = sample_ssm_vertex_index.value(s2);
                     const face = try pd.samples_surface_mesh.?.addUnboundedFace(3); // create a new triangle face in the samples SurfaceMesh
                     const d0 = face.dart();
                     const d1 = pd.samples_surface_mesh.?.phi1(d0);
                     const d2 = pd.samples_surface_mesh.?.phi1(d1);
                     // index the darts of the new face with the corresponding vertex indices in the samples SurfaceMesh
-                    pd.samples_surface_mesh.?.setDartCellIndex(d0, .vertex, s0_vertex_index);
-                    pd.samples_surface_mesh.?.setDartCellIndex(d1, .vertex, s1_vertex_index);
-                    pd.samples_surface_mesh.?.setDartCellIndex(d2, .vertex, s2_vertex_index);
+                    pd.samples_surface_mesh.?.setDartCellIndex(d0, .vertex, s0_ssm_vertex_index);
+                    pd.samples_surface_mesh.?.setDartCellIndex(d1, .vertex, s1_ssm_vertex_index);
+                    pd.samples_surface_mesh.?.setDartCellIndex(d2, .vertex, s2_ssm_vertex_index);
                     // register the new darts in the darts_of_vertex data of the vertices of the samples SurfaceMesh (used to reconstruct phi2)
-                    try ssm_darts_of_vertex.valuePtrByIndex(s0_vertex_index).append(darts_array_lists_arena.allocator(), d0);
-                    try ssm_darts_of_vertex.valuePtrByIndex(s1_vertex_index).append(darts_array_lists_arena.allocator(), d1);
-                    try ssm_darts_of_vertex.valuePtrByIndex(s2_vertex_index).append(darts_array_lists_arena.allocator(), d2);
+                    try ssm_darts_of_vertex.valuePtrByIndex(s0_ssm_vertex_index).append(darts_array_lists_arena.allocator(), d0);
+                    try ssm_darts_of_vertex.valuePtrByIndex(s1_ssm_vertex_index).append(darts_array_lists_arena.allocator(), d1);
+                    try ssm_darts_of_vertex.valuePtrByIndex(s2_ssm_vertex_index).append(darts_array_lists_arena.allocator(), d2);
                 }
             }
         }
@@ -275,9 +316,6 @@ const ParameterizationData = struct {
                 return error.InvalidSamplesSurfaceMesh;
             }
         }
-
-        pd.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(pd.samples_surface_mesh.?);
-        pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.samples_surface_mesh.?, .vertex, Vec3f, pd.ssm_vertex_position);
 
         // for each edge of the samples SurfaceMesh, compute the corresponding path in the underlying SurfaceMesh
         const shortest_paths_set = try pd.surface_mesh.getOrAddCellSet(.edge, "shortest_paths");
@@ -382,10 +420,13 @@ module: Module = .{
     },
 },
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, ParameterizationData) = .empty,
+// explicit dependency on IntrinsicTriangulation module
+surface_mesh_intrinsic_triangulation: *SurfaceMeshIntrinsicTriangulation,
 
-pub fn init(app_ctx: *AppContext) SurfaceMeshParameterization {
+pub fn init(app_ctx: *AppContext, surface_mesh_intrinsic_triangulation: *SurfaceMeshIntrinsicTriangulation) SurfaceMeshParameterization {
     return .{
         .app_ctx = app_ctx,
+        .surface_mesh_intrinsic_triangulation = surface_mesh_intrinsic_triangulation,
     };
 }
 
@@ -519,12 +560,17 @@ pub fn rightPanel(m: *Module) void {
         c.ImGui_SeparatorText("Samples connectivity");
         const disabled =
             pd.samples == null or
-            info.std_datas.edge_length == null;
+            info.std_datas.edge_length == null or
+            info.std_datas.corner_angle == null;
         if (disabled) {
             c.ImGui_BeginDisabled(true);
         }
         if (c.ImGui_ButtonEx("Connect samples", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            pd.connectSamples(info.std_datas.edge_length.?) catch |err| {
+            pd.connectSamples(
+                info.std_datas.edge_length.?,
+                info.std_datas.corner_angle.?,
+                smp.surface_mesh_intrinsic_triangulation.surfaceMeshIntrinsicTriangulationData(sm),
+            ) catch |err| {
                 std.debug.print("Error during samples connectivity computation: {}\n", .{err});
             };
         }
@@ -534,6 +580,7 @@ pub fn rightPanel(m: *Module) void {
                 \\ - generated samples
                 \\ Following data should be available:
                 \\ - std edge_length
+                \\ - std corner_angle
             );
             c.ImGui_EndDisabled();
         }
