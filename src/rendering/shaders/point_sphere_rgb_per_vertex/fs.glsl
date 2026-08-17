@@ -1,10 +1,10 @@
 uniform mat4 u_projection_matrix;
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
+uniform float u_sphere_radius;
 
 flat in vec3 sphere_center;
-flat in vec4 sphere_color;
-flat in float sphere_radius;
+flat in vec4 sphere_rgb;
 smooth in vec3 proxy_pos;
 
 out vec4 f_color;
@@ -48,10 +48,10 @@ float interSphere(vec3 ro, vec3 rd, vec3 ce, float ra) {
 }
 
 void main() {
-  vec3 rayStart = vec3(0.0, 0.0, 0.0);
+    vec3 rayStart = vec3(0.0, 0.0, 0.0);
 	vec3 rayDir = normalize(proxy_pos);
     
-    float t = interSphere(rayStart, rayDir, sphere_center, sphere_radius);
+    float t = interSphere(rayStart, rayDir, sphere_center, u_sphere_radius);
 
     if (t > 0.0) {
         vec3 hitPos = rayStart + t * rayDir;
@@ -61,7 +61,7 @@ void main() {
         
         vec3 L = normalize(u_light_position - hitPos);
         float lambert_term = dot(normal, L);
-        vec4 result = vec4(sphere_color.rgb * lambert_term, sphere_color.a);
+        vec4 result = vec4(sphere_rgb.rgb * lambert_term, sphere_rgb.a);
         result += vec4(u_ambiant_color.rgb, 0.0);
         f_color = result;
     } else {

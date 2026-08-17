@@ -6,7 +6,7 @@ uniform vec3 u_light_position;
 uniform bool u_dim_backfaces;
 
 in vec3 v_position;
-in vec4 v_color;
+in vec2 v_uv;
 
 out vec4 f_color;
 
@@ -14,7 +14,7 @@ void main() {
   vec3 N = normalize(cross(dFdx(v_position), dFdy(v_position)));
   vec3 L = normalize(u_light_position - v_position);
   float lambert_term = dot(N, L);
-  vec4 result = vec4(v_color.rgb * lambert_term, 1.0);
+  vec4 result = vec4(v_uv * lambert_term, 1.0, 1.0);
   result += vec4(u_ambiant_color.rgb, 0.0);
   f_color = result;
   if (u_dim_backfaces && !gl_FrontFacing) {

@@ -1,4 +1,4 @@
-const PointSphereColorPerVertex = @This();
+const PointSphereRGBPerVertex = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -9,13 +9,13 @@ const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 
-var global_instance: ?PointSphereColorPerVertex = null;
+var global_instance: ?PointSphereRGBPerVertex = null;
 fn init_global() void {
     if (global_instance) |_| return;
     global_instance = init() catch unreachable;
     Shader.register(&global_instance.?.program);
 }
-pub fn instance() *PointSphereColorPerVertex {
+pub fn instance() *PointSphereRGBPerVertex {
     init_global();
     return &global_instance.?;
 }
@@ -29,10 +29,10 @@ light_position_uniform: c_int = undefined,
 sphere_radius_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
-color_attrib: VAO.VertexAttribInfo = undefined,
+rgb_attrib: VAO.VertexAttribInfo = undefined,
 
-fn init() !PointSphereColorPerVertex {
-    var pscpv: PointSphereColorPerVertex = .{
+fn init() !PointSphereRGBPerVertex {
+    var psrpv: PointSphereRGBPerVertex = .{
         .program = Shader.init(),
     };
 
@@ -40,35 +40,35 @@ fn init() !PointSphereColorPerVertex {
     const geometry_shader_source = @embedFile("gs.glsl");
     const fragment_shader_source = @embedFile("fs.glsl");
 
-    try pscpv.program.setShader(.vertex, vertex_shader_source);
-    try pscpv.program.setShader(.geometry, geometry_shader_source);
-    try pscpv.program.setShader(.fragment, fragment_shader_source);
-    try pscpv.program.linkProgram();
+    try psrpv.program.setShader(.vertex, vertex_shader_source);
+    try psrpv.program.setShader(.geometry, geometry_shader_source);
+    try psrpv.program.setShader(.fragment, fragment_shader_source);
+    try psrpv.program.linkProgram();
 
-    pscpv.model_view_matrix_uniform = gl.GetUniformLocation(pscpv.program.index, "u_model_view_matrix");
-    pscpv.projection_matrix_uniform = gl.GetUniformLocation(pscpv.program.index, "u_projection_matrix");
-    pscpv.ambiant_color_uniform = gl.GetUniformLocation(pscpv.program.index, "u_ambiant_color");
-    pscpv.light_position_uniform = gl.GetUniformLocation(pscpv.program.index, "u_light_position");
-    pscpv.sphere_radius_uniform = gl.GetUniformLocation(pscpv.program.index, "u_sphere_radius");
+    psrpv.model_view_matrix_uniform = gl.GetUniformLocation(psrpv.program.index, "u_model_view_matrix");
+    psrpv.projection_matrix_uniform = gl.GetUniformLocation(psrpv.program.index, "u_projection_matrix");
+    psrpv.ambiant_color_uniform = gl.GetUniformLocation(psrpv.program.index, "u_ambiant_color");
+    psrpv.light_position_uniform = gl.GetUniformLocation(psrpv.program.index, "u_light_position");
+    psrpv.sphere_radius_uniform = gl.GetUniformLocation(psrpv.program.index, "u_sphere_radius");
 
-    pscpv.position_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(pscpv.program.index, "a_position")),
+    psrpv.position_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(psrpv.program.index, "a_position")),
         .size = 3,
         .type = gl.FLOAT,
         .normalized = false,
     };
-    pscpv.color_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(pscpv.program.index, "a_color")),
+    psrpv.rgb_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(psrpv.program.index, "a_rgb")),
         .size = 3,
         .type = gl.FLOAT,
         .normalized = false,
     };
 
-    return pscpv;
+    return psrpv;
 }
 
 pub const Parameters = struct {
-    shader: *const PointSphereColorPerVertex,
+    shader: *const PointSphereRGBPerVertex,
     vao: VAO,
 
     model_view_matrix: [16]f32 = undefined,
@@ -79,7 +79,7 @@ pub const Parameters = struct {
 
     const VertexAttrib = enum {
         position,
-        color,
+        rgb,
     };
 
     pub fn init() Parameters {
@@ -96,7 +96,7 @@ pub const Parameters = struct {
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
-            .color => p.shader.color_attrib,
+            .rgb => p.shader.rgb_attrib,
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
@@ -104,7 +104,7 @@ pub const Parameters = struct {
     pub fn unsetVertexAttribArray(p: *Parameters, attrib: VertexAttrib) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
-            .color => p.shader.color_attrib,
+            .rgb => p.shader.rgb_attrib,
         };
         p.vao.disableVertexAttribArray(attrib_info);
     }

@@ -3,17 +3,17 @@ layout (triangle_strip, max_vertices=4) out;
 
 uniform mat4 u_projection_matrix;
 
-flat in vec4 v_color[];
+flat in vec4 v_rgb[];
 flat in float v_radius[];
 
 flat out vec3 sphere_center;
-flat out vec4 sphere_color;
+flat out vec4 sphere_rgb;
 flat out float sphere_radius;
 smooth out vec3 proxy_pos;
 
 void main() {
   sphere_center = gl_in[0].gl_Position.xyz / gl_in[0].gl_Position.w;
-  sphere_color = v_color[0];
+  sphere_rgb = v_rgb[0];
   sphere_radius = v_radius[0];
 
   vec3 basisX = vec3(1., 0., 0.);

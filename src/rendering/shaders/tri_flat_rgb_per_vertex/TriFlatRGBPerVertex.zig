@@ -1,4 +1,4 @@
-const TriFlatColorPerVertex = @This();
+const TriFlatRGBPerVertex = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -9,13 +9,13 @@ const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 
-var global_instance: ?TriFlatColorPerVertex = null;
+var global_instance: ?TriFlatRGBPerVertex = null;
 fn init_global() void {
     if (global_instance) |_| return;
     global_instance = init() catch unreachable;
     Shader.register(&global_instance.?.program);
 }
-pub fn instance() *TriFlatColorPerVertex {
+pub fn instance() *TriFlatRGBPerVertex {
     init_global();
     return &global_instance.?;
 }
@@ -29,15 +29,15 @@ light_position_uniform: c_int = undefined,
 dim_backfaces_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
-color_attrib: VAO.VertexAttribInfo = undefined,
+rgb_attrib: VAO.VertexAttribInfo = undefined,
 
 const VertexAttrib = enum {
     position,
-    color,
+    rgb,
 };
 
-fn init() !TriFlatColorPerVertex {
-    var tfcpv: TriFlatColorPerVertex = .{
+fn init() !TriFlatRGBPerVertex {
+    var tfcpv: TriFlatRGBPerVertex = .{
         .program = Shader.init(),
     };
 
@@ -60,8 +60,8 @@ fn init() !TriFlatColorPerVertex {
         .type = gl.FLOAT,
         .normalized = false,
     };
-    tfcpv.color_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(tfcpv.program.index, "a_color")),
+    tfcpv.rgb_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(tfcpv.program.index, "a_rgb")),
         .size = 3,
         .type = gl.FLOAT,
         .normalized = false,
@@ -71,7 +71,7 @@ fn init() !TriFlatColorPerVertex {
 }
 
 pub const Parameters = struct {
-    shader: *const TriFlatColorPerVertex,
+    shader: *const TriFlatRGBPerVertex,
     vao: VAO,
 
     model_view_matrix: [16]f32 = undefined,
@@ -94,7 +94,7 @@ pub const Parameters = struct {
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
-            .color => p.shader.color_attrib,
+            .rgb => p.shader.rgb_attrib,
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
@@ -102,7 +102,7 @@ pub const Parameters = struct {
     pub fn unsetVertexAttribArray(p: *Parameters, attrib: VertexAttrib) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
-            .color => p.shader.color_attrib,
+            .rgb => p.shader.rgb_attrib,
         };
         p.vao.disableVertexAttribArray(attrib_info);
     }
