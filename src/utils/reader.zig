@@ -1,6 +1,5 @@
 const c = @import("c");
 const std = @import("std");
-
 const zstbi = @import("zstbi");
 
 pub const AnyImage = union(enum) {
@@ -16,6 +15,7 @@ pub fn Image(comptime T: type) type {
     return struct {
         height: u32,
         width: u32,
+        bytes_per_component: u32,
         data: []T,
     };
 }
@@ -23,7 +23,7 @@ pub fn Image(comptime T: type) type {
 pub fn loadFile(filename: [:0]u8, allocator: std.mem.Allocator) !AnyImage {
     const extension = std.fs.path.extension(filename);
     if (std.mem.eql(u8, extension, ".png")) {
-        return loadPNG(filename, allocator) catch unreachable;
+        return loadPNG(filename, allocator);
     } else if (std.mem.eql(u8, extension, ".exr")) {
         return loadEXR(filename.ptr);
     }
@@ -34,9 +34,9 @@ fn loadEXR(filename: [*:0]u8) AnyImage {
     var image = Image(f32){
         .height = 0,
         .width = 0,
+        .bytes_per_component = 0,
         .data = &[_]f32{},
     };
-
     c.loadExr(
         filename,
         @ptrCast(&image.width),
@@ -52,6 +52,7 @@ fn loadPNG(filename: [:0]const u8, allocator: std.mem.Allocator) !AnyImage {
     const img = Image(u8){
         .height = tex_image.height,
         .width = tex_image.width,
+        .bytes_per_component = tex_image.bytes_per_component,
         .data = allocator.dupe(u8, tex_image.data) catch unreachable,
     };
 

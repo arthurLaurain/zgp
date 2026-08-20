@@ -31,7 +31,6 @@ pub fn loadFromFile(filename: [:0]u8, parameters: []const Parameter, allocator: 
         };
 
     var t = init(parameters);
-
     gl.BindTexture(gl.TEXTURE_2D, t.index);
     defer gl.BindTexture(gl.TEXTURE_2D, 0);
     switch (tex_image) {
@@ -46,7 +45,7 @@ pub fn loadFromFile(filename: [:0]u8, parameters: []const Parameter, allocator: 
                 @intCast(img.height),
                 0,
                 gl.RGB,
-                gl.UNSIGNED_BYTE,
+                if (img.bytes_per_component == 1) gl.UNSIGNED_BYTE else gl.UNSIGNED_SHORT,
                 @ptrCast(img.data.ptr),
             );
 

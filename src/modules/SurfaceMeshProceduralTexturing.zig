@@ -54,7 +54,7 @@ const TnBData = struct {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
 
-        const s = "brick";
+        const s = "rock";
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
@@ -402,8 +402,7 @@ pub fn rightPanel(m: *Module) void {
         _ = c.ImGui_InputText("", &tnb_data.exemplar_texture_path, @sizeOf([128]u8), 0);
         c.ImGui_PopID();
         if (c.ImGui_Button("Init texture")) {
-            tnb_data.texture_initialized = true;
-
+            tnb_data.procedural_texturing_parameters.blending_mode = BlendingMode.LINEAR;
             var path_buffer: [128]u8 = undefined;
             const path_str = std.mem.sliceTo(&tnb_data.exemplar_texture_path, 0);
 
@@ -414,20 +413,24 @@ pub fn rightPanel(m: *Module) void {
                 .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
                 .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
             };
+
             var path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}.png", .{path_str}, 0) catch unreachable;
             if (Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator)) |exemplar| {
                 texData.exemplar_texture = exemplar;
                 tnb_data.texture_initialized = true;
-            }
-            path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.exr", .{path_str}, 0) catch unreachable;
-            texData.exemplar_texture_priority = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
-            path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_n.png", .{path_str}, 0) catch unreachable;
-            texData.exemplar_texture_normal = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
-            path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_r.png", .{path_str}, 0) catch unreachable;
-            texData.exemplar_texture_roughness = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+                path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.exr", .{path_str}, 0) catch unreachable;
+                texData.exemplar_texture_priority = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+                path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_n.png", .{path_str}, 0) catch unreachable;
+                texData.exemplar_texture_normal = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+                path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_r.png", .{path_str}, 0) catch unreachable;
+                texData.exemplar_texture_roughness = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
 
-            tnb_data.procedural_texturing_parameters.textureData = texData;
-            smpt.app_ctx.requestRedraw();
+                tnb_data.procedural_texturing_parameters.textureData = texData;
+                smpt.app_ctx.requestRedraw();
+            } else {
+                tnb_data.texture_initialized = false;
+                std.debug.print("Exemplar texture not found\n", .{});
+            }
         }
 
         if (tnb_data.texture_initialized) {
@@ -439,8 +442,12 @@ pub fn rightPanel(m: *Module) void {
                     const is_selected = tnb_data.procedural_texturing_parameters.blending_mode == mode;
 
                     if (c.ImGui_SelectableEx(f.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
-                        tnb_data.procedural_texturing_parameters.blending_mode = mode;
-                        smpt.app_ctx.requestRedraw();
+                        if (tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_priority != null and tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_normal != null and tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_roughness != null) {
+                            tnb_data.procedural_texturing_parameters.blending_mode = mode;
+                            smpt.app_ctx.requestRedraw();
+                        } else {
+                            std.log.debug("Mixmax unavailable: Missing textures\n", .{});
+                        }
                     }
                 }
                 c.ImGui_EndCombo();
