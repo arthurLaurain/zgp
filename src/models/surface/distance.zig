@@ -14,6 +14,26 @@ const SparseMatrix = eigen.SparseMatrix;
 const laplacian = @import("laplacian.zig");
 const gradient = @import("gradient.zig");
 
+// Priority queue type for darts of the SurfaceMesh to expand from, ordered by their distance from the starting vertex
+const DijkstraDartInfo = struct {
+    dart: SurfaceMesh.Dart,
+    distance: f32,
+    pub fn cmp(_: void, a: DijkstraDartInfo, b: DijkstraDartInfo) std.math.Order {
+        const distance_order = std.math.order(a.distance, b.distance);
+        if (distance_order != .eq) return distance_order;
+        // tie-breaker: use Dart indices to have a deterministic order
+        return std.math.order(a.dart, b.dart);
+    }
+};
+pub const DijkstraDartQueue = std.PriorityQueue(DijkstraDartInfo, void, DijkstraDartInfo.cmp);
+
+pub const DijkstraContext = struct {
+    surface_mesh: *const SurfaceMesh,
+    edge_weight: SurfaceMesh.CellData(.edge, f32),
+    incoming_dart: SurfaceMesh.CellData(.vertex, ?SurfaceMesh.Dart),
+    queue: *DijkstraDartQueue,
+};
+
 /// Compute the shortest edge path between two vertices of the SurfaceMesh using Dijkstra's algorithm.
 /// Returns an ArrayList(Dart) representing the oriented edges of the path (caller is responsible for deinit the returned ArrayList).
 pub fn shortestEdgePathBetweenVertices(
@@ -26,57 +46,64 @@ pub fn shortestEdgePathBetweenVertices(
     assert(v_start.cellType() == .vertex);
     assert(v_end.cellType() == .vertex);
 
-    const v_start_idx = sm.cellIndex(v_start);
-    const v_end_idx = sm.cellIndex(v_end);
-
     // this data is used to store the incoming dart for each vertex in the shortest path tree
     // a null value indicates a vertex that has not been reached yet
-    var incoming_dart = try sm.addData(.vertex, ?SurfaceMesh.Dart, "__incoming_dart");
+    const incoming_dart = try sm.addData(.vertex, ?SurfaceMesh.Dart, "__incoming_dart");
     defer sm.removeData(.vertex, ?SurfaceMesh.Dart, incoming_dart);
-    incoming_dart.data.fill(null);
 
-    // Priority queue type for darts of the SurfaceMesh to expand from, ordered by their distance from the starting vertex
-    const DartInfo = struct {
-        const DartInfo = @This();
-        dart: SurfaceMesh.Dart,
-        distance: f32,
-        pub fn cmp(_: void, a: DartInfo, b: DartInfo) std.math.Order {
-            const distance_order = std.math.order(a.distance, b.distance);
-            if (distance_order != .eq) return distance_order;
-            // tie-breaker: use Dart indices to have a deterministic order
-            return std.math.order(a.dart, b.dart);
-        }
-    };
-    const DartQueue = std.PriorityQueue(DartInfo, void, DartInfo.cmp);
-
-    var queue: DartQueue = .empty;
+    // priority queue of darts to expand from, ordered by their distance from the source
+    var queue: DijkstraDartQueue = .empty;
     defer queue.deinit(app_ctx.allocator);
+
+    const dijkstra_ctx = DijkstraContext{
+        .surface_mesh = sm,
+        .edge_weight = edge_weight,
+        .incoming_dart = incoming_dart,
+        .queue = &queue,
+    };
+
+    return shortestEdgePathBetweenVerticesWithContext(app_ctx, v_start, v_end, dijkstra_ctx);
+}
+
+pub fn shortestEdgePathBetweenVerticesWithContext(
+    app_ctx: *AppContext,
+    v_start: SurfaceMesh.Cell,
+    v_end: SurfaceMesh.Cell,
+    dijkstra_ctx: DijkstraContext,
+) !std.ArrayList(SurfaceMesh.Dart) {
+    const v_start_idx = dijkstra_ctx.surface_mesh.cellIndex(v_start);
+    const v_end_idx = dijkstra_ctx.surface_mesh.cellIndex(v_end);
+
+    dijkstra_ctx.incoming_dart.data.fill(null);
+    dijkstra_ctx.queue.clearRetainingCapacity();
+
     // initialize the queue with the darts outgoing from the starting vertex
     {
-        var dart_it = sm.cellDartIterator(v_start);
+        var dart_it = dijkstra_ctx.surface_mesh.cellDartIterator(v_start);
         while (dart_it.next()) |d| {
-            try queue.push(
+            try dijkstra_ctx.queue.push(
                 app_ctx.allocator,
-                .{ .dart = d, .distance = edge_weight.value(.{ .edge = d }) },
+                .{ .dart = d, .distance = dijkstra_ctx.edge_weight.value(.{ .edge = d }) },
             );
         }
     }
-    while (queue.pop()) |d_info| {
-        const pointed_v: SurfaceMesh.Cell = .{ .vertex = sm.phi1(d_info.dart) };
-        const pointed_v_idx = sm.cellIndex(pointed_v);
-        if (incoming_dart.value(pointed_v) != null or pointed_v_idx == v_start_idx) {
+    while (dijkstra_ctx.queue.pop()) |d_info| {
+        const pointed_v: SurfaceMesh.Cell = .{ .vertex = dijkstra_ctx.surface_mesh.phi1(d_info.dart) };
+        const pointed_v_idx = dijkstra_ctx.surface_mesh.cellIndex(pointed_v);
+        if (dijkstra_ctx.incoming_dart.value(pointed_v) != null or pointed_v_idx == v_start_idx) {
             // this vertex has already been reached, or is the starting vertex, skip it
             continue;
         }
         // the queue is ordered by distance, so the first time we reach a vertex is the shortest path to it
-        incoming_dart.valuePtr(pointed_v).* = d_info.dart;
+        dijkstra_ctx.incoming_dart.valuePtr(pointed_v).* = d_info.dart;
+        // if we reached the end vertex, we can reconstruct the path and return it
         if (pointed_v_idx == v_end_idx) {
             // reconstruct the path from v_end to v_start using the incoming_dart data
             var path: std.ArrayList(SurfaceMesh.Dart) = try .initCapacity(app_ctx.allocator, 16);
             try path.append(app_ctx.allocator, d_info.dart);
             var current_d = d_info.dart;
             // follow the incoming darts until reaching the starting vertex which has no incoming dart
-            while (incoming_dart.value(.{ .vertex = current_d })) |incoming| {
+            while (dijkstra_ctx.incoming_dart.value(.{ .vertex = current_d })) |incoming| {
                 try path.append(app_ctx.allocator, incoming);
                 current_d = incoming;
             }
@@ -84,14 +111,13 @@ pub fn shortestEdgePathBetweenVertices(
             std.mem.reverse(SurfaceMesh.Dart, path.items);
             return path;
         }
-        // expand the neighbors of the current pointed vertex
-        var dart_it = sm.cellDartIterator(pointed_v);
+        // otherwise, expand the search to the neighbors of the current pointed vertex
+        var dart_it = dijkstra_ctx.surface_mesh.cellDartIterator(pointed_v);
         while (dart_it.next()) |d| {
-            const nv: SurfaceMesh.Cell = .{ .vertex = sm.phi1(d) };
-            if (incoming_dart.value(nv) == null) {
-                const weight = edge_weight.value(.{ .edge = d });
-                // a smaller distance will naturally be popped from the priority queue first
-                try queue.push(app_ctx.allocator, .{ .dart = d, .distance = d_info.distance + weight });
+            const nv: SurfaceMesh.Cell = .{ .vertex = dijkstra_ctx.surface_mesh.phi1(d) };
+            if (dijkstra_ctx.incoming_dart.value(nv) == null) {
+                const weight = dijkstra_ctx.edge_weight.value(.{ .edge = d });
+                try dijkstra_ctx.queue.push(app_ctx.allocator, .{ .dart = d, .distance = d_info.distance + weight });
             }
         }
     }

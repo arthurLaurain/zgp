@@ -435,8 +435,14 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
                 style.*.FontSizeBase * nb_point_clouds_f + style.*.ItemSpacing.y * nb_point_clouds_f,
             )) {
                 .unchanged => {},
-                .cleared => app_ctx.selected_model = .none,
-                .changed => |new_pc| app_ctx.selected_model = .{ .point_cloud = new_pc },
+                .cleared => {
+                    app_ctx.selected_model = .none;
+                    app_ctx.requestRedraw();
+                },
+                .changed => |new_pc| {
+                    app_ctx.selected_model = .{ .point_cloud = new_pc };
+                    app_ctx.requestRedraw();
+                },
             }
 
             c.ImGui_SeparatorText("Surface Meshes");
@@ -446,8 +452,14 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
                 style.*.FontSizeBase * nb_surface_meshes_f + style.*.ItemSpacing.y * nb_surface_meshes_f,
             )) {
                 .unchanged => {},
-                .cleared => app_ctx.selected_model = .none,
-                .changed => |new_sm| app_ctx.selected_model = .{ .surface_mesh = new_sm },
+                .cleared => {
+                    app_ctx.selected_model = .none;
+                    app_ctx.requestRedraw();
+                },
+                .changed => |new_sm| {
+                    app_ctx.selected_model = .{ .surface_mesh = new_sm };
+                    app_ctx.requestRedraw();
+                },
             }
 
             c.ImGui_SeparatorText("Incidence Graphs");
@@ -457,8 +469,14 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
                 style.*.FontSizeBase * nb_incidence_graphs_f + style.*.ItemSpacing.y * nb_incidence_graphs_f,
             )) {
                 .unchanged => {},
-                .cleared => app_ctx.selected_model = .none,
-                .changed => |new_ig| app_ctx.selected_model = .{ .incidence_graph = new_ig },
+                .cleared => {
+                    app_ctx.selected_model = .none;
+                    app_ctx.requestRedraw();
+                },
+                .changed => |new_ig| {
+                    app_ctx.selected_model = .{ .incidence_graph = new_ig };
+                    app_ctx.requestRedraw();
+                },
             }
         }
 
