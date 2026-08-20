@@ -1475,6 +1475,63 @@ pub fn canFlipEdge(sm: *SurfaceMesh, edge: Cell) bool {
     return true;
 }
 
+/// Unflips the given edge (following the inverse orientation of the faces).
+/// Should only be called after a call to `canUnflipEdge`.
+/// TODO: write a more detailed comment
+pub fn unflipEdge(sm: *SurfaceMesh, edge: Cell) void {
+    assert(edge.cellType() == .edge);
+
+    const d = edge.dart();
+    const dd = sm.phi2(d);
+    const d_1 = sm.phi_1(d);
+    const dd_1 = sm.phi_1(dd);
+    const d_1_1 = sm.phi_1(d_1);
+    const dd_1_1 = sm.phi_1(dd_1);
+
+    sm.phi1Sew(d, dd_1);
+    sm.phi1Sew(dd, d_1);
+    sm.phi1Sew(d, dd_1_1);
+    sm.phi1Sew(dd, d_1_1);
+
+    {
+        // Vertex indices.
+        sm.setDartCellIndex(d, .vertex, sm.dartCellIndex(sm.phi1(dd), .vertex));
+        sm.setDartCellIndex(dd, .vertex, sm.dartCellIndex(sm.phi1(d), .vertex));
+    }
+    {
+        // Edge indices.
+        // no new edges are created & no existing edges are modified
+    }
+    {
+        // Face indices.
+        sm.setDartCellIndex(sm.phi1(d), .face, sm.dartCellIndex(d, .face));
+        sm.setDartCellIndex(sm.phi1(dd), .face, sm.dartCellIndex(dd, .face));
+    }
+}
+
+/// Check if the given edge can be unflipped. Edges that cannot be unflipped:
+///  1 - boundary edges
+///  2 - edges having an incident vertex of degree 2
+/// No geometry conditions are checked here.
+pub fn canUnflipEdge(sm: *SurfaceMesh, edge: Cell) bool {
+    assert(edge.cellType() == .edge);
+
+    const d = edge.dart();
+    const dd = sm.phi2(d);
+
+    // condition 1: do not flip boundary edges
+    if (sm.isIncidentToBoundary(edge)) {
+        return false;
+    }
+
+    // condition 2: avoid creating degree 1 vertices
+    if (sm.degree(.{ .vertex = d }) == 2 or sm.degree(.{ .vertex = dd }) == 2) {
+        return false;
+    }
+
+    return true;
+}
+
 /// Collapses the given edge.
 /// Should only be called after a call to `canCollapseEdge`.
 /// TODO: write a more detailed comment

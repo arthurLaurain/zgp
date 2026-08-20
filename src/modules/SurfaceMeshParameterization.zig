@@ -204,28 +204,28 @@ const ParameterizationData = struct {
             it_closest_source_vertex,
         );
 
-        // for inspection purposes,
-        // copy back the closest source distance and corresponding sample color in the underlying SurfaceMesh
-        const vertex_distance = try pd.surface_mesh.getOrAddData(.vertex, f32, "closest_source_distance");
-        const vertex_color = try pd.surface_mesh.getOrAddData(.vertex, Vec3f, "closest_sample_color");
-        var it_v_it: SurfaceMesh.CellIterator = try .init(pd.intrinsic_triangulation_data.intrinsic_surface_mesh, .vertex);
-        defer it_v_it.deinit();
-        while (it_v_it.next()) |it_v| {
-            // v is the vertex in the underlying SurfaceMesh corresponding to the intrinsic vertex it_v
-            const v = pd.intrinsic_triangulation_data.intrinsic_vertex_extrinsic_sp.value(it_v).type.vertex;
-            vertex_distance.valuePtr(v).* = it_closest_source_distance.value(it_v);
-            // if the closest source vertex of it_v is not defined, it means it was not reachable from any source vertex
-            if (it_closest_source_vertex.value(it_v)) |it_sv| {
-                // sv is the vertex in the underlying SurfaceMesh corresponding to the intrinsic source vertex it_sv
-                const sv = pd.intrinsic_triangulation_data.intrinsic_vertex_extrinsic_sp.value(it_sv).type.vertex;
-                const sample = source_vertex_sample.get(pd.surface_mesh.cellIndex(sv)).?; // get the sample corresponding to the closest source vertex
-                vertex_color.valuePtr(v).* = pd.sample_color.value(sample);
-            } else {
-                std.debug.print("Vertex {d} is not reachable from any source vertex\n", .{pd.surface_mesh.cellIndex(v)});
-            }
-        }
-        pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.surface_mesh, .vertex, f32, vertex_distance);
-        pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.surface_mesh, .vertex, Vec3f, vertex_color);
+        // // for inspection purposes,
+        // // copy back the closest source distance and corresponding sample color in the underlying SurfaceMesh
+        // const vertex_distance = try pd.surface_mesh.getOrAddData(.vertex, f32, "closest_source_distance");
+        // const vertex_color = try pd.surface_mesh.getOrAddData(.vertex, Vec3f, "closest_sample_color");
+        // var it_v_it: SurfaceMesh.CellIterator = try .init(pd.intrinsic_triangulation_data.intrinsic_surface_mesh, .vertex);
+        // defer it_v_it.deinit();
+        // while (it_v_it.next()) |it_v| {
+        //     // v is the vertex in the underlying SurfaceMesh corresponding to the intrinsic vertex it_v
+        //     const v = pd.intrinsic_triangulation_data.intrinsic_vertex_extrinsic_sp.value(it_v).type.vertex;
+        //     vertex_distance.valuePtr(v).* = it_closest_source_distance.value(it_v);
+        //     // if the closest source vertex of it_v is not defined, it means it was not reachable from any source vertex
+        //     if (it_closest_source_vertex.value(it_v)) |it_sv| {
+        //         // sv is the vertex in the underlying SurfaceMesh corresponding to the intrinsic source vertex it_sv
+        //         const sv = pd.intrinsic_triangulation_data.intrinsic_vertex_extrinsic_sp.value(it_sv).type.vertex;
+        //         const sample = source_vertex_sample.get(pd.surface_mesh.cellIndex(sv)).?; // get the sample corresponding to the closest source vertex
+        //         vertex_color.valuePtr(v).* = pd.sample_color.value(sample);
+        //     } else {
+        //         std.debug.print("Vertex {d} is not reachable from any source vertex\n", .{pd.surface_mesh.cellIndex(v)});
+        //     }
+        // }
+        // pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.surface_mesh, .vertex, f32, vertex_distance);
+        // pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.surface_mesh, .vertex, Vec3f, vertex_color);
 
         // build the samples SurfaceMesh as the dual of the partition of the underlying SurfaceMesh induced by the computed closest source vertices
         defer {
@@ -329,19 +329,19 @@ const ParameterizationData = struct {
         }
 
         // for each edge of the samples SurfaceMesh, compute the corresponding path in the underlying SurfaceMesh
-        const shortest_paths_set = try pd.surface_mesh.getOrAddCellSet(.edge, "shortest_paths");
-        shortest_paths_set.clear();
-        // as we are running many shortest path computations, we can reuse the same DijkstraContext for all of them
-        // (avoids allocating and deallocating the incoming_dart data and the queue for each edge)
+        // const shortest_paths_set = try pd.surface_mesh.getOrAddCellSet(.edge, "shortest_paths");
+        // shortest_paths_set.clear();
+        // as we are running many shortest path computations, we can reuse the same ShortestEdgePathContext for all of them
+        // (avoids allocating and deallocating the incoming_dart data and the dart_queue for each edge)
         const incoming_dart = try pd.surface_mesh.addData(.vertex, ?SurfaceMesh.Dart, "__incoming_dart");
         defer pd.surface_mesh.removeData(.vertex, ?SurfaceMesh.Dart, incoming_dart);
-        var queue: distance.DijkstraDartQueue = .empty;
+        var queue: distance.ShortestEdgePathDartQueue = .empty;
         defer queue.deinit(pd.app_ctx.allocator);
-        const dijkstra_ctx: distance.DijkstraContext = .{
+        const shortest_edge_path_ctx: distance.ShortestEdgePathContext = .{
             .surface_mesh = pd.surface_mesh,
             .edge_weight = edge_length,
             .incoming_dart = incoming_dart,
-            .queue = &queue,
+            .dart_queue = &queue,
         };
         var ssm_e_it = try SurfaceMesh.CellIterator.init(pd.samples_surface_mesh.?, .edge);
         defer ssm_e_it.deinit();
@@ -352,14 +352,14 @@ const ParameterizationData = struct {
                 pd.app_ctx,
                 start_v,
                 end_v,
-                dijkstra_ctx,
+                shortest_edge_path_ctx,
             );
-            for (path.items) |d| {
-                try shortest_paths_set.add(.{ .edge = d });
-            }
+            // for (path.items) |d| {
+            //     try shortest_paths_set.add(.{ .edge = d });
+            // }
             pd.ssm_edge_path.valuePtr(e).* = .{ .path = path, .dart = e.dart() };
         }
-        pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, shortest_paths_set);
+        // pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, shortest_paths_set);
 
         const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, pd.app_ctx.io, .real).nanoseconds);
         zgp_log.info("Samples SurfaceMesh computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
