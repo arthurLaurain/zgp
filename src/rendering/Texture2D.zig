@@ -24,8 +24,14 @@ pub fn init(parameters: []const Parameter) Texture2D {
     return t;
 }
 
-pub fn loadFromFile(t: *Texture2D, filename: [:0]u8, allocator: std.mem.Allocator) void {
-    const tex_image = Reader.loadFile(filename, allocator) catch unreachable;
+pub fn loadFromFile(filename: [:0]u8, parameters: []const Parameter, allocator: std.mem.Allocator) ?Texture2D {
+    const tex_image = Reader.loadFile(filename, allocator) catch
+        {
+            return null;
+        };
+
+    var t = init(parameters);
+
     gl.BindTexture(gl.TEXTURE_2D, t.index);
     defer gl.BindTexture(gl.TEXTURE_2D, 0);
     switch (tex_image) {
@@ -40,13 +46,12 @@ pub fn loadFromFile(t: *Texture2D, filename: [:0]u8, allocator: std.mem.Allocato
                 @intCast(img.height),
                 0,
                 gl.RGB,
-                gl.UNSIGNED_SHORT,
+                gl.UNSIGNED_BYTE,
                 @ptrCast(img.data.ptr),
             );
 
             allocator.free(img.data);
         },
-
         .exr => |img| {
             t.width = img.width;
             t.height = img.height;
@@ -68,6 +73,7 @@ pub fn loadFromFile(t: *Texture2D, filename: [:0]u8, allocator: std.mem.Allocato
     }
 
     gl.GenerateMipmap(gl.TEXTURE_2D);
+    return t;
 }
 
 pub fn deinit(t: *Texture2D) void {

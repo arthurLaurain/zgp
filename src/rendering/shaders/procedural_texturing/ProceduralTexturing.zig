@@ -42,6 +42,8 @@ pub fn instance() *ProceduralTexturing {
     return &global_instance.?;
 }
 
+pub const TextureData = struct { exemplar_texture: TEXTURE2D, exemplar_texture_priority: ?TEXTURE2D, exemplar_texture_normal: ?TEXTURE2D, exemplar_texture_roughness: ?TEXTURE2D };
+
 program: Shader,
 
 view_matrix_uniform: c_int = undefined,
@@ -146,10 +148,7 @@ pub fn deinit(tf: *ProceduralTexturing) void {
 pub const Parameters = struct {
     shader: *ProceduralTexturing,
     vao: VAO,
-    exemplar_texture: TEXTURE2D,
-    exemplar_texture_priority: TEXTURE2D,
-    exemplar_texture_normal: TEXTURE2D,
-    exemplar_texture_roughness: TEXTURE2D,
+    textureData: TextureData = undefined,
     view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
@@ -180,30 +179,6 @@ pub const Parameters = struct {
         return .{
             .shader = instance(),
             .vao = VAO.init(),
-            .exemplar_texture = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
-                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
-                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
-            }),
-            .exemplar_texture_priority = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
-                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
-                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
-            }),
-            .exemplar_texture_normal = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
-                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
-                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
-            }),
-            .exemplar_texture_roughness = TEXTURE2D.init(&[_]TEXTURE2D.Parameter{
-                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
-                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
-            }),
             .ssbo_info_triangles = .init(),
             .ssbo_info_vertices = .init(),
             .ssbo_edge_ref = .init(),
@@ -225,10 +200,16 @@ pub const Parameters = struct {
         p.ssbo_neigh_selected_vertices.deinit();
         p.ssbo_scaling_tile.deinit();
         p.ssbo_rotation_tile.deinit();
-        p.exemplar_texture.deinit();
-        p.exemplar_texture_normal.deinit();
-        p.exemplar_texture_priority.deinit();
-        p.exemplar_texture_roughness.deinit();
+        p.textureData.exemplar_texture.deinit();
+        if (p.textureData.exemplar_texture_normal) |*t| {
+            t.deinit();
+        }
+        if (p.textureData.exemplar_texture_priority) |*t| {
+            t.deinit();
+        }
+        if (p.textureData.exemplar_texture_roughness) |*t| {
+            t.deinit();
+        }
         p.shader.deinit();
         p.edge_ref_vbo.deinit();
     }
@@ -432,20 +413,27 @@ pub const Parameters = struct {
         defer gl.UseProgram(0);
 
         gl.ActiveTexture(gl.TEXTURE0);
-        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture.index);
+        gl.BindTexture(gl.TEXTURE_2D, p.textureData.exemplar_texture.index);
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
 
-        gl.ActiveTexture(gl.TEXTURE1);
-        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_normal.index);
-        gl.Uniform1i(p.shader.exemplar_texture_normal_uniform, 1);
+        if (p.textureData.exemplar_texture_normal) |t| {
+            gl.ActiveTexture(gl.TEXTURE1);
+            gl.BindTexture(gl.TEXTURE_2D, t.index);
+            gl.Uniform1i(p.shader.exemplar_texture_normal_uniform, 1);
+        }
 
-        gl.ActiveTexture(gl.TEXTURE2);
-        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_priority.index);
-        gl.Uniform1i(p.shader.exemplar_texture_priority_uniform, 2);
+        if (p.textureData.exemplar_texture_priority) |t| {
+            gl.ActiveTexture(gl.TEXTURE2);
+            gl.BindTexture(gl.TEXTURE_2D, t.index);
+            gl.Uniform1i(p.shader.exemplar_texture_priority_uniform, 1);
+        }
 
-        gl.ActiveTexture(gl.TEXTURE3);
-        gl.BindTexture(gl.TEXTURE_2D, p.exemplar_texture_roughness.index);
-        gl.Uniform1i(p.shader.exemplar_texture_roughness_uniform, 3);
+        if (p.textureData.exemplar_texture_roughness) |t| {
+            gl.ActiveTexture(gl.TEXTURE3);
+            gl.BindTexture(gl.TEXTURE_2D, t.index);
+            gl.Uniform1i(p.shader.exemplar_texture_roughness_uniform, 1);
+        }
+
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
         p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
         p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.?.index);

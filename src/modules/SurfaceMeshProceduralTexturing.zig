@@ -16,7 +16,8 @@ const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMesh
 const DataGen = @import("../utils/data.zig").DataGen;
 
 const ProceduralTexturing = @import("../rendering/shaders/procedural_texturing/ProceduralTexturing.zig");
-const Texture2D = @import("../rendering/Texture2D");
+const TextureData = @import("../rendering/shaders/procedural_texturing/ProceduralTexturing.zig").TextureData;
+const Texture2D = @import("../rendering/Texture2D.zig");
 const Shader = @import("../rendering/Shader.zig");
 
 const vec = @import("../geometry/vec.zig");
@@ -53,7 +54,7 @@ const TnBData = struct {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
 
-        const s = "rock";
+        const s = "brick";
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
@@ -406,15 +407,26 @@ pub fn rightPanel(m: *Module) void {
             var path_buffer: [128]u8 = undefined;
             const path_str = std.mem.sliceTo(&tnb_data.exemplar_texture_path, 0);
 
+            var texData: TextureData = undefined;
+            const p = &[_]Texture2D.Parameter{
+                .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
+                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
+                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
+            };
             var path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}.png", .{path_str}, 0) catch unreachable;
-            tnb_data.procedural_texturing_parameters.exemplar_texture.loadFromFile(path, smpt.app_ctx.allocator); // loadFromFile method already print error
+            if (Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator)) |exemplar| {
+                texData.exemplar_texture = exemplar;
+                tnb_data.texture_initialized = true;
+            }
             path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.exr", .{path_str}, 0) catch unreachable;
-            tnb_data.procedural_texturing_parameters.exemplar_texture_priority.loadFromFile(path, smpt.app_ctx.allocator);
+            texData.exemplar_texture_priority = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
             path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_n.png", .{path_str}, 0) catch unreachable;
-            tnb_data.procedural_texturing_parameters.exemplar_texture_normal.loadFromFile(path, smpt.app_ctx.allocator);
+            texData.exemplar_texture_normal = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
             path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_r.png", .{path_str}, 0) catch unreachable;
-            tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.loadFromFile(path, smpt.app_ctx.allocator);
+            texData.exemplar_texture_roughness = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
 
+            tnb_data.procedural_texturing_parameters.textureData = texData;
             smpt.app_ctx.requestRedraw();
         }
 
@@ -436,16 +448,16 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_PopID();
 
             c.ImGui_Text("Exemplar texture: ");
-            const ratio = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.exemplar_texture.height));
-            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+            const ratio = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.textureData.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.textureData.exemplar_texture.height));
+            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
             if (tnb_data.procedural_texturing_parameters.blending_mode == BlendingMode.MIXMAX) {
                 c.ImGui_Text("Exemplar priority texture: ");
-                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_priority.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_priority.?.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
                 c.ImGui_Text("Exemplar normal texture: ");
-                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_normal.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_normal.?.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
                 c.ImGui_Text("Exemplar roughness texture: ");
-                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.exemplar_texture_roughness.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_roughness.?.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
                 c.ImGui_Text("Mixmax micro priority");
                 if (c.ImGui_SliderFloat("Mixmax micro priority", &tnb_data.procedural_texturing_parameters.mixmax_micro_priority, 0, 0.5)) {
