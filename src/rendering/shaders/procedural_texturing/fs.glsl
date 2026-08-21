@@ -21,8 +21,8 @@ uniform int u_blending_mode;
 in vec3 frag_position;
 in vec3 edge_ref;
 in vec3 v_frag_position;
-in float scaling_field;
-in float rotation_field;
+in vec2 scaling_field;
+in vec2 rotation_field;
 out vec4 f_color;
 
 // using raw buffer to avoid vec3/ivec3 in SSBO because they need to be aligned to a 16 byte boundary while IBO/VBO uses 12 floats vec3
@@ -163,7 +163,7 @@ mixmaxdata mixMax(vec2 uvA, vec2 uvB, vec2 uvC, vec3 bary, sampler2D albedo, sam
 
 mat3 compute_TBN(vec3 N, vec3 v)
 {
-    vec3 T = normalize(cross(N, vec3(0,1,0)) + v * 0.00001);
+    vec3 T = normalize(cross(N, v));
     vec3 B = cross(N, T);
     return mat3(T, B, N);
 }
@@ -172,11 +172,10 @@ vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N, vec3 v)
 {
     vec3 projPoint = P - dot(P - A, N) * N;
 
-    vec3 T = normalize(cross(N, vec3(0,1,0)) + v * 0.00001);
-    vec3 BT = cross(N, T);
+    mat3 TBN = compute_TBN(N,v);
 
     vec3 AP = projPoint - A;
-    return vec2(dot(AP, T), dot(AP, BT));
+    return vec2(dot(AP, TBN[0]), dot(AP, TBN[1]));
 }
 
 vec2 hash12(int n){
@@ -303,10 +302,13 @@ void main() {
   }
   else
   {
-    mat2 rotation_transform = rotate(rotation_field);
-    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * (u_scale_tex_coords + scaling_field);
-    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * (u_scale_tex_coords + scaling_field);
-    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * (u_scale_tex_coords + scaling_field);
+    mat2 rotation_transform = rotate(rotation_field.x);
+
+    vec3 edge_ref_orientation = vec3(rotation_field.y * 3, rotation_field.y * 3 + 1, rotation_field.y * 3 + 2);
+
+    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref_orientation) * (u_scale_tex_coords + scaling_field.x);
+    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref_orientation) * (u_scale_tex_coords + scaling_field.x);
+    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref_orientation) * (u_scale_tex_coords + scaling_field.x);
   }
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 
@@ -373,6 +375,7 @@ void main() {
     vec3 normalWS = normalize(TBN * normal);
     f_color = vec4(M.color * dot(normalWS, L),1);
   }
+
   f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
   
 }

@@ -3,14 +3,14 @@ uniform mat4 u_view_matrix;
 uniform mat4 u_projection_matrix;
 
 layout(location = 0) in vec4 a_position;
-layout(location = 1) in float a_scaling_field;
-layout(location = 2) in float a_rotation_field;
+layout(location = 1) in vec2 a_scaling_field;
+layout(location = 2) in vec2 a_rotation_field;
 layout(location = 3) in vec3 a_edge_ref;
 
 out vec3 frag_position;
 out vec3 v_frag_position;
-out float scaling_field;
-out float rotation_field;
+out vec2 scaling_field;
+out vec2 rotation_field;
 out vec3 edge_ref;
 
 void main()

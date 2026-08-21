@@ -121,14 +121,14 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
 
     pt.scaling_field_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_scaling_field")),
-        .size = 1,
+        .size = 2,
         .type = gl.FLOAT,
         .normalized = false,
     };
 
     pt.rotation_field_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_rotation_field")),
-        .size = 1,
+        .size = 2,
         .type = gl.FLOAT,
         .normalized = false,
     };

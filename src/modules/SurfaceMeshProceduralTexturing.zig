@@ -30,6 +30,7 @@ const Mat3f = mat.Mat3f;
 const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
 const SSBO = @import("../rendering/SSBO.zig");
+const FieldData = @import("./FieldsGenerator.zig").FieldData;
 
 pub const BlendingMode = enum { LINEAR, MIXMAX };
 
@@ -39,8 +40,8 @@ const TnBData = struct {
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
-    scaling_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
-    rotation_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    scaling_fieldData: ?SurfaceMesh.CellData(.vertex, FieldData) = null,
+    rotation_fieldData: ?SurfaceMesh.CellData(.vertex, FieldData) = null,
     rotation_3D_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     texture_initialized: bool = false,
     position_vbo: ?VBO = null,
@@ -202,7 +203,7 @@ pub fn compute3DRotationFieldFromScalarField(smpt: SurfaceMeshProceduralTexturin
         const B = vec.normalized3f(vec.cross3f(T, info.std_datas.vertex_normal.?.value(cell)));
         const b = vec.dot3f(edgeRef, B);
 
-        const theta = tnb_data.rotation_fieldData.?.value(cell);
+        const theta = tnb_data.rotation_fieldData.?.value(cell).scalar;
 
         const R: Mat2f = .{ .{ @cos(theta), -@sin(theta) }, .{ @sin(theta), @cos(theta) } };
 
@@ -496,7 +497,7 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_Text("Scalar field:");
             c.ImGui_SameLine();
             c.ImGui_PushID("scaling field");
-            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.scaling_fieldData)) {
+            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, FieldData, tnb_data.scaling_fieldData)) {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.scaling_fieldData = null;
@@ -507,7 +508,7 @@ pub fn rightPanel(m: *Module) void {
                 .changed => |field| {
                     tnb_data.scaling_fieldData = field;
                     if (tnb_data.scaling_fieldData) |scaling_field| {
-                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, scaling_field);
+                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, FieldData, scaling_field);
                         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scaling_field, field_vbo, 0, 0);
                         tnb_data.procedural_texturing_parameters.vertices_scaling_vbo = field_vbo;
                         smpt.app_ctx.requestRedraw();
@@ -519,7 +520,7 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_Text("Rotation field:");
             c.ImGui_SameLine();
             c.ImGui_PushID("rotation field");
-            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.rotation_fieldData)) {
+            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, FieldData, tnb_data.rotation_fieldData)) {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.rotation_fieldData = null;
@@ -531,7 +532,7 @@ pub fn rightPanel(m: *Module) void {
                 .changed => |field| {
                     tnb_data.rotation_fieldData = field;
                     if (tnb_data.rotation_fieldData) |rotation_field| {
-                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, rotation_field);
+                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, FieldData, rotation_field);
                         tnb_data.rotation_3D_fieldData = tnb_data.surface_mesh.getOrAddData(.vertex, Vec3f, "3D_rotation_field") catch unreachable;
                         smpt.compute3DRotationFieldFromScalarField(sm);
                         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.rotation_field, field_vbo, 0, 0);
