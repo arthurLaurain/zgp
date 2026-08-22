@@ -561,7 +561,6 @@ pub fn rightPanel(m: *Module) void {
                         std.log.debug("Error creating gradient distance field data\n", .{});
                         unreachable;
                     };
-
                 while (cell_it.next()) |cell| {
                     const p0 = info.std_datas.vertex_position.?.value(.{ .vertex = cell.dart() });
                     const p1 = info.std_datas.vertex_position.?.value(.{ .vertex = sm.phi1(cell.dart()) });
@@ -589,6 +588,31 @@ pub fn rightPanel(m: *Module) void {
                     const grad_normalized = vec.normalized3f(grad);
                     data.valuePtr(cell).* = grad_normalized;
                 }
+
+                // DEBUG - Visualize orientation field
+                // var cell_it2 = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
+                // const data2 = sm.addData(.vertex, Vec3f, "gradient_distance_field_2") catch
+                //     {
+                //         std.log.debug("Error creating gradient distance field data\n", .{});
+                //         unreachable;
+                //     };
+                // while (cell_it2.next()) |cell| {
+                //     const d_start = cell.dart();
+                //     var d_next = d_start;
+                //     var n: f32 = 0;
+                //     var sum: Vec3f = .{ 0, 0, 0 };
+                //     while (true) {
+                //         d_next = sm.phi2(d_next);
+                //         const grad = data.value(.{ .face = d_next });
+                //         sum = vec.add3f(sum, grad);
+                //         d_next = sm.phi1(d_next);
+                //         n = n + 1;
+                //         if (d_next == d_start) break;
+                //     }
+                //     const mean_vectors = vec.divScalar3f(sum, n);
+                //     data2.valuePtr(cell).* = mean_vectors;
+                // }
+                // fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, data2);
 
                 fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, Vec3f, data);
             } else {
