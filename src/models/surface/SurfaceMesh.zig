@@ -749,11 +749,15 @@ pub fn getData(sm: *const SurfaceMesh, comptime cell_type: CellType, comptime T:
 
 /// Returns a handle to the data array of the type `T` associated with cells of the given CellType
 /// if it exists with the given name, otherwise creates a new data array of the type `T` associated with cells of the given CellType
-/// and returns a handle to it.
-pub fn getOrAddData(sm: *SurfaceMesh, comptime cell_type: CellType, comptime T: type, name: []const u8) !CellData(cell_type, T) {
+/// and returns a handle to it, along with a boolean indicating whether the data array was newly created (true) or already existed (false).
+pub fn getOrAddData(sm: *SurfaceMesh, comptime cell_type: CellType, comptime T: type, name: []const u8) !struct { CellData(cell_type, T), bool } {
+    const d, const created = try sm.dataContainerPtr(cell_type).getOrAddData(T, name);
     return .{
-        .surface_mesh = sm,
-        .data = try sm.dataContainerPtr(cell_type).getOrAddData(T, name),
+        .{
+            .surface_mesh = sm,
+            .data = d,
+        },
+        created,
     };
 }
 

@@ -382,11 +382,12 @@ pub const DataContainer = struct {
         }
     }
 
-    pub fn getOrAddData(dc: *DataContainer, comptime T: type, name: []const u8) !*Data(T) {
+    // Returns a pointer to the data, along with a boolean indicating whether the data was newly created (true) or already existed (false).
+    pub fn getOrAddData(dc: *DataContainer, comptime T: type, name: []const u8) !struct { *Data(T), bool } {
         if (dc.getData(T, name)) |data| {
-            return data;
+            return .{ data, false };
         } else {
-            return try dc.addData(T, name);
+            return .{ try dc.addData(T, name), true };
         }
     }
 

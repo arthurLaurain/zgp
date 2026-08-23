@@ -79,7 +79,7 @@ const SamplingData = struct {
             }
         };
 
-        const dst_data = try sd.samples.getOrAddData(T, src_data.name());
+        const dst_data, _ = try sd.samples.getOrAddData(T, src_data.name());
 
         var pctr: PointCloud.ParallelPointTaskRunner = try .init(sd.samples);
         defer pctr.deinit();

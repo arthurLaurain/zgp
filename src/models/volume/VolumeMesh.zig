@@ -29,9 +29,9 @@ const data = @import("../../utils/data.zig");
 const DataContainer = data.DataContainer;
 const DataGen = data.DataGen;
 const Data = data.Data;
+const invalid_index = data.invalid_index;
 
 pub const Dart = u32;
-const invalid_index = std.math.maxInt(u32);
 
 // TODO: consider what cell types to manage (i.e. 2D cells, ...)
 

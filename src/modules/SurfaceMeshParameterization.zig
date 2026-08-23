@@ -14,6 +14,7 @@ const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfacePoint = @import("../models/surface/SurfacePoint.zig");
 const PointCloud = @import("../models/point/PointCloud.zig");
+const invalid_index = @import("../utils/data.zig").invalid_index;
 
 const SurfaceMeshIntrinsicTriangulation = @import("../modules/SurfaceMeshIntrinsicTriangulation.zig");
 
@@ -26,28 +27,87 @@ const geometry_utils = @import("../geometry/utils.zig");
 const sampling = @import("../models/surface/sampling.zig");
 const distance = @import("../models/surface/distance.zig");
 
+// Returns the 3 vertices of a face, ordered by ascending vertex index rather than by the dart used to represent the face.
+// This gives a canonical corner order (0, 1, 2) for a face that does not depend on which of its darts was used to reach it,
+// so that data stored per corner (e.g. TriangleUVs.uvs) can be written and read back consistently from different code paths.
+fn sortedFaceVertices(sm: *SurfaceMesh, f: SurfaceMesh.Cell) [3]SurfaceMesh.Cell {
+    var verts: [3]SurfaceMesh.Cell = .{
+        .{ .vertex = f.dart() },
+        .{ .vertex = sm.phi1(f.dart()) },
+        .{ .vertex = sm.phi_1(f.dart()) },
+    };
+    if (sm.cellIndex(verts[0]) > sm.cellIndex(verts[1])) std.mem.swap(SurfaceMesh.Cell, &verts[0], &verts[1]);
+    if (sm.cellIndex(verts[1]) > sm.cellIndex(verts[2])) std.mem.swap(SurfaceMesh.Cell, &verts[1], &verts[2]);
+    if (sm.cellIndex(verts[0]) > sm.cellIndex(verts[1])) std.mem.swap(SurfaceMesh.Cell, &verts[0], &verts[1]);
+    return verts;
+}
+
 const ParameterizationData = struct {
     app_ctx: *AppContext,
     surface_mesh: *SurfaceMesh,
-    vertex_uv: SurfaceMesh.CellData(.vertex, Vec2f) = undefined,
 
+    // intrinsic triangulation data of the underlying SurfaceMesh
+    // the Delaunay intrinsic triangulation is used to compute geodesic distances & tangent space shortest paths lifting
     intrinsic_triangulation_data: *SurfaceMeshIntrinsicTriangulation.ITData,
 
+    // samples are SurfacePoints that lie on the underlying SurfaceMesh (snapped to vertices, for now)
+    // each sample gives rise to a local parameterization patch
     samples: ?*PointCloud = null,
-    sample_position: PointCloud.CellData(Vec3f) = undefined,
-    sample_surface_point: PointCloud.CellData(SurfacePoint) = undefined,
-    sample_color: PointCloud.CellData(Vec3f) = undefined,
+    sample_surface_point: PointCloud.CellData(SurfacePoint) = undefined, // for each sample, the corresponding SurfacePoint on the underlying SurfaceMesh
+    sample_position: PointCloud.CellData(Vec3f) = undefined, // optional, only useful for inspection of the samples
+    sample_color: PointCloud.CellData(Vec3f) = undefined, // optional, only useful for inspection of the samples
 
+    // the samples SurfaceMesh is a triangulation of the samples
+    // it is computed as the dual of the discrete geodesic Voronoi diagram of the samples, computed on the Delaunay intrinsic triangulation of the underlying SurfaceMesh
+    // each vertex of the samples SurfaceMesh corresponds to a sample
+    // each edge of the samples SurfaceMesh is then associated with a shortest edge path on the underlying SurfaceMesh
     samples_surface_mesh: ?*SurfaceMesh = null,
-    ssm_vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
-    ssm_vertex_sample: SurfaceMesh.CellData(.vertex, PointCloud.Point) = undefined,
-    // the edge paths is a list of Darts in the underlying SurfaceMesh
-    // the associated Dart, corresponding to one of the two Darts of the edge in the samples SurfaceMesh, determines the orientation of the path
-    ssm_edge_path: SurfaceMesh.CellData(.edge, EdgePath) = undefined,
+    ssm_vertex_sample: SurfaceMesh.CellData(.vertex, PointCloud.Point) = undefined, // for each vertex, the corresponding sample
+    ssm_edge_path: SurfaceMesh.CellData(.edge, EdgePath) = undefined, // for each edge, the corresponding shortest edge path on the underlying SurfaceMesh
+    ssm_vertex_position: SurfaceMesh.CellData(.vertex, Vec3f) = undefined, // optional, only useful for inspection of the samples SurfaceMesh
 
+    // a parameterization patch is computed for each sample within the region that corresponds to the 1-ring of the sample in the samples SurfaceMesh
+    // each triangle of the samples SurfaceMesh corresponds to a region of the underlying SurfaceMesh delimited by the shortest edge paths between the 3 samples of the triangle
+    // each triangle of the underlying SurfaceMesh is thus associated with 3 parameterization patches, one for each of the 3 samples of the triangle of the samples SurfaceMesh that contains it
+    // for each of these 3 patches, the TriangleUVs data stores the index of the sample along with the UV coordinates of the 3 vertices of the triangle in that patch
+    triangle_uvs: SurfaceMesh.CellData(.face, TriangleUVs) = undefined,
+
+    uv_computed: bool = false,
+
+    // an edge path is a list of Darts in the underlying SurfaceMesh that constitutes a path between two vertices
+    // the associated Dart, corresponding to one of the two Darts of the edge in the samples SurfaceMesh, indicates the orientation of the path
     const EdgePath = struct {
         path: std.ArrayList(SurfaceMesh.Dart),
         dart: SurfaceMesh.Dart,
+    };
+
+    const TriangleUVs = struct {
+        samples: [3]u32, // the index of the 3 samples (i.e. patches) that contain the triangle
+        uvs: [3][3]Vec2f, // the UV coordinates of the 3 vertices of the triangle in each of the 3 patches
+
+        pub fn init() TriangleUVs {
+            return .{
+                .samples = .{ invalid_index, invalid_index, invalid_index },
+                .uvs = .{
+                    .{ vec.zero2f, vec.zero2f, vec.zero2f },
+                    .{ vec.zero2f, vec.zero2f, vec.zero2f },
+                    .{ vec.zero2f, vec.zero2f, vec.zero2f },
+                },
+            };
+        }
+
+        pub fn registerSample(tri_uvs: *TriangleUVs, sample: u32) !void {
+            for (tri_uvs.samples, 0..) |s, i| {
+                if (s == sample) {
+                    return error.TriangleAlreadyInPatch;
+                }
+                if (s == invalid_index) {
+                    tri_uvs.samples[i] = sample;
+                    return;
+                }
+            }
+            return error.TriangleBelongsToMoreThan3Patches;
+        }
     };
 
     fn generateSamples(
@@ -68,6 +128,8 @@ const ParameterizationData = struct {
             pd.sample_color = try pd.samples.?.addData(Vec3f, "color");
             pd.app_ctx.point_cloud_store.setPointCloudStdData(pd.samples.?, .{ .position = pd.sample_position });
         }
+
+        const t = std.Io.Timestamp.now(pd.app_ctx.io, .real);
 
         try sampling.poissonDiskSamplePointsOnSurface(
             pd.app_ctx,
@@ -124,6 +186,9 @@ const ParameterizationData = struct {
             pd.sample_color.valuePtr(point).* = .{ 0.5 + 0.5 * r.float(f32), 0.5 + 0.5 * r.float(f32), 0.5 + 0.5 * r.float(f32) };
         }
 
+        const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, pd.app_ctx.io, .real).nanoseconds);
+        zgp_log.info("Samples computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
+
         pd.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(pd.samples.?);
         pd.app_ctx.point_cloud_store.pointCloudDataUpdated(pd.samples.?, Vec3f, pd.sample_position);
         pd.app_ctx.point_cloud_store.pointCloudDataUpdated(pd.samples.?, Vec3f, pd.sample_color);
@@ -151,10 +216,9 @@ const ParameterizationData = struct {
 
         // create or clear the samples SurfaceMesh and its associated data
         if (pd.samples_surface_mesh) |ssm| {
-            var e_it = try SurfaceMesh.CellIterator.init(ssm, .edge);
-            defer e_it.deinit();
-            while (e_it.next()) |e| {
-                pd.ssm_edge_path.valuePtr(e).path.deinit(pd.app_ctx.allocator);
+            var edge_path_it = pd.ssm_edge_path.data.iterator();
+            while (edge_path_it.next()) |epath| {
+                epath.path.deinit(pd.app_ctx.allocator);
             }
             ssm.clearRetainingCapacity();
         } else {
@@ -328,9 +392,9 @@ const ParameterizationData = struct {
             }
         }
 
-        // for each edge of the samples SurfaceMesh, compute the corresponding path in the underlying SurfaceMesh
-        // const shortest_paths_set = try pd.surface_mesh.getOrAddCellSet(.edge, "shortest_paths");
-        // shortest_paths_set.clear();
+        // for each edge of the samples SurfaceMesh, compute the corresponding shortest edge path in the underlying SurfaceMesh
+        const shortest_paths_set = try pd.surface_mesh.getOrAddCellSet(.edge, "shortest_paths");
+        shortest_paths_set.clear();
         // as we are running many shortest path computations, we can reuse the same ShortestEdgePathContext for all of them
         // (avoids allocating and deallocating the incoming_dart data and the dart_queue for each edge)
         const incoming_dart = try pd.surface_mesh.addData(.vertex, ?SurfaceMesh.Dart, "__incoming_dart");
@@ -346,25 +410,26 @@ const ParameterizationData = struct {
         var ssm_e_it = try SurfaceMesh.CellIterator.init(pd.samples_surface_mesh.?, .edge);
         defer ssm_e_it.deinit();
         while (ssm_e_it.next()) |e| {
-            const start_v: SurfaceMesh.Cell = pd.sample_surface_point.value(pd.ssm_vertex_sample.value(.{ .vertex = e.dart() })).type.vertex;
-            const end_v: SurfaceMesh.Cell = pd.sample_surface_point.value(pd.ssm_vertex_sample.value(.{ .vertex = pd.samples_surface_mesh.?.phi1(e.dart()) })).type.vertex;
+            const s_start = pd.ssm_vertex_sample.value(.{ .vertex = e.dart() });
+            const s_end = pd.ssm_vertex_sample.value(.{ .vertex = pd.samples_surface_mesh.?.phi1(e.dart()) });
+            const start_v: SurfaceMesh.Cell = pd.sample_surface_point.value(s_start).type.vertex;
+            const end_v: SurfaceMesh.Cell = pd.sample_surface_point.value(s_end).type.vertex;
             const path = try distance.shortestEdgePathBetweenVerticesWithContext(
                 pd.app_ctx,
                 start_v,
                 end_v,
                 shortest_edge_path_ctx,
             );
-            // for (path.items) |d| {
-            //     try shortest_paths_set.add(.{ .edge = d });
-            // }
+            for (path.items) |d| {
+                try shortest_paths_set.add(.{ .edge = d });
+            }
             pd.ssm_edge_path.valuePtr(e).* = .{ .path = path, .dart = e.dart() };
         }
-        // pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, shortest_paths_set);
+        pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, shortest_paths_set);
+        pd.app_ctx.requestRedraw();
 
         const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, pd.app_ctx.io, .real).nanoseconds);
         zgp_log.info("Samples SurfaceMesh computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
-
-        pd.app_ctx.requestRedraw();
     }
 
     fn parameterizeSamplePatches(
@@ -374,72 +439,34 @@ const ParameterizationData = struct {
             return error.SamplesNotConnected;
         }
 
-        // in this temporary version, we select a random sample and parameterize only its patch
-        const r = pd.app_ctx.rng.random();
-        const rv = r.intRangeAtMost(u32, 0, pd.samples_surface_mesh.?.nbCells(.vertex) - 1);
-        var ssm_v_it: SurfaceMesh.CellIterator = try .init(pd.samples_surface_mesh.?, .vertex);
-        defer ssm_v_it.deinit();
-        var ssm_v: SurfaceMesh.Cell = .{ .vertex = pd.samples_surface_mesh.?.dart_data.firstIndex() };
-        var i: u32 = 0;
-        while (ssm_v_it.next()) |v| {
-            if (i == rv) {
-                ssm_v = v;
-                break;
-            }
-            i += 1;
+        if (!pd.uv_computed) {
+            pd.triangle_uvs = try pd.surface_mesh.addData(.face, TriangleUVs, "triangle_uvs");
         }
 
-        // TODO: there are shortcuts to take in these mappings between the samples SurfaceMesh, the samples, the underlying SurfaceMesh and
-        // the intrinsic triangulation, but for now we just go through all of them
-        const sample = pd.ssm_vertex_sample.value(ssm_v);
-        const sm_origin_v = pd.sample_surface_point.value(sample).type.vertex;
-        const it_origin_v = pd.intrinsic_triangulation_data.extrinsic_vertex_intrinsic_vertex.value(sm_origin_v);
-        const origin_v_index = pd.surface_mesh.cellIndex(sm_origin_v);
+        const t = std.Io.Timestamp.now(pd.app_ctx.io, .real);
 
-        // select the vertices (in the underlying SurfaceMesh) along the edge paths that are registered on the edges (in the samples SurfaceMesh)
-        // that form the boundary of the one-ring of the origin vertex
-        // these vertices delimit the patch of the surface mesh that will be parameterized around the origin vertex
-        var patch_boundary_vertex_indices: std.AutoArrayHashMapUnmanaged(u32, void) = .empty;
-        defer patch_boundary_vertex_indices.deinit(pd.app_ctx.allocator);
-        const v_one_ring_boundary = try pd.surface_mesh.getOrAddCellSet(.vertex, "one_ring_boundary");
-        v_one_ring_boundary.clear();
-        {
-            var dart_it = pd.samples_surface_mesh.?.cellDartIterator(ssm_v);
-            while (dart_it.next()) |d| {
-                const d1 = pd.samples_surface_mesh.?.phi1(d);
-                const edge_path = pd.ssm_edge_path.value(.{ .edge = d1 });
-                if (edge_path.dart == d1) {
-                    for (edge_path.path.items) |dart| {
-                        const v: SurfaceMesh.Cell = .{ .vertex = dart };
-                        try patch_boundary_vertex_indices.put(pd.app_ctx.allocator, pd.surface_mesh.cellIndex(v), {});
-                        try v_one_ring_boundary.add(v);
-                    }
-                } else {
-                    for (edge_path.path.items[1..]) |dart| {
-                        const v: SurfaceMesh.Cell = .{ .vertex = dart };
-                        try patch_boundary_vertex_indices.put(pd.app_ctx.allocator, pd.surface_mesh.cellIndex(v), {});
-                        try v_one_ring_boundary.add(v);
-                    }
-                    const last_dart = edge_path.path.items[edge_path.path.items.len - 1];
-                    const last_v: SurfaceMesh.Cell = .{ .vertex = pd.surface_mesh.phi1(last_dart) };
-                    try patch_boundary_vertex_indices.put(pd.app_ctx.allocator, pd.surface_mesh.cellIndex(last_v), {});
-                    try v_one_ring_boundary.add(last_v);
-                }
-            }
+        // init the triangle UVs data
+        var triangle_uv_it = pd.triangle_uvs.data.iterator();
+        while (triangle_uv_it.next()) |tri_uv| {
+            tri_uv.* = .init();
         }
-        pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, v_one_ring_boundary);
+
+        // scratch storage for the UV coordinates of the vertices of the patch currently being processed, in the tangent
+        // space of its origin vertex; reused (and fully overwritten before being read) for each patch
+        var current_patch_uv = try pd.surface_mesh.addData(.vertex, Vec2f, "__current_patch_uv");
+        defer pd.surface_mesh.removeData(.vertex, Vec2f, current_patch_uv);
 
         // this data is used to store the incoming dart for each vertex in the shortest path tree
         // a null value indicates a vertex that has not been reached yet
         var incoming_dart = try pd.intrinsic_triangulation_data.intrinsic_surface_mesh.addData(.vertex, ?SurfaceMesh.Dart, "__incoming_dart");
         defer pd.intrinsic_triangulation_data.intrinsic_surface_mesh.removeData(.vertex, ?SurfaceMesh.Dart, incoming_dart);
-        incoming_dart.data.fill(null);
 
         // Priority queue type for darts of the SurfaceMesh to expand from, ordered by their distance from the origin vertex
         const DartInfo = struct {
             const DartInfo = @This();
             dart: SurfaceMesh.Dart,
             distance: f32, // distance from the origin vertex to the vertex pointed to by the dart
+            uv: Vec2f, // UV coordinate of the vertex of the dart in the patch of the origin vertex
             global_angle: f32, // angle formed by the edge of the dart w.r.t. the tangent space of the origin vertex
             pub fn cmp(_: void, a: DartInfo, b: DartInfo) std.math.Order {
                 const distance_order = std.math.order(a.distance, b.distance);
@@ -450,91 +477,202 @@ const ParameterizationData = struct {
         };
         const DartQueue = std.PriorityQueue(DartInfo, void, DartInfo.cmp);
 
-        var queue: DartQueue = .empty;
-        defer queue.deinit(pd.app_ctx.allocator);
-        // initialize the queue with the darts outgoing from the origin vertex
-        {
-            const origin_v_angle_sum = pd.intrinsic_triangulation_data.extrinsic_vertex_angle_sum.valueByIndex(origin_v_index);
-            var dart_it = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.cellDartIterator(it_origin_v);
-            while (dart_it.next()) |d| {
-                try queue.push(
-                    pd.app_ctx.allocator,
-                    .{
-                        .dart = d,
-                        .distance = pd.intrinsic_triangulation_data.intrinsic_edge_length.value(.{ .edge = d }),
-                        .global_angle = pd.intrinsic_triangulation_data.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = d }) / origin_v_angle_sum * std.math.tau,
-                    },
-                );
-            }
-        }
+        // the dart queue used to expand the shortest path tree from the origin vertex
+        var dart_queue: DartQueue = .empty;
+        defer dart_queue.deinit(pd.app_ctx.allocator);
 
-        // this VertexData of the intrinsic triangulation stores the UV coordinates of the vertices in the patch
-        const it_vertex_uv = try pd.intrinsic_triangulation_data.intrinsic_surface_mesh.addData(.vertex, Vec2f, "it_vertex_uv");
-        defer pd.intrinsic_triangulation_data.intrinsic_surface_mesh.removeData(.vertex, Vec2f, it_vertex_uv);
-        it_vertex_uv.data.fill(.{ 0.0, 0.0 });
+        // the set of vertex indices (in the underlying SurfaceMesh) that belong to the patch of the origin vertex,
+        // established by a flood fill in the faces of the underlying SurfaceMesh (see below)
+        var patch_vertex_indices: std.AutoArrayHashMapUnmanaged(u32, void) = .empty;
+        defer patch_vertex_indices.deinit(pd.app_ctx.allocator);
+        // the set of edge indices (in the underlying SurfaceMesh) that bound the patch: the edge paths registered on the
+        // edges of the samples SurfaceMesh that are opposite to the origin vertex in each of its incident faces
+        var patch_boundary_edge_indices: std.AutoArrayHashMapUnmanaged(u32, void) = .empty;
+        defer patch_boundary_edge_indices.deinit(pd.app_ctx.allocator);
+        // the queue and marker used to flood fill the faces of the underlying SurfaceMesh that belong to the patch
+        // used to establish the set of vertices that belong to the patch, starting from the faces incident to the origin vertex
+        var patch_faces: std.ArrayList(SurfaceMesh.Cell) = .empty;
+        defer patch_faces.deinit(pd.app_ctx.allocator);
+        var patch_faces_visited: SurfaceMesh.CellMarker = try .init(pd.surface_mesh, .face);
+        defer patch_faces_visited.deinit();
 
-        // the origin of the local one-ring patch has uv coordinates (0, 0) (not really useful since all the data has been initialized to 0)
-        it_vertex_uv.valuePtr(it_origin_v).* = .{ 0.0, 0.0 };
+        var problematic_faces = try pd.surface_mesh.getOrAddCellSet(.face, "problematic_faces");
+        problematic_faces.clear();
+        var problematic_vertices = try pd.surface_mesh.getOrAddCellSet(.vertex, "problematic_vertices");
+        problematic_vertices.clear();
 
-        while (queue.pop()) |d_info| {
-            const pointed_v: SurfaceMesh.Cell = .{ .vertex = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.phi1(d_info.dart) };
-            const pointed_v_index = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.cellIndex(pointed_v);
-            // if the pointed vertex has already been reached, or is the origin vertex, skip it
-            if (incoming_dart.value(pointed_v) != null or pointed_v_index == origin_v_index) {
-                continue;
-            }
-            // the queue is ordered by distance, so the first time we reach a vertex is the shortest path to it
-            incoming_dart.valuePtr(pointed_v).* = d_info.dart;
+        var ssm_v_it: SurfaceMesh.CellIterator = try .init(pd.samples_surface_mesh.?, .vertex);
+        defer ssm_v_it.deinit();
+        while (ssm_v_it.next()) |ssm_v| {
+            const sample = pd.ssm_vertex_sample.value(ssm_v);
+            const sm_origin_v = pd.sample_surface_point.value(sample).type.vertex;
+            const it_origin_v = pd.intrinsic_triangulation_data.extrinsic_vertex_intrinsic_vertex.value(sm_origin_v);
+            const origin_v_index = pd.surface_mesh.cellIndex(sm_origin_v);
 
-            // the UV coordinate of pointed_v is the UV coordinate of v + the vector from v to pointed_v in the tangent space of the origin vertex
-            const l = pd.intrinsic_triangulation_data.intrinsic_edge_length.value(.{ .edge = d_info.dart });
-            it_vertex_uv.valuePtr(pointed_v).* = vec.add2f(it_vertex_uv.value(.{ .vertex = d_info.dart }), .{
-                l * std.math.cos(d_info.global_angle),
-                l * std.math.sin(d_info.global_angle),
-            });
-
-            if (patch_boundary_vertex_indices.swapRemove(pointed_v_index)) { // return true if the vertex was in the set and has been removed
-                if (patch_boundary_vertex_indices.count() == 0) {
-                    break; // all boundary vertices of the patch have been reached, we can stop the expansion
+            // collect the edges that delimit the patch of the underlying SurfaceMesh that will be parameterized around the origin vertex
+            patch_boundary_edge_indices.clearRetainingCapacity();
+            {
+                var dart_it = pd.samples_surface_mesh.?.cellDartIterator(ssm_v);
+                while (dart_it.next()) |d| {
+                    const d1 = pd.samples_surface_mesh.?.phi1(d);
+                    const edge_path = pd.ssm_edge_path.value(.{ .edge = d1 });
+                    for (edge_path.path.items) |dart| {
+                        try patch_boundary_edge_indices.put(pd.app_ctx.allocator, pd.surface_mesh.cellIndex(.{ .edge = dart }), {});
+                    }
                 }
             }
+            // flood fill the faces of the underlying SurfaceMesh, starting from the faces incident to the origin vertex
+            // and without crossing the boundary edges collected above, to establish the list of vertices that belong to the patch
+            // and register the sample in each triangle of the patch
+            patch_vertex_indices.clearRetainingCapacity();
+            patch_faces.clearRetainingCapacity();
+            {
+                var problematic = false;
+                var origin_dart_it = pd.surface_mesh.cellDartIterator(sm_origin_v);
+                while (origin_dart_it.next()) |d| {
+                    const f: SurfaceMesh.Cell = .{ .face = d };
+                    if (!patch_faces_visited.isMarked(f)) {
+                        patch_faces_visited.mark(f);
+                        try patch_faces.append(pd.app_ctx.allocator, f);
+                        pd.triangle_uvs.valuePtr(f).registerSample(sample) catch {
+                            // std.debug.print("Error registering sample {d} in triangle {d}: {}\n", .{ sample, pd.surface_mesh.cellIndex(f), err });
+                            try problematic_faces.add(f);
+                            problematic = true;
+                        };
+                    }
+                }
+                var i: usize = 0;
+                while (i < patch_faces.items.len) : (i += 1) {
+                    const f = patch_faces.items[i];
+                    var face_dart_it = pd.surface_mesh.cellDartIterator(f);
+                    while (face_dart_it.next()) |d| {
+                        try patch_vertex_indices.put(pd.app_ctx.allocator, pd.surface_mesh.cellIndex(.{ .vertex = d }), {});
+                        if (patch_boundary_edge_indices.contains(pd.surface_mesh.cellIndex(.{ .edge = d }))) {
+                            continue; // do not cross a patch boundary edge
+                        }
+                        const nf: SurfaceMesh.Cell = .{ .face = pd.surface_mesh.phi2(d) };
+                        if (!patch_faces_visited.isMarked(nf)) {
+                            patch_faces_visited.mark(nf);
+                            try patch_faces.append(pd.app_ctx.allocator, nf);
+                            pd.triangle_uvs.valuePtr(nf).registerSample(sample) catch {
+                                // std.debug.print("Error registering sample {d} in triangle {d}: {}\n", .{ sample, pd.surface_mesh.cellIndex(nf), err });
+                                try problematic_faces.add(nf);
+                                problematic = true;
+                            };
+                        }
+                    }
+                }
+                if (problematic and patch_faces.items.len > 1000) {
+                    try problematic_vertices.add(sm_origin_v);
+                }
+                // unmark the visited faces so the marker can be reused for the next origin vertex
+                for (patch_faces.items) |f| {
+                    patch_faces_visited.unmark(f);
+                }
+                // the origin vertex is never popped from the shortest path tree expansion below, so remove it now
+                _ = patch_vertex_indices.swapRemove(origin_v_index);
+            }
 
-            // otherwise, consider enqueuing the edges outgoing from pointed_v
-            var dart_it = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.cellDartIterator(pointed_v);
-            // a_prev is the angle of the edge from pointed_v to v (i.e. looking back in the shortest path to the origin vertex)
-            // in the local tangent space of pointed_v
-            const pointed_v_angle_sum = pd.intrinsic_triangulation_data.extrinsic_vertex_angle_sum.valueByIndex(pointed_v_index);
-            const a_prev = pd.intrinsic_triangulation_data.intrinsic_halfedge_extrinsic_sp_angle.value(.{
-                .halfedge = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.phi2(d_info.dart),
-            }) / pointed_v_angle_sum * std.math.tau;
-            while (dart_it.next()) |out_d| {
-                const nv: SurfaceMesh.Cell = .{ .vertex = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.phi1(out_d) };
-                // if the neighbor vertex across the edge has already been reached, skip it
-                if (incoming_dart.value(nv) != null) {
+            // initialize the queue with the darts outgoing from the origin vertex
+            dart_queue.clearRetainingCapacity();
+            {
+                const origin_v_angle_sum = pd.intrinsic_triangulation_data.extrinsic_vertex_angle_sum.valueByIndex(origin_v_index);
+                var dart_it = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.cellDartIterator(it_origin_v);
+                while (dart_it.next()) |d| {
+                    try dart_queue.push(
+                        pd.app_ctx.allocator,
+                        .{
+                            .dart = d,
+                            .distance = pd.intrinsic_triangulation_data.intrinsic_edge_length.value(.{ .edge = d }),
+                            .uv = .{ 0.0, 0.0 },
+                            .global_angle = pd.intrinsic_triangulation_data.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = d }) / origin_v_angle_sum * std.math.tau,
+                        },
+                    );
+                }
+                current_patch_uv.valuePtrByIndex(origin_v_index).* = .{ 0.0, 0.0 };
+            }
+
+            incoming_dart.data.fill(null);
+            while (dart_queue.pop()) |d_info| {
+                const pointed_v: SurfaceMesh.Cell = .{ .vertex = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.phi1(d_info.dart) };
+                const pointed_v_index = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.cellIndex(pointed_v);
+                // if the pointed vertex has already been reached, or is the origin vertex, skip it
+                if (incoming_dart.value(pointed_v) != null or pointed_v_index == origin_v_index) {
                     continue;
                 }
-                // a is the angle of the edge from pointed_v to nv in the local tangent space of pointed_v
-                const a = pd.intrinsic_triangulation_data.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = out_d }) / pointed_v_angle_sum * std.math.tau;
-                const delta_a = a - a_prev; // this encodes the difference between where we go and where we come from
-                try queue.push(
-                    pd.app_ctx.allocator,
-                    .{
-                        .dart = out_d,
-                        .distance = d_info.distance + pd.intrinsic_triangulation_data.intrinsic_edge_length.value(.{ .edge = out_d }),
-                        // the global angle (i.e. angle in the tangent space of the origin vertex) for this outgoing dart
-                        // is the global angle of the edge we come from + delta_a + PI (modulo 2*PI)
-                        .global_angle = @mod(d_info.global_angle + delta_a + std.math.pi, std.math.tau),
-                    },
-                );
+                // the queue is ordered by distance, so the first time we reach a vertex is the shortest path to it
+                incoming_dart.valuePtr(pointed_v).* = d_info.dart;
+
+                // the UV coordinate of pointed_v is the UV coordinate of v + the vector from v to pointed_v in the tangent space of the origin vertex
+                const l = pd.intrinsic_triangulation_data.intrinsic_edge_length.value(.{ .edge = d_info.dart });
+                const uv = vec.add2f(d_info.uv, .{
+                    l * std.math.cos(d_info.global_angle),
+                    l * std.math.sin(d_info.global_angle),
+                });
+
+                // the UV coordinate is only recorded if the vertex belongs to the patch of the origin vertex;
+                // the patch is completely covered when all of its vertices have been reached, and the expansion can then stop
+                if (patch_vertex_indices.swapRemove(pointed_v_index)) { // return true if the vertex was in the set and has been removed
+                    current_patch_uv.valuePtrByIndex(pointed_v_index).* = uv;
+                    if (patch_vertex_indices.count() == 0) {
+                        break; // all vertices of the patch have been reached, we can stop the expansion
+                    }
+                }
+                // otherwise, enqueue the edges outgoing from pointed_v
+                var dart_it = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.cellDartIterator(pointed_v);
+                // a_prev is the angle of the edge from pointed_v to v (i.e. looking back in the shortest path towards the origin vertex)
+                // in the local tangent space of pointed_v
+                const pointed_v_angle_sum = pd.intrinsic_triangulation_data.extrinsic_vertex_angle_sum.valueByIndex(pointed_v_index);
+                const a_prev = pd.intrinsic_triangulation_data.intrinsic_halfedge_extrinsic_sp_angle.value(.{
+                    .halfedge = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.phi2(d_info.dart),
+                }) / pointed_v_angle_sum * std.math.tau;
+                while (dart_it.next()) |out_d| {
+                    const nv: SurfaceMesh.Cell = .{ .vertex = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.phi1(out_d) };
+                    // if the neighbor vertex across the edge has already been reached, skip it
+                    if (incoming_dart.value(nv) != null) {
+                        continue;
+                    }
+                    // a is the angle of the edge from pointed_v to nv in the local tangent space of pointed_v
+                    const a = pd.intrinsic_triangulation_data.intrinsic_halfedge_extrinsic_sp_angle.value(.{ .halfedge = out_d }) / pointed_v_angle_sum * std.math.tau;
+                    const delta_a = a - a_prev; // this encodes the difference between where we go and where we come from
+                    try dart_queue.push(
+                        pd.app_ctx.allocator,
+                        .{
+                            .dart = out_d,
+                            .distance = d_info.distance + pd.intrinsic_triangulation_data.intrinsic_edge_length.value(.{ .edge = out_d }),
+                            .uv = uv,
+                            // the global angle (i.e. angle in the tangent space of the origin vertex) for this outgoing dart
+                            // is the global angle of the edge we come from + delta_a + PI (modulo 2*PI)
+                            .global_angle = @mod(d_info.global_angle + delta_a + std.math.pi, std.math.tau),
+                        },
+                    );
+                }
+            }
+
+            // the UV coordinates of the patch's vertices are now known: write them directly into the triangle_uvs
+            // data of the patch's faces, at the corner (0, 1, 2) matching the canonical order of sortedFaceVertices
+            for (patch_faces.items) |f| {
+                const tri_uvs = pd.triangle_uvs.valuePtr(f);
+                const slot = for (tri_uvs.samples, 0..) |s, idx| {
+                    if (s == sample) break idx;
+                } else continue; // unreachable; // the sample was registered in this face during the flood fill above
+                const verts = sortedFaceVertices(pd.surface_mesh, f);
+                tri_uvs.uvs[slot] = .{
+                    current_patch_uv.value(verts[0]),
+                    current_patch_uv.value(verts[1]),
+                    current_patch_uv.value(verts[2]),
+                };
             }
         }
 
-        // UV coordinates computed in the intrinsic triangulation are copied back to the underlying SurfaceMesh
-        pd.vertex_uv = try pd.surface_mesh.getOrAddData(.vertex, Vec2f, "uv_coordinates");
-        pd.vertex_uv.data.copyFrom(it_vertex_uv.data);
-
-        pd.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(pd.surface_mesh, .vertex, Vec2f, pd.vertex_uv);
+        pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, problematic_faces);
+        pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, problematic_vertices);
         pd.app_ctx.requestRedraw();
+
+        pd.uv_computed = true;
+
+        const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, pd.app_ctx.io, .real).nanoseconds);
+        zgp_log.info("Patches parameterized in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
     }
 
     // this function is called when the underlying SurfaceMesh is destroyed
@@ -561,10 +699,9 @@ const ParameterizationData = struct {
 
     // this function is called when the samples SurfaceMesh is destroyed
     fn samplesSurfaceMeshDestroyed(pd: *ParameterizationData) !void {
-        var e_it = try SurfaceMesh.CellIterator.init(pd.samples_surface_mesh.?, .edge);
-        defer e_it.deinit();
-        while (e_it.next()) |e| {
-            pd.ssm_edge_path.valuePtr(e).path.deinit(pd.app_ctx.allocator);
+        var edge_path_it = pd.ssm_edge_path.data.iterator();
+        while (edge_path_it.next()) |epath| {
+            epath.path.deinit(pd.app_ctx.allocator);
         }
         pd.samples_surface_mesh = null;
         pd.ssm_vertex_position = undefined;
@@ -598,14 +735,11 @@ pub fn init(app_ctx: *AppContext, surface_mesh_intrinsic_triangulation: *Surface
 pub fn deinit(smp: *SurfaceMeshParameterization) void {
     var it = smp.surface_meshes_data.iterator();
     while (it.next()) |entry| {
-        if (entry.value_ptr.samples_surface_mesh) |ssm| {
-            var e_it = SurfaceMesh.CellIterator.init(ssm, .edge) catch |err| {
-                std.debug.print("Failed to initialize edge iterator for samples SurfaceMesh: {}\n", .{err});
-                continue;
-            };
-            defer e_it.deinit();
-            while (e_it.next()) |e| {
-                entry.value_ptr.ssm_edge_path.valuePtr(e).path.deinit(smp.app_ctx.allocator);
+        const pd = entry.value_ptr;
+        if (pd.samples_surface_mesh) |_| {
+            var edge_path_it = pd.ssm_edge_path.data.iterator();
+            while (edge_path_it.next()) |epath| {
+                epath.path.deinit(smp.app_ctx.allocator);
             }
         }
     }
@@ -678,6 +812,7 @@ pub fn rightPanel(m: *Module) void {
 
     const UiData = struct {
         var poisson_radius: f32 = 0.03;
+        var selected_vertex_set: ?*SurfaceMesh.CellSet = null;
     };
 
     const style = c.ImGui_GetStyle();
@@ -769,6 +904,62 @@ pub fn rightPanel(m: *Module) void {
                 \\ - generated & connected samples
             );
             c.ImGui_EndDisabled();
+        }
+    }
+    {
+        c.ImGui_SeparatorText("Display vertices UVs");
+        if (pd.samples_surface_mesh) |ssm| {
+            c.ImGui_Text("Samples SurfaceMesh Vertex set:");
+            c.ImGui_PushID("vertex set");
+            switch (imgui_utils.surfaceMeshCellSetComboBox(ssm, .vertex, UiData.selected_vertex_set)) {
+                .unchanged => {},
+                .cleared => UiData.selected_vertex_set = null,
+                .changed => |cell_set| UiData.selected_vertex_set = cell_set,
+            }
+            c.ImGui_PopID();
+            const disabled = !pd.uv_computed or
+                UiData.selected_vertex_set == null;
+            if (disabled) {
+                c.ImGui_BeginDisabled(true);
+            }
+            if (c.ImGui_ButtonEx("Display UVs", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                const vertex_uv, _ = sm.getOrAddData(.vertex, Vec2f, "vertex_uv") catch |err| {
+                    std.debug.print("Failed to get or add vertex_uv data: {}\n", .{err});
+                    return;
+                };
+                vertex_uv.data.fill(.{ 0.0, 0.0 });
+                var selected_samples = std.ArrayList(u32).initCapacity(smp.app_ctx.allocator, UiData.selected_vertex_set.?.cells.items.len) catch |err| {
+                    std.debug.print("Failed to initialize selected_samples array: {}\n", .{err});
+                    return;
+                };
+                defer selected_samples.deinit(smp.app_ctx.allocator);
+                for (UiData.selected_vertex_set.?.cells.items) |v| {
+                    selected_samples.appendAssumeCapacity(pd.ssm_vertex_sample.value(v));
+                }
+                var f_it = SurfaceMesh.CellIterator.init(sm, .face) catch |err| {
+                    std.debug.print("Failed to initialize face iterator: {}\n", .{err});
+                    return;
+                };
+                defer f_it.deinit();
+                while (f_it.next()) |f| {
+                    const tri_uvs = pd.triangle_uvs.value(f);
+                    const verts = sortedFaceVertices(sm, f);
+                    for (tri_uvs.samples, 0..) |s, idx| {
+                        for (selected_samples.items) |selected_sample| {
+                            if (s == selected_sample) {
+                                for (verts, 0..) |v, corner| {
+                                    vertex_uv.valuePtr(v).* = tri_uvs.uvs[idx][corner];
+                                }
+                            }
+                        }
+                    }
+                }
+                sm_store.surfaceMeshDataUpdated(sm, .vertex, Vec2f, vertex_uv);
+                smp.app_ctx.requestRedraw();
+            }
+            if (disabled) {
+                c.ImGui_EndDisabled();
+            }
         }
     }
 }

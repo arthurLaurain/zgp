@@ -6,7 +6,7 @@ uniform vec3 u_light_position;
 uniform bool u_dim_backfaces;
 
 // uniform float u_scale;
-float u_scale = 60.0;
+float u_scale = 80.0;
 
 in vec3 v_position;
 in vec2 v_uv;

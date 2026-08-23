@@ -122,7 +122,7 @@ pub fn poissonDiskSamplePointsOnSurface(
         for (0..15) |_| {
             // sample a random angle and distance
             const angle = r.float(f32) * std.math.pi * 2.0;
-            const dist = r.float(f32) * poisson_radius + poisson_radius; // TODO: try with a smaller distance annulus
+            const dist = r.float(f32) * poisson_radius + poisson_radius / 2.0; // TODO: benchmark the effect of this smallest annulus radius
             // compute the candidate point in the tangent space of the face
             const candidate_pos_tangent = vec.add3f(pos, vec.add3f(
                 vec.mulScalar3f(f_basis_X, dist * @cos(angle)),
@@ -142,7 +142,7 @@ pub fn poissonDiskSamplePointsOnSurface(
                 continue; // if the grid cell of the candidate point is already occupied, it is not valid
             }
             var candidate_is_valid = true;
-            // check if the neighboring grid cells
+            // check if the neighboring grid cells are occupied by points that are too close to the candidate point
             for (0..3) |x| blk: {
                 for (0..3) |y| {
                     for (0..3) |z| {
@@ -165,12 +165,7 @@ pub fn poissonDiskSamplePointsOnSurface(
                 sample_surface_point.valuePtr(p).* = candidate_sp;
                 sample_position.valuePtr(p).* = candidate_pos;
                 try active_points.append(app_ctx.allocator, candidate_sp); // add the SurfacePoint to the active list
-                const grid_idx: [3]i32 = .{
-                    @intFromFloat(candidate_pos_grid_coord[0]),
-                    @intFromFloat(candidate_pos_grid_coord[1]),
-                    @intFromFloat(candidate_pos_grid_coord[2]),
-                };
-                try grid.put(app_ctx.allocator, grid_idx, candidate_pos); // add the point in the spatial grid
+                try grid.put(app_ctx.allocator, candidate_pos_grid_idx, candidate_pos); // add the point in the spatial grid
                 new_point_added = true;
                 break;
             }
