@@ -55,6 +55,9 @@ const VTable = struct {
     menuBar: ?*const fn (m: *Module) void = null,
     rightClickMenu: ?*const fn (m: *Module) void = null,
 
+    // App events
+    selectedModelChanged: ?*const fn (m: *Module) void = null,
+
     // View events
     draw: ?*const fn (m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void = null,
 
@@ -124,6 +127,10 @@ pub inline fn menuBar(m: *Module) void {
 }
 pub inline fn rightClickMenu(m: *Module) void {
     if (m.vtable.rightClickMenu) |func| func(m);
+}
+
+pub inline fn selectedModelChanged(m: *Module) void {
+    if (m.vtable.selectedModelChanged) |func| func(m);
 }
 
 pub inline fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {

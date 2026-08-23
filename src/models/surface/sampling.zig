@@ -118,11 +118,11 @@ pub fn poissonDiskSamplePointsOnSurface(
         const f_basis_Y: Vec3f = vec.normalized3f(vec.cross3f(face_normal.value(f), f_basis_X));
         const pos = sp.readData(Vec3f, .vertex, vertex_position);
         var new_point_added = false;
-        // 15 attempts to find a valid candidate point around the current point
-        for (0..15) |_| {
+        // 20 attempts to find a valid candidate point around the current point
+        for (0..20) |_| {
             // sample a random angle and distance
             const angle = r.float(f32) * std.math.pi * 2.0;
-            const dist = r.float(f32) * poisson_radius + poisson_radius / 2.0; // TODO: benchmark the effect of this smallest annulus radius
+            const dist = r.float(f32) * poisson_radius + poisson_radius; // TODO: benchmark the effect of different (smallest ?) annulus radius
             // compute the candidate point in the tangent space of the face
             const candidate_pos_tangent = vec.add3f(pos, vec.add3f(
                 vec.mulScalar3f(f_basis_X, dist * @cos(angle)),

@@ -428,6 +428,8 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
             c.ImGui_PushItemWidth(c.ImGui_GetWindowWidth() - style.*.ItemSpacing.x * 2);
             defer c.ImGui_PopItemWidth();
 
+            var selected_model_changed = false;
+
             c.ImGui_SeparatorText("Point Clouds");
             const nb_point_clouds_f = @as(f32, @floatFromInt(app_ctx.point_cloud_store.point_clouds.count() + 1));
             switch (imgui.pointCloudListBox(
@@ -437,10 +439,12 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
                 .unchanged => {},
                 .cleared => {
                     app_ctx.selected_model = .none;
+                    selected_model_changed = true;
                     app_ctx.requestRedraw();
                 },
                 .changed => |new_pc| {
                     app_ctx.selected_model = .{ .point_cloud = new_pc };
+                    selected_model_changed = true;
                     app_ctx.requestRedraw();
                 },
             }
@@ -454,10 +458,12 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
                 .unchanged => {},
                 .cleared => {
                     app_ctx.selected_model = .none;
+                    selected_model_changed = true;
                     app_ctx.requestRedraw();
                 },
                 .changed => |new_sm| {
                     app_ctx.selected_model = .{ .surface_mesh = new_sm };
+                    selected_model_changed = true;
                     app_ctx.requestRedraw();
                 },
             }
@@ -471,12 +477,20 @@ fn sdlAppIterate(appstate: ?*anyopaque) !c.SDL_AppResult {
                 .unchanged => {},
                 .cleared => {
                     app_ctx.selected_model = .none;
+                    selected_model_changed = true;
                     app_ctx.requestRedraw();
                 },
                 .changed => |new_ig| {
                     app_ctx.selected_model = .{ .incidence_graph = new_ig };
+                    selected_model_changed = true;
                     app_ctx.requestRedraw();
                 },
+            }
+
+            if (selected_model_changed) {
+                for (modules.items) |module| {
+                    module.selectedModelChanged();
+                }
             }
         }
 
