@@ -83,18 +83,8 @@ pub const ITData = struct {
     ) !void {
         itd.extrinsic_edge_length = extrinsic_edge_length;
         itd.extrinsic_corner_angle = extrinsic_corner_angle;
-        // create and compute extrinsic vertex angle sums
+        // the 2 following data are initialized below during the intrinsic triangulation initialization
         itd.extrinsic_vertex_angle_sum = try itd.extrinsic_surface_mesh.addData(.vertex, f32, "angle_sum");
-        var ext_vertex_it: SurfaceMesh.CellIterator = try .init(itd.extrinsic_surface_mesh, .vertex);
-        defer ext_vertex_it.deinit();
-        while (ext_vertex_it.next()) |v| {
-            var angle_sum: f32 = 0.0;
-            var d_it = itd.extrinsic_surface_mesh.cellDartIterator(v);
-            while (d_it.next()) |d| {
-                angle_sum += itd.extrinsic_corner_angle.value(.{ .corner = d });
-            }
-            itd.extrinsic_vertex_angle_sum.valuePtr(v).* = angle_sum;
-        }
         itd.extrinsic_vertex_intrinsic_vertex = try itd.extrinsic_surface_mesh.addData(.vertex, SurfaceMesh.Cell, "intrinsic_vertex");
 
         if (itd.initialized) {
@@ -112,7 +102,7 @@ pub const ITData = struct {
         itd.intrinsic_edge_trace = try itd.intrinsic_surface_mesh.addData(.edge, std.ArrayList(SurfacePoint), "trace");
 
         // initialize intrinsic edge lengths from extrinsic edge lengths
-        // (indices coincide after cloning so we can directly copy the raw data)
+        // WARNING: direct raw data copy is only possible because the indices coincide after cloning
         itd.intrinsic_edge_length.data.copyFrom(extrinsic_edge_length.data);
         // compute intrinsic corner angles (could be copied from extrinsic corner angles)
         try angle.computeCornerAnglesIntrinsic(itd.app_ctx, itd.intrinsic_surface_mesh, itd.intrinsic_edge_length, itd.intrinsic_corner_angle);
@@ -123,10 +113,11 @@ pub const ITData = struct {
 
         // initialize extrinsic to intrinsic vertex mapping & intrinsic vertex extrinsic SurfacePoint (all are initially of vertex type, i.e. sit on extrinsic vertices)
         // initialize intrinsic halfedge extrinsic SurfacePoint angle (expressed in the underlying SurfacePoint tangent space)
+        // initialize extrinsic vertex angle sums
         var int_vertex_it: SurfaceMesh.CellIterator = try .init(itd.intrinsic_surface_mesh, .vertex);
         defer int_vertex_it.deinit();
         while (int_vertex_it.next()) |v| {
-            // the two following expressions rely on the fact that after cloning, intrinsic vertex v.dart() is equal to extrinsic vertex v.dart()
+            // WARNING: the following code relies on the fact that after cloning, intrinsic vertex v.dart() is equal to extrinsic vertex v.dart()
             itd.extrinsic_vertex_intrinsic_vertex.valuePtr(v).* = v; // WARNING: this mapping must be updated after intrinsic edge flips (the representative Dart of the intrinsic vertex might have moved to a different vertex)
             itd.intrinsic_vertex_extrinsic_sp.valuePtr(v).* = .{
                 .surface_mesh = itd.extrinsic_surface_mesh,
@@ -140,6 +131,7 @@ pub const ITData = struct {
                 itd.intrinsic_halfedge_extrinsic_sp_angle.valuePtr(.{ .halfedge = d }).* = angle_sum;
                 angle_sum += itd.extrinsic_corner_angle.value(.{ .corner = d });
             }
+            itd.extrinsic_vertex_angle_sum.valuePtr(v).* = angle_sum;
         }
         // initialize intrinsic edge data:
         // - original edge boolean
