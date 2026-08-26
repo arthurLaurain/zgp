@@ -82,6 +82,15 @@ pub fn barycentricCoordinates(p: Vec2f, a: Vec2f, b: Vec2f, c: Vec2f) Vec3f {
     return .{ u, v, w };
 }
 
+/// compute the distance between the given point p and the segment defined by the given two points a and b
+pub fn squaredDistanceSegmentPoint(a: Vec2f, b: Vec2f, p: Vec2f) f32 {
+    const ab = vec.sub2f(b, a);
+    const ap = vec.sub2f(p, a);
+    const t = std.math.clamp(vec.dot2f(ap, ab) / vec.squaredNorm2f(ab), 0.0, 1.0);
+    const closest = vec.add2f(a, vec.mulScalar2f(ab, t));
+    return vec.squaredNorm2f(vec.sub2f(p, closest));
+}
+
 /// Compute the squared distance between the given point p and the line defined by the given two points a and b.
 pub fn squaredDistanceLinePoint(a: Vec3f, b: Vec3f, p: Vec3f) f32 {
     const ab = vec.normalized3f(vec.sub3f(b, a));
