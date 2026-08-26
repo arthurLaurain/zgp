@@ -10,11 +10,10 @@ const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 const TEXTURE2D = @import("../../Texture2D.zig");
-const SSBO = @import("../../SSBO.zig");
 const c = @import("c");
 const BlendingMode = @import("../../../modules/SurfaceMeshProceduralTexturing.zig").BlendingMode;
-
 const vec = @import("../../../geometry/vec.zig");
+const TextureBuffer = @import("../../../rendering/TextureBuffer.zig");
 const Vec3f = vec.Vec3f;
 const Vec2f = vec.Vec2f;
 const Vec2d = vec.Vec2d;
@@ -63,6 +62,9 @@ distorsions_computed_uniform: c_int = undefined,
 tiles_transform_per_vertex_uniform: c_int = undefined,
 micro_priority_uniform: c_int = undefined,
 blending_mode_uniform: c_int = undefined,
+tbo_info_triangles_uniform: c_int = undefined,
+tbo_info_vertices_uniform: c_int = undefined,
+tbo_vertices_normal: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 scaling_field_attrib: VAO.VertexAttribInfo = undefined,
@@ -112,6 +114,9 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.tiles_transform_per_vertex_uniform = gl.GetUniformLocation(pt.program.index, "u_tiles_transform_per_vertex");
     pt.micro_priority_uniform = gl.GetUniformLocation(pt.program.index, "u_micro_priority");
     pt.blending_mode_uniform = gl.GetUniformLocation(pt.program.index, "u_blending_mode");
+    pt.tbo_info_triangles_uniform = gl.GetUniformLocation(pt.program.index, "u_info_triangles");
+    pt.tbo_info_vertices_uniform = gl.GetUniformLocation(pt.program.index, "u_info_vertices");
+    pt.tbo_vertices_normal = gl.GetUniformLocation(pt.program.index, "u_vertices_normal");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -153,14 +158,14 @@ pub const Parameters = struct {
     projection_matrix: [16]f32 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
     light_position: [3]f32 = .{ 10, 0, 100 },
-    ssbo_info_triangles: SSBO,
-    ssbo_info_vertices: SSBO,
-    ssbo_edge_ref: SSBO,
-    ssbo_normal_vertices: SSBO,
-    ssbo_distorsion_primitives: SSBO,
-    ssbo_neigh_selected_vertices: SSBO,
-    ssbo_scaling_tile: SSBO,
-    ssbo_rotation_tile: SSBO,
+    tbo_info_triangles: TextureBuffer,
+    tbo_info_vertices: TextureBuffer,
+    // tbo_edge_ref: TextureBuffer,
+    tbo_normal_vertices: TextureBuffer,
+    // tbo_distorsion_primitives: TextureBuffer,
+    tbo_neigh_selected_vertices: TextureBuffer,
+    // tbo_scaling_tile: TextureBuffer,
+    // tbo_rotation_tile: TextureBuffer,
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
     vertices_scaling_vbo: ?VBO = undefined,
@@ -179,27 +184,27 @@ pub const Parameters = struct {
         return .{
             .shader = instance(),
             .vao = VAO.init(),
-            .ssbo_info_triangles = .init(),
-            .ssbo_info_vertices = .init(),
-            .ssbo_edge_ref = .init(),
-            .ssbo_normal_vertices = .init(),
-            .ssbo_distorsion_primitives = .init(),
-            .ssbo_neigh_selected_vertices = .init(),
-            .ssbo_scaling_tile = .init(),
-            .ssbo_rotation_tile = .init(),
+            .tbo_info_triangles = .init(),
+            .tbo_info_vertices = .init(),
+            // .tbo_edge_ref = .init(),
+            .tbo_normal_vertices = .init(),
+            // .tbo_distorsion_primitives = .init(),
+            .tbo_neigh_selected_vertices = .init(),
+            // .tbo_scaling_tile = .init(),
+            // .tbo_rotation_tile = .init(),
         };
     }
 
     pub fn deinit(p: *Parameters) void {
         p.vao.deinit();
-        p.ssbo_info_triangles.deinit();
-        p.ssbo_info_vertices.deinit();
-        p.ssbo_edge_ref.deinit();
-        p.ssbo_normal_vertices.deinit();
-        p.ssbo_distorsion_primitives.deinit();
-        p.ssbo_neigh_selected_vertices.deinit();
-        p.ssbo_scaling_tile.deinit();
-        p.ssbo_rotation_tile.deinit();
+        p.tbo_info_triangles.deinit();
+        p.tbo_info_vertices.deinit();
+        // p.tbo_edge_ref.deinit();
+        p.tbo_normal_vertices.deinit();
+        // p.tbo_distorsion_primitives.deinit();
+        p.tbo_neigh_selected_vertices.deinit();
+        // p.tbo_scaling_tile.deinit();
+        // p.tbo_rotation_tile.deinit();
         p.textureData.exemplar_texture.deinit();
         if (p.textureData.exemplar_texture_normal) |*t| {
             t.deinit();
@@ -321,7 +326,7 @@ pub const Parameters = struct {
         return .{ computeAsRigidAsPossibleEnergy3D(F0, mat.mat3fFromMat3d(R0), mat.mat3fFromMat3d(S0)), computeAsRigidAsPossibleEnergy3D(F1, mat.mat3fFromMat3d(R1), mat.mat3fFromMat3d(S1)), computeAsRigidAsPossibleEnergy3D(F2, mat.mat3fFromMat3d(R2), mat.mat3fFromMat3d(S2)) };
     }
 
-    pub fn fillDistorsionSSBO(p: *Parameters, ssbo: *SSBO, ibo: *const IBO) bool {
+    pub fn fillDistorsionTBO(p: *Parameters, tbo: *TextureBuffer, ibo: *const IBO) bool {
         gl.BindBuffer(gl.ARRAY_BUFFER, p.vertices_position_vbo.?.index);
         const ptr_vbo_position = gl.MapBuffer(gl.ARRAY_BUFFER, gl.READ_ONLY);
         if (ptr_vbo_position) |_| {} else {
@@ -343,13 +348,13 @@ pub const Parameters = struct {
 
         const nb_triangle: usize = ibo.nb_indices / 3;
 
-        const SSBO_structure = struct { S: [3]Mat2f, arap_energy: Vec4f };
+        const TBO_structure = struct { S: [3]Mat2f, arap_energy: Vec4f };
 
-        ssbo.memoryAllocationForMapping(@intCast(nb_triangle * (@sizeOf(SSBO_structure))));
+        tbo.memoryAllocationForMapping(@intCast(nb_triangle * (@sizeOf(TBO_structure))));
 
-        gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
-        const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
-        const array_ssbo: [*]SSBO_structure = @ptrCast(@alignCast(ptr_ssbo));
+        gl.BindBuffer(gl.TEXTURE_BUFFER, tbo.index);
+        const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
+        const array_tbo: [*]TBO_structure = @ptrCast(@alignCast(ptr_tbo));
 
         var i: usize = 0;
         var min_energy = std.math.floatMax(f32);
@@ -380,12 +385,12 @@ pub const Parameters = struct {
                 S[u][1][1] = @floatCast(S_d[u][1][1]);
             }
 
-            const ssbo_content: SSBO_structure = .{
+            const tbo_content: TBO_structure = .{
                 .S = S,
                 .arap_energy = Vec4f{ arap_energy[0], arap_energy[1], arap_energy[2], 1 },
             };
 
-            array_ssbo[tri_idx] = ssbo_content;
+            array_tbo[tri_idx] = tbo_content;
         }
 
         p.minmax_energy = .{ min_energy, max_energy };
@@ -399,15 +404,15 @@ pub const Parameters = struct {
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
         _ = gl.UnmapBuffer(gl.ELEMENT_ARRAY_BUFFER);
 
-        gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo.index);
-        _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
+        gl.BindBuffer(gl.TEXTURE_BUFFER, tbo.index);
+        _ = gl.UnmapBuffer(gl.TEXTURE_BUFFER);
         return true;
     }
 
     pub fn draw(p: *Parameters, ibo: IBO) void {
-        if (!p.distorsions_computed and p.compense_distorsions) {
-            p.distorsions_computed = p.fillDistorsionSSBO(&p.ssbo_distorsion_primitives, &ibo);
-        }
+        // if (!p.distorsions_computed and p.compense_distorsions) {
+        //     p.distorsions_computed = p.fillDistorsionTBO(&p.tbo_distorsion_primitives, &ibo);
+        // }
 
         gl.UseProgram(p.shader.program.index);
         defer gl.UseProgram(0);
@@ -435,23 +440,26 @@ pub const Parameters = struct {
         }
 
         defer gl.BindTexture(gl.TEXTURE_2D, 0);
-        p.ssbo_info_vertices.bindBufferToShader(0, ibo.index);
-        p.ssbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.?.index);
-        p.ssbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index);
-        p.ssbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.?.index);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 4, p.ssbo_distorsion_primitives.index);
-        gl.BindBufferBase(gl.SHADER_STORAGE_BUFFER, 5, p.ssbo_neigh_selected_vertices.index);
-        if (p.vertices_scaling_vbo) |vbo| {
-            p.ssbo_scaling_tile.bindBufferToShader(6, vbo.index);
-        } else {
-            p.ssbo_scaling_tile.bindBufferToShader(6, 0);
-        }
+        p.tbo_info_vertices.bindBufferToShader(0, ibo.index, gl.R32UI);
+        gl.Uniform1i(p.shader.tbo_info_triangles_uniform, 0);
+        p.tbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.?.index, gl.RGBA32F);
+        gl.Uniform1i(p.shader.tbo_info_vertices_uniform, 1);
+        // p.tbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index, gl.RGBA32F);
+        p.tbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.?.index, gl.RGBA32F);
+        gl.Uniform1i(p.shader.tbo_vertices_normal, 1);
+        // gl.BindBufferBase(gl.TEXTURE_BUFFER, 4, p.tbo_distorsion_primitives.index);
+        // gl.BindBufferBase(gl.TEXTURE_BUFFER, 5, p.tbo_neigh_selected_vertices.index);
+        // if (p.vertices_scaling_vbo) |vbo| {
+        //     p.tbo_scaling_tile.bindBufferToShader(6, vbo.index, gl.RGBA32F);
+        // } else {
+        //     p.tbo_scaling_tile.bindBufferToShader(6, 0, gl.RGBA32F);
+        // }
 
-        if (p.vertices_rotation_vbo) |vbo| {
-            p.ssbo_rotation_tile.bindBufferToShader(7, vbo.index);
-        } else {
-            p.ssbo_rotation_tile.bindBufferToShader(7, 0);
-        }
+        // if (p.vertices_rotation_vbo) |vbo| {
+        //     p.tbo_rotation_tile.bindBufferToShader(7, vbo.index, gl.RGBA32F);
+        // } else {
+        //     p.tbo_rotation_tile.bindBufferToShader(7, 0, gl.RGBA32F);
+        // }
 
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform2fv(p.shader.min_max_energy_uniform, 1, @ptrCast(&p.minmax_energy));
@@ -465,6 +473,7 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.tiles_transform_per_vertex_uniform, @intFromBool(p.tiles_transform_per_vertex));
         gl.Uniform1f(p.shader.micro_priority_uniform, p.mixmax_micro_priority);
         gl.Uniform1i(p.shader.blending_mode_uniform, @intFromEnum(p.blending_mode));
+
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);

@@ -29,7 +29,7 @@ pub fn deinitRegistry() void {
 
 const shader_version = switch (gl.info.api) {
     .gl => (
-        \\#version 430 core
+        \\#version 410 core
         \\
     ),
     .gles, .glsc => (

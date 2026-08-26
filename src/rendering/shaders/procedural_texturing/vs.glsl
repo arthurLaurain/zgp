@@ -7,10 +7,7 @@ layout(location = 1) in float a_scaling_field;
 layout(location = 2) in vec3 a_rotation_field;
 layout(location = 3) in vec3 a_edge_ref;
 
-layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
-{
-  float vertices_normal[];
-};
+uniform samplerBuffer vertices_normal;
 
 out vec3 frag_position;
 out vec3 v_frag_position;
@@ -23,7 +20,7 @@ void main()
 {
 
     int id_triangle = gl_VertexID;
-    vertex_normal = vec3(vertices_normal[id_triangle * 3], vertices_normal[id_triangle * 3 +1], vertices_normal[id_triangle * 3 + 2]);
+    vertex_normal = vec3(texelFetch(vertices_normal, id_triangle).xyz);
 
     frag_position = a_position.xyz;
     vec4 view_pos = u_view_matrix *a_position;

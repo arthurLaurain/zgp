@@ -25,54 +25,25 @@ in vec3 rotation_field;
 in vec3 vertex_normal;
 out vec4 f_color;
 
-// using raw buffer to avoid vec3/ivec3 in SSBO because they need to be aligned to a 16 byte boundary while IBO/VBO uses 12 floats vec3
-layout(std430, binding = 0) readonly buffer ssbo_triangles
-{
-  int info_triangles[];
-};
+uniform samplerBuffer u_info_triangles;
+uniform samplerBuffer u_info_vertices;
+uniform samplerBuffer u_vertices_normal;
+// uniform samplerBuffer u_distorsions;
+// uniform samplerBuffer u_neigh_selected_vertices;
 
-layout(std430, binding = 1) readonly buffer ssbo_vertices
-{
-  float info_vertices[];
-};
 
-layout(std430, binding = 2) readonly buffer ssbo_edge_ref
-{
-  float edge_ref_ssbo[];
-};
+// TODO fix distorsions and neigh with TBO
+// struct tbo_distorsion
+// {
+//   mat2 S[3];
+//   vec4 arap_energy;
+// };
 
-layout(std430, binding = 3) readonly buffer ssbo_vertices_normal
-{
-  float vertices_normal[];
-};
-
-struct SSBO_distorsion
-{
-  mat2 S[3];
-  vec4 arap_energy;
-};
-
-layout(std430, binding = 4) readonly buffer ssbo_triangles_distorsion
-{
-  SSBO_distorsion distorsions[];
-};
-
-layout(std430, binding = 5) readonly buffer ssbo_neigh_selected_vertices
-{
-  float num_selected_vertices;
-  float neigh_selected_vertices[];
-};
-
-layout(std430, binding = 6) readonly buffer ssbo_scaling_value
-{
-  float scaling_value[];
-};
-
-layout(std430, binding = 7) readonly buffer ssbo_rotation_value
-{
-  float rotation_value[];
-};
-
+// layout(std430, binding = 5) readonly buffer tbo_neigh_selected_vertices
+// {
+//   float num_selected_vertices;
+//   float neigh_selected_vertices[];
+// };
 
 struct gaussian_distribution {
 	float mean;
@@ -221,52 +192,52 @@ float pointInTriangleBary(vec3 P, vec3 A, vec3 B, vec3 C)
     return 0.0;
 }
 
-vec4 addColorForSelectedOneRing(vec4 rgba)
-{
-  vec4 color = vec4(1.);
-  float t = 0.;
-  if (num_selected_vertices > 0)
-  {
-      int offset = 0;
+// vec4 addColorForSelectedOneRing(vec4 rgba)
+// {
+//   vec4 color = vec4(1.);
+//   float t = 0.;
+//   if (num_selected_vertices > 0)
+//   {
+//       int offset = 0;
 
-      for (int i = 0; i < num_selected_vertices; i++)
-      {
-          int num_neigh = int(neigh_selected_vertices[offset]) - 1;
+//       for (int i = 0; i < num_selected_vertices; i++)
+//       {
+//           int num_neigh = int(neigh_selected_vertices[offset]) - 1;
 
-          vec3 center = vec3(
-              neigh_selected_vertices[offset + 1],
-              neigh_selected_vertices[offset + 2],
-              neigh_selected_vertices[offset + 3]
-          );
+//           vec3 center = vec3(
+//               neigh_selected_vertices[offset + 1],
+//               neigh_selected_vertices[offset + 2],
+//               neigh_selected_vertices[offset + 3]
+//           );
 
-          int base = offset + 4;
+//           int base = offset + 4;
 
-          for (int k = 0; k < num_neigh; k++)
-          {
-              int k_next = (k + 1) % num_neigh;
+//           for (int k = 0; k < num_neigh; k++)
+//           {
+//               int k_next = (k + 1) % num_neigh;
 
-              vec3 p1 = center;
+//               vec3 p1 = center;
 
-              vec3 p2 = vec3(
-                  neigh_selected_vertices[base + k * 3 + 0],
-                  neigh_selected_vertices[base + k * 3 + 1],
-                  neigh_selected_vertices[base + k * 3 + 2]
-              );
+//               vec3 p2 = vec3(
+//                   neigh_selected_vertices[base + k * 3 + 0],
+//                   neigh_selected_vertices[base + k * 3 + 1],
+//                   neigh_selected_vertices[base + k * 3 + 2]
+//               );
 
-              vec3 p3 = vec3(
-                  neigh_selected_vertices[base + k_next * 3 + 0],
-                  neigh_selected_vertices[base + k_next * 3 + 1],
-                  neigh_selected_vertices[base + k_next * 3 + 2]
-              );
+//               vec3 p3 = vec3(
+//                   neigh_selected_vertices[base + k_next * 3 + 0],
+//                   neigh_selected_vertices[base + k_next * 3 + 1],
+//                   neigh_selected_vertices[base + k_next * 3 + 2]
+//               );
 
-              t += 0.25 * pointInTriangleBary(frag_position, p1, p2, p3);
-          }
+//               t += 0.25 * pointInTriangleBary(frag_position, p1, p2, p3);
+//           }
 
-          offset += 4 + num_neigh * 3;
-      }
-  }
-  return mix(color, rgba, t);
-}
+//           offset += 4 + num_neigh * 3;
+//       }
+//   }
+//   return mix(color, rgba, t);
+// }
 
 void main() {
 
@@ -276,15 +247,15 @@ void main() {
 
   int id_triangle = gl_PrimitiveID;
 
-  ivec3 id_vertices = ivec3(info_triangles[3*id_triangle], info_triangles[3*id_triangle + 1], info_triangles[3*id_triangle + 2]);
+  ivec3 id_vertices = ivec3(texelFetch(u_info_triangles, id_triangle).xyz);
 
-  vec3 p1 = (vec4(info_vertices[id_vertices.x * 3], info_vertices[id_vertices.x * 3 + 1], info_vertices[id_vertices.x * 3 + 2],1.)).xyz;
-  vec3 p2 = (vec4(info_vertices[id_vertices.y * 3], info_vertices[id_vertices.y * 3 + 1], info_vertices[id_vertices.y * 3 + 2],1.)).xyz;
-  vec3 p3 = (vec4(info_vertices[id_vertices.z * 3], info_vertices[id_vertices.z * 3 + 1], info_vertices[id_vertices.z * 3 + 2],1.)).xyz;
+  vec3 p1 = vec3(texelFetch(u_info_vertices, id_vertices.x).xyz);
+  vec3 p2 = vec3(texelFetch(u_info_vertices, id_vertices.y).xyz);
+  vec3 p3 = vec3(texelFetch(u_info_vertices, id_vertices.z).xyz);
 
-  vec3 n1 = (vec4(vertices_normal[id_vertices.x * 3], vertices_normal[id_vertices.x * 3 + 1], vertices_normal[id_vertices.x * 3 + 2],1.)).xyz;
-  vec3 n2 = (vec4(vertices_normal[id_vertices.y * 3], vertices_normal[id_vertices.y * 3 + 1], vertices_normal[id_vertices.y * 3 + 2],1.)).xyz;
-  vec3 n3 = (vec4(vertices_normal[id_vertices.z * 3], vertices_normal[id_vertices.z * 3 + 1], vertices_normal[id_vertices.z * 3 + 2],1.)).xyz;
+  vec3 n1 = vec3(texelFetch(u_vertices_normal, id_vertices.x).xyz);
+  vec3 n2 = vec3(texelFetch(u_vertices_normal, id_vertices.y).xyz);
+  vec3 n3 = vec3(texelFetch(u_vertices_normal, id_vertices.z).xyz);
 
   vec2 u1;
   vec2 u2;
@@ -321,45 +292,45 @@ void main() {
   vec2 uv3 = u3 + r3;
 
 
-  SSBO_distorsion distorsion;
-  if(u_compense_distorsions && u_distorsions_computed)
-  {
-    distorsion = distorsions[id_triangle];
-    c1 = texture(u_exemplar_texture, distorsion.S[0] * uv1).xyz;
-    c2 = texture(u_exemplar_texture, distorsion.S[1] * uv2).xyz;
-    c3 = texture(u_exemplar_texture, distorsion.S[2] * uv3).xyz;
-  }
-  else
-  {
+  // tbo_distorsion distorsion;
+  // if(u_compense_distorsions && u_distorsions_computed)
+  // {
+  //   distorsion = distorsions[id_triangle];
+  //   c1 = texture(u_exemplar_texture, distorsion.S[0] * uv1).xyz;
+  //   c2 = texture(u_exemplar_texture, distorsion.S[1] * uv2).xyz;
+  //   c3 = texture(u_exemplar_texture, distorsion.S[2] * uv3).xyz;
+  // }
+  // else
+  // {
     c1 = texture(u_exemplar_texture, uv1).xyz;
     c2 = texture(u_exemplar_texture, uv2).xyz;
     c3 = texture(u_exemplar_texture, uv3).xyz;
-  }
+  // }
   vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
   
-  if(u_visu_arap_energy && u_distorsions_computed)
-  {
-    float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
+  // if(u_visu_arap_energy && u_distorsions_computed)
+  // {
+  //   float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
     
-    f_color = vec4(smoothstep(u_minmax_energy.x, u_minmax_energy.y, energy), 0., 0.  , 1.);
-  }
-  else
+  //   f_color = vec4(smoothstep(u_minmax_energy.x, u_minmax_energy.y, energy), 0., 0.  , 1.);
+  // }
+  // else
     f_color = vec4(result);
 
   mixmaxdata M;
 
   if(u_blending_mode == 1)
   {
-    if(u_compense_distorsions)
-    {
-      distorsion = distorsions[id_triangle];
-      M = mixMax(distorsion.S[0] * uv1, distorsion.S[1] * uv2,distorsion.S[2] * uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
-    }
-    else
-    {
+    // if(u_compense_distorsions)
+    // {
+    //   distorsion = distorsions[id_triangle];
+    //   M = mixMax(distorsion.S[0] * uv1, distorsion.S[1] * uv2,distorsion.S[2] * uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+    // }
+    // else
+    // {
       M = mixMax(uv1,uv2,uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
-    }
+    // }
 
     // Normal mapping
     vec3 normal = normalize(M.normal * 2. - 1.);
@@ -368,6 +339,6 @@ void main() {
     f_color = vec4(M.color * dot(normalWS, L),1);
   }
 
-  f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
+  // f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
   
 }

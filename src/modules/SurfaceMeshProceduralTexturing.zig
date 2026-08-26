@@ -29,7 +29,7 @@ const Mat2f = mat.Mat2f;
 const Mat3f = mat.Mat3f;
 const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
-const SSBO = @import("../rendering/SSBO.zig");
+const TextureBuffer = @import("../rendering/TextureBuffer.zig");
 
 pub const BlendingMode = enum { LINEAR, MIXMAX };
 
@@ -220,15 +220,15 @@ pub fn compute3DRotationFieldFromScalarField(smpt: SurfaceMeshProceduralTexturin
 
 pub fn clearCellSetVisualized(smpt: SurfaceMeshProceduralTexturing, sm: *SurfaceMesh) void {
     const tnb_data = smpt.surface_meshes_data.getPtr(sm) orelse return;
-    const ssbo_neigh: *SSBO = &tnb_data.procedural_texturing_parameters.ssbo_neigh_selected_vertices;
-    ssbo_neigh.memoryAllocationForMapping(@sizeOf(f32));
-    gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo_neigh.index);
+    const tbo_neigh: *TextureBuffer = &tnb_data.procedural_texturing_parameters.tbo_neigh_selected_vertices;
+    tbo_neigh.memoryAllocationForMapping(@sizeOf(f32));
+    gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, tbo_neigh.index);
     defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
 
-    const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
-    const array_ssbo: [*]f32 = @ptrCast(@alignCast(ptr_ssbo));
+    const ptr_tbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
+    const array_tbo: [*]f32 = @ptrCast(@alignCast(ptr_tbo));
 
-    array_ssbo[0] = 0;
+    array_tbo[0] = 0;
     _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
 }
 
@@ -258,27 +258,27 @@ pub fn refreshCellsetVisualized(smpt: SurfaceMeshProceduralTexturing, sm: *Surfa
         list_neigh_position.insert(smpt.app_ctx.allocator, list_neigh_position.items.len - (count * 3), @floatFromInt(count)) catch unreachable;
     }
 
-    const ssbo_neigh: *SSBO = &tnb_data.procedural_texturing_parameters.ssbo_neigh_selected_vertices;
-    ssbo_neigh.memoryAllocationForMapping(@intCast(@sizeOf(f32) * (list_neigh_position.items.len + 1)));
+    const tbo_neigh: *TextureBuffer = &tnb_data.procedural_texturing_parameters.tbo_neigh_selected_vertices;
+    tbo_neigh.memoryAllocationForMapping(@intCast(@sizeOf(f32) * (list_neigh_position.items.len + 1)));
 
-    gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, ssbo_neigh.index);
-    defer gl.BindBuffer(gl.SHADER_STORAGE_BUFFER, 0);
+    gl.BindBuffer(gl.TEXTURE_BUFFER, tbo_neigh.index);
+    defer gl.BindBuffer(gl.TEXTURE_BUFFER, 0);
 
-    const ptr_ssbo = gl.MapBuffer(gl.SHADER_STORAGE_BUFFER, gl.READ_WRITE);
-    const array_ssbo: [*]f32 = @ptrCast(@alignCast(ptr_ssbo));
+    const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
+    const array_tbo: [*]f32 = @ptrCast(@alignCast(ptr_tbo));
 
-    array_ssbo[0] = @floatFromInt(tnb_data.cellset_selection_visualized.?.cells.items.len);
+    array_tbo[0] = @floatFromInt(tnb_data.cellset_selection_visualized.?.cells.items.len);
     for (list_neigh_position.items, 0..) |value, i| {
-        array_ssbo[i + 1] = value;
+        array_tbo[i + 1] = value;
     }
 
     // std.log.debug("Print liste de taille {d}\n", .{list_neigh_position.items.len + 1});
     // for (0..list_neigh_position.items.len + 1) |value| {
     //     if ((value + 1) % 3 == 0 and value > 1) std.log.debug("==========================\n", .{});
-    //     std.log.debug("{d}\n", .{array_ssbo[value]});
+    //     std.log.debug("{d}\n", .{array_tbo[value]});
     // }
 
-    _ = gl.UnmapBuffer(gl.SHADER_STORAGE_BUFFER);
+    _ = gl.UnmapBuffer(gl.TEXTURE_BUFFER);
 }
 
 /// Part of the Module interface
