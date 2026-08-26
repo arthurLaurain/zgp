@@ -10,7 +10,6 @@ uniform bool u_visu_arap_energy;
 uniform bool u_compense_distorsions;
 uniform vec2 u_minmax_energy;
 uniform bool u_distorsions_computed;
-uniform bool u_tiles_transform_per_vertex;
 uniform sampler2D u_exemplar_texture;
 uniform sampler2D u_exemplar_texture_priority;
 uniform sampler2D u_exemplar_texture_normal;
@@ -21,8 +20,9 @@ uniform int u_blending_mode;
 in vec3 frag_position;
 in vec3 edge_ref;
 in vec3 v_frag_position;
-in vec2 scaling_field;
-in vec2 rotation_field;
+in float scaling_field;
+in vec3 rotation_field;
+in vec3 vertex_normal;
 out vec4 f_color;
 
 // using raw buffer to avoid vec3/ivec3 in SSBO because they need to be aligned to a 16 byte boundary while IBO/VBO uses 12 floats vec3
@@ -290,26 +290,18 @@ void main() {
   vec2 u2;
   vec2 u3;
 
+  vec3 a = normalize(edge_ref);
+  vec3 b = normalize(rotation_field);
 
-  if(u_tiles_transform_per_vertex)
-  {
-    mat2 ro1 = rotate(rotation_value[id_vertices.x]);
-    mat2 ro2 = rotate(rotation_value[id_vertices.y]);
-    mat2 ro3 = rotate(rotation_value[id_vertices.z]);
-    u1 = ro1 * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * scaling_value[id_vertices.x] * u_scale_tex_coords;
-    u2 = ro2 * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * scaling_value[id_vertices.y] * u_scale_tex_coords;
-    u3 = ro3 * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * scaling_value[id_vertices.z] * u_scale_tex_coords;
-  }
-  else
-  {
-    mat2 rotation_transform = rotate(rotation_field.x);
+  float angle = 0;
+  if(length(rotation_field) > 0) angle = atan(dot(vertex_normal, cross(a, b)),dot(a, b)); // We don't want to rotate UV if there is no rotation field
 
-    vec3 edge_ref_orientation = vec3(rotation_field.y * 3, rotation_field.y * 3 + 1, rotation_field.y * 3 + 2);
+  mat2 rotation_transform = inverse(rotate(angle));
 
-    u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref_orientation) * (u_scale_tex_coords + scaling_field.x);
-    u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref_orientation) * (u_scale_tex_coords + scaling_field.x);
-    u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref_orientation) * (u_scale_tex_coords + scaling_field.x);
-  }
+  u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * (u_scale_tex_coords + scaling_field);
+  u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * (u_scale_tex_coords + scaling_field);
+  u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * (u_scale_tex_coords + scaling_field);
+  
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
 
   vec2 r1 = hash12(int(id_vertices.x));

@@ -41,11 +41,6 @@ const FieldGeneratorData = struct {
     }
 };
 
-pub const FieldData = union(enum) {
-    scalar: f32,
-    vector: Vec3f,
-};
-
 const SelectionAction = enum {
     add,
     remove,
@@ -67,7 +62,7 @@ module: Module = .{
 
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, FieldGeneratorData) = .empty,
 value_increment: f32 = 1,
-field_edited: ?SurfaceMesh.CellData(.vertex, FieldData) = null,
+field_edited: ?SurfaceMesh.CellData(.vertex, f32) = null,
 pending_field_name: [32]u8 = @splat(0),
 hovered_cell: ?SurfaceMesh.Cell = null,
 hovered_cell_ibo: IBO,
@@ -76,7 +71,6 @@ selected_op_index: i32 = 0,
 op: *const fn (f32, FieldOperationParam) f32 = constant,
 exponential_slope: f32 = 1,
 k_neighborhood: i32 = 1,
-max_orientation_from_distance: f32 = 0,
 const functions = [_]FunctionEntry{
     .{ .name = "Constant", .func = constant },
     .{ .name = "Exponential Decay", .func = exponential_decay },
@@ -120,6 +114,7 @@ fn exponential_decay(x: f32, p: FieldOperationParam) f32 {
     const a = @exp(-k * p.distance);
     const b = @exp(-k * p.radius_expo);
 
+    std.log.debug("Oui\n", .{});
     return x * (a - b) / (1.0 - b);
 }
 
@@ -255,31 +250,31 @@ pub fn gaussianMean(
     return if (weight_sum == 0) sum else sum / weight_sum;
 }
 
-pub fn smoothField(field: SurfaceMesh.CellData(.vertex, f32), sm: *SurfaceMesh, k: u32) !void {
-    var cell_it = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
-    defer cell_it.deinit();
-    var field_copy = try sm.allocator.alloc(f32, sm.nbCells(.vertex));
-    defer sm.allocator.free(field_copy);
+// pub fn smoothField(field: SurfaceMesh.CellData(.vertex, f32), sm: *SurfaceMesh, k: u32) !void {
+//     var cell_it = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
+//     defer cell_it.deinit();
+//     var field_copy = try sm.allocator.alloc(f32, sm.nbCells(.vertex));
+//     defer sm.allocator.free(field_copy);
 
-    @memset(field_copy, 0);
-    var j: usize = 0;
-    while (cell_it.next()) |cell| {
-        var rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)) = getNeighTriangleID(sm, k, cell) catch unreachable;
-        field_copy[j] = uniformMean(rings, field);
-        for (0..rings.items.len) |i| {
-            rings.items[i].deinit(sm.allocator);
-        }
-        rings.deinit(sm.allocator);
-        j = j + 1;
-    }
+//     @memset(field_copy, 0);
+//     var j: usize = 0;
+//     while (cell_it.next()) |cell| {
+//         var rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)) = getNeighTriangleID(sm, k, cell) catch unreachable;
+//         field_copy[j] = uniformMean(rings, field);
+//         for (0..rings.items.len) |i| {
+//             rings.items[i].deinit(sm.allocator);
+//         }
+//         rings.deinit(sm.allocator);
+//         j = j + 1;
+//     }
 
-    cell_it.reset();
-    j = 0;
-    while (cell_it.next()) |cell| {
-        field.valuePtrByIndex(sm.cellIndex(cell)).* = field_copy[j];
-        j = j + 1;
-    }
-}
+//     cell_it.reset();
+//     j = 0;
+//     while (cell_it.next()) |cell| {
+//         field.valuePtrByIndex(sm.cellIndex(cell)).* = field_copy[j];
+//         j = j + 1;
+//     }
+// }
 
 pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
     const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
@@ -412,14 +407,14 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                         }
                         switch (action) {
                             .add => {
-                                celldata.valuePtr(cell).*.scalar = celldata.value(cell).scalar + fg.op(fg.value_increment, op_param);
+                                celldata.valuePtr(cell).* = celldata.value(cell) + fg.op(fg.value_increment, op_param);
                             },
                             .remove => {
-                                celldata.valuePtr(cell).*.scalar = @max(0, celldata.value(cell).scalar - fg.op(fg.value_increment, op_param));
+                                celldata.valuePtr(cell).* = @max(0, celldata.value(cell) - fg.op(fg.value_increment, op_param));
                             },
                         }
                     }
-                    sm_store.surfaceMeshDataUpdated(sm, .vertex, FieldData, celldata);
+                    sm_store.surfaceMeshDataUpdated(sm, .vertex, f32, celldata);
                     break :blk true;
                 }
             }
@@ -463,7 +458,7 @@ pub fn rightPanel(m: *Module) void {
 
         if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
             const data_name = std.mem.sliceTo(&fg.pending_field_name, 0);
-            const maybe_data = sm.addData(.vertex, FieldData, data_name);
+            const maybe_data = sm.addData(.vertex, f32, data_name);
 
             if (maybe_data) |data| {
                 fg.field_edited = data;
@@ -480,7 +475,7 @@ pub fn rightPanel(m: *Module) void {
     }
 
     c.ImGui_SeparatorText("Edit fields");
-    switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, FieldData, fg.field_edited)) {
+    switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, fg.field_edited)) {
         .unchanged => {},
         .cleared => {
             fg.field_edited = null;
@@ -522,102 +517,75 @@ pub fn rightPanel(m: *Module) void {
             //     fg.app_ctx.requestRedraw();
             // }
         }
+    }
 
-        c.ImGui_SeparatorText("Orientation field from distance");
+    c.ImGui_SeparatorText("Vector field preset");
+    if (c.ImGui_Button("Create vector field from from distance gradient")) {
+        var cell_it = SurfaceMesh.CellIterator.init(sm, .face) catch unreachable;
+        const info = fg.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
 
-        _ = c.ImGui_SliderFloat("Max orientation", &fg.max_orientation_from_distance, 0, 31.4159);
-        if (c.ImGui_Button("Create vector field from from distance gradient")) {
-            var cell_it = SurfaceMesh.CellIterator.init(sm, .face) catch unreachable;
-            const info = fg.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
+        if (sm.getData(.vertex, f32, "distance")) |distance_data| {
+            const data = sm.addData(.face, Vec3f, "gradient_distance_field") catch
+                {
+                    std.log.debug("Error creating gradient distance field data\n", .{});
+                    unreachable;
+                };
+            while (cell_it.next()) |cell| {
+                const p0 = info.std_datas.vertex_position.?.value(.{ .vertex = cell.dart() });
+                const p1 = info.std_datas.vertex_position.?.value(.{ .vertex = sm.phi1(cell.dart()) });
+                const p2 = info.std_datas.vertex_position.?.value(.{ .vertex = sm.phi1(sm.phi1(cell.dart())) });
 
-            if (sm.getData(.vertex, f32, "distance")) |distance_data| {
+                const f0 = distance_data.value(.{ .vertex = cell.dart() });
+                const f1 = distance_data.value(.{ .vertex = sm.phi1(cell.dart()) });
+                const f2 = distance_data.value(.{ .vertex = sm.phi1(sm.phi1(cell.dart())) });
 
-                // var distance_maximum: f32 = distance_data.valueByIndex(0);
-                // var distance_minimum: f32 = distance_data.valueByIndex(0);
-                // var index_minimum: i32 = 0;
-                // var i: i32 = 0;
+                const e1 = vec.sub3f(p1, p0);
+                const e2 = vec.sub3f(p2, p0);
 
-                // // First loop to seek maximum distance
-                // while (cell_it.next()) |cell| {
-                //     const current_distance = distance_data.value(cell);
-                //     if (distance_maximum < current_distance) {
-                //         distance_maximum = current_distance;
-                //     } else if (distance_minimum > current_distance) {
-                //         index_minimum = i;
-                //         distance_minimum = current_distance;
-                //     }
-                //     i = i + 1;
-                // }
-                // cell_it.reset();
-                // // Second loop to apply normalized orientation to all field points
-                // while (cell_it.next()) |cell| {
-                //     const current_distance = distance_data.value(cell);
-                //     field.valuePtr(cell).*.value = (current_distance / distance_maximum) * fg.max_orientation_from_distance;
-                //     field.valuePtr(cell).*.additional_value = @floatFromInt(index_minimum);
-                // }
+                const cross = vec.cross3f(e1, e2);
+                const two_area = vec.norm3f(cross);
 
-                const data = sm.addData(.face, Vec3f, "gradient_distance_field") catch
-                    {
-                        std.log.debug("Error creating gradient distance field data\n", .{});
-                        unreachable;
-                    };
-                while (cell_it.next()) |cell| {
-                    const p0 = info.std_datas.vertex_position.?.value(.{ .vertex = cell.dart() });
-                    const p1 = info.std_datas.vertex_position.?.value(.{ .vertex = sm.phi1(cell.dart()) });
-                    const p2 = info.std_datas.vertex_position.?.value(.{ .vertex = sm.phi1(sm.phi1(cell.dart())) });
+                const n = vec.divScalar3f(cross, two_area);
 
-                    const f0 = distance_data.value(.{ .vertex = cell.dart() });
-                    const f1 = distance_data.value(.{ .vertex = sm.phi1(cell.dart()) });
-                    const f2 = distance_data.value(.{ .vertex = sm.phi1(sm.phi1(cell.dart())) });
+                const u = vec.sub3f(p0, p2);
+                const v = vec.sub3f(p1, p0);
 
-                    const e1 = vec.sub3f(p1, p0);
-                    const e2 = vec.sub3f(p2, p0);
+                const u_perp = vec.cross3f(n, u);
+                const v_perp = vec.cross3f(n, v);
 
-                    const cross = vec.cross3f(e1, e2);
-                    const two_area = vec.norm3f(cross);
-
-                    const n = vec.divScalar3f(cross, two_area);
-
-                    const u = vec.sub3f(p0, p2);
-                    const v = vec.sub3f(p1, p0);
-
-                    const u_perp = vec.cross3f(n, u);
-                    const v_perp = vec.cross3f(n, v);
-
-                    const grad = vec.add3f(vec.mulScalar3f(vec.divScalar3f(u_perp, two_area), f1 - f0), vec.mulScalar3f(vec.divScalar3f(v_perp, two_area), f2 - f0));
-                    const grad_normalized = vec.normalized3f(grad);
-                    data.valuePtr(cell).* = grad_normalized;
-                }
-
-                // DEBUG - Visualize orientation field
-                // var cell_it2 = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
-                // const data2 = sm.addData(.vertex, Vec3f, "gradient_distance_field_2") catch
-                //     {
-                //         std.log.debug("Error creating gradient distance field data\n", .{});
-                //         unreachable;
-                //     };
-                // while (cell_it2.next()) |cell| {
-                //     const d_start = cell.dart();
-                //     var d_next = d_start;
-                //     var n: f32 = 0;
-                //     var sum: Vec3f = .{ 0, 0, 0 };
-                //     while (true) {
-                //         d_next = sm.phi2(d_next);
-                //         const grad = data.value(.{ .face = d_next });
-                //         sum = vec.add3f(sum, grad);
-                //         d_next = sm.phi1(d_next);
-                //         n = n + 1;
-                //         if (d_next == d_start) break;
-                //     }
-                //     const mean_vectors = vec.divScalar3f(sum, n);
-                //     data2.valuePtr(cell).* = mean_vectors;
-                // }
-                // fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, data2);
-
-                fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, Vec3f, data);
-            } else {
-                std.log.debug("No distance field computed\n", .{});
+                const grad = vec.add3f(vec.mulScalar3f(vec.divScalar3f(u_perp, two_area), f1 - f0), vec.mulScalar3f(vec.divScalar3f(v_perp, two_area), f2 - f0));
+                const grad_normalized = vec.normalized3f(grad);
+                data.valuePtr(cell).* = grad_normalized;
             }
+
+            // DEBUG - Visualize orientation field
+            var cell_it2 = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
+            const data2 = sm.addData(.vertex, Vec3f, "vertex_gradient_distance_field") catch
+                {
+                    std.log.debug("Error creating gradient distance field data\n", .{});
+                    unreachable;
+                };
+            while (cell_it2.next()) |cell| {
+                const d_start = cell.dart();
+                var d_next = d_start;
+                var n: f32 = 0;
+                var sum: Vec3f = .{ 0, 0, 0 };
+                while (true) {
+                    d_next = sm.phi2(d_next);
+                    const grad = data.value(.{ .face = d_next });
+                    sum = vec.add3f(sum, grad);
+                    d_next = sm.phi1(d_next);
+                    n = n + 1;
+                    if (d_next == d_start) break;
+                }
+                const mean_vectors = vec.divScalar3f(sum, n);
+                data2.valuePtr(cell).* = mean_vectors;
+            }
+            fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, data2);
+
+            fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, Vec3f, data);
+        } else {
+            std.log.debug("No distance field computed\n", .{});
         }
     }
 }

@@ -30,7 +30,6 @@ const Mat3f = mat.Mat3f;
 const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
 const SSBO = @import("../rendering/SSBO.zig");
-const FieldData = @import("./FieldsGenerator.zig").FieldData;
 
 pub const BlendingMode = enum { LINEAR, MIXMAX };
 
@@ -40,8 +39,8 @@ const TnBData = struct {
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
-    scaling_fieldData: ?SurfaceMesh.CellData(.vertex, FieldData) = null,
-    rotation_fieldData: ?SurfaceMesh.CellData(.vertex, FieldData) = null,
+    scaling_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
+    rotation_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     rotation_3D_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     texture_initialized: bool = false,
     position_vbo: ?VBO = null,
@@ -55,7 +54,7 @@ const TnBData = struct {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
 
-        const s = "rock";
+        const s = "bark";
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
@@ -184,7 +183,8 @@ pub fn surfaceMeshDataUpdated(m: *Module, sm: *SurfaceMesh, celltype: SurfaceMes
         if (rotation_field.gen() == data) {
 
             // Update 3D rotation field
-            smpt.compute3DRotationFieldFromScalarField(sm);
+            // Useless if we use Vec3f for rotation field
+            // smpt.compute3DRotationFieldFromScalarField(sm);
             smpt.app_ctx.requestRedraw();
             return;
         }
@@ -203,7 +203,7 @@ pub fn compute3DRotationFieldFromScalarField(smpt: SurfaceMeshProceduralTexturin
         const B = vec.normalized3f(vec.cross3f(T, info.std_datas.vertex_normal.?.value(cell)));
         const b = vec.dot3f(edgeRef, B);
 
-        const theta = tnb_data.rotation_fieldData.?.value(cell).scalar;
+        const theta = tnb_data.rotation_fieldData.?.value(cell);
 
         const R: Mat2f = .{ .{ @cos(theta), -@sin(theta) }, .{ @sin(theta), @cos(theta) } };
 
@@ -416,21 +416,39 @@ pub fn rightPanel(m: *Module) void {
             };
 
             var path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}.png", .{path_str}, 0) catch unreachable;
-            if (Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator)) |exemplar| {
-                texData.exemplar_texture = exemplar;
+
+            var tex_exemplar = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+            if (tex_exemplar == null) {
+                path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}.exr", .{path_str}, 0) catch unreachable;
+                tex_exemplar = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+            }
+            if (tex_exemplar) |exemplar| {
                 tnb_data.texture_initialized = true;
-                path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.exr", .{path_str}, 0) catch unreachable;
+                texData.exemplar_texture = exemplar;
+                path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.png", .{path_str}, 0) catch unreachable;
                 texData.exemplar_texture_priority = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+                if (texData.exemplar_texture_priority == null) {
+                    path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_p.exr", .{path_str}, 0) catch unreachable;
+                    texData.exemplar_texture_priority = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+                }
                 path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_n.png", .{path_str}, 0) catch unreachable;
                 texData.exemplar_texture_normal = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+                if (texData.exemplar_texture_normal == null) {
+                    path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_n.exr", .{path_str}, 0) catch unreachable;
+                    texData.exemplar_texture_normal = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+                }
+
                 path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_r.png", .{path_str}, 0) catch unreachable;
                 texData.exemplar_texture_roughness = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
-
+                if (texData.exemplar_texture_roughness == null) {
+                    path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}_r.exr", .{path_str}, 0) catch unreachable;
+                    std.log.debug("{s}\n", .{path});
+                    texData.exemplar_texture_roughness = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
+                }
                 tnb_data.procedural_texturing_parameters.textureData = texData;
                 smpt.app_ctx.requestRedraw();
             } else {
-                tnb_data.texture_initialized = false;
-                std.debug.print("Exemplar texture not found\n", .{});
+                std.log.debug("Failed to load exemplar texture\n", .{});
             }
         }
 
@@ -497,7 +515,7 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_Text("Scalar field:");
             c.ImGui_SameLine();
             c.ImGui_PushID("scaling field");
-            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, FieldData, tnb_data.scaling_fieldData)) {
+            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, f32, tnb_data.scaling_fieldData)) {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.scaling_fieldData = null;
@@ -508,7 +526,7 @@ pub fn rightPanel(m: *Module) void {
                 .changed => |field| {
                     tnb_data.scaling_fieldData = field;
                     if (tnb_data.scaling_fieldData) |scaling_field| {
-                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, FieldData, scaling_field);
+                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, scaling_field);
                         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scaling_field, field_vbo, 0, 0);
                         tnb_data.procedural_texturing_parameters.vertices_scaling_vbo = field_vbo;
                         smpt.app_ctx.requestRedraw();
@@ -520,7 +538,7 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_Text("Rotation field:");
             c.ImGui_SameLine();
             c.ImGui_PushID("rotation field");
-            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, FieldData, tnb_data.rotation_fieldData)) {
+            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, Vec3f, tnb_data.rotation_fieldData)) {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.rotation_fieldData = null;
@@ -532,9 +550,10 @@ pub fn rightPanel(m: *Module) void {
                 .changed => |field| {
                     tnb_data.rotation_fieldData = field;
                     if (tnb_data.rotation_fieldData) |rotation_field| {
-                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, FieldData, rotation_field);
-                        tnb_data.rotation_3D_fieldData = tnb_data.surface_mesh.getOrAddData(.vertex, Vec3f, "3D_rotation_field") catch unreachable;
-                        smpt.compute3DRotationFieldFromScalarField(sm);
+                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, rotation_field);
+                        // Useless if we use Vec3f for rotation field
+                        // tnb_data.rotation_3D_fieldData = tnb_data.surface_mesh.getOrAddData(.vertex, Vec3f, "3D_rotation_field") catch unreachable;
+                        // smpt.compute3DRotationFieldFromScalarField(sm);
                         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.rotation_field, field_vbo, 0, 0);
                         tnb_data.procedural_texturing_parameters.vertices_rotation_vbo = field_vbo;
                         smpt.app_ctx.requestRedraw();
