@@ -26,8 +26,6 @@ pub fn memoryAllocationForMapping(t: *TextureBuffer, size: isize) void {
 pub fn bindBufferToShader(t: *TextureBuffer, texture_unit: u32, srcBuffer: u32, internalFormat: u32) void {
     gl.ActiveTexture(gl.TEXTURE0 + texture_unit);
     gl.BindTexture(gl.TEXTURE_BUFFER, t.index);
-    defer gl.BindTexture(gl.TEXTURE_BUFFER, 0);
-
     gl.TexBuffer(
         gl.TEXTURE_BUFFER,
         internalFormat,

@@ -25,7 +25,7 @@ in vec3 rotation_field;
 in vec3 vertex_normal;
 out vec4 f_color;
 
-uniform samplerBuffer u_info_triangles;
+uniform usamplerBuffer u_info_triangles;
 uniform samplerBuffer u_info_vertices;
 uniform samplerBuffer u_vertices_normal;
 // uniform samplerBuffer u_distorsions;
@@ -247,15 +247,15 @@ void main() {
 
   int id_triangle = gl_PrimitiveID;
 
-  ivec3 id_vertices = ivec3(texelFetch(u_info_triangles, id_triangle).xyz);
+  ivec3 id_vertices = ivec3(texelFetch(u_info_triangles, id_triangle * 3).x, texelFetch(u_info_triangles, id_triangle * 3 + 1).x, texelFetch(u_info_triangles, id_triangle * 3 + 2).x);
 
-  vec3 p1 = vec3(texelFetch(u_info_vertices, id_vertices.x).xyz);
-  vec3 p2 = vec3(texelFetch(u_info_vertices, id_vertices.y).xyz);
-  vec3 p3 = vec3(texelFetch(u_info_vertices, id_vertices.z).xyz);
+  vec3 p1 = vec3(texelFetch(u_info_vertices, id_vertices.x * 3).x, texelFetch(u_info_vertices, id_vertices.x * 3 + 1).x, texelFetch(u_info_vertices, id_vertices.x * 3 + 2).x);
+  vec3 p2 = vec3(texelFetch(u_info_vertices, id_vertices.y * 3).x, texelFetch(u_info_vertices, id_vertices.y * 3 + 1).x, texelFetch(u_info_vertices, id_vertices.y * 3 + 2).x);
+  vec3 p3 = vec3(texelFetch(u_info_vertices, id_vertices.z * 3).x, texelFetch(u_info_vertices, id_vertices.z * 3 + 1).x, texelFetch(u_info_vertices, id_vertices.z * 3 + 2).x);
 
-  vec3 n1 = vec3(texelFetch(u_vertices_normal, id_vertices.x).xyz);
-  vec3 n2 = vec3(texelFetch(u_vertices_normal, id_vertices.y).xyz);
-  vec3 n3 = vec3(texelFetch(u_vertices_normal, id_vertices.z).xyz);
+  vec3 n1 = vec3(texelFetch(u_vertices_normal, id_vertices.x * 3).x, texelFetch(u_vertices_normal, id_vertices.x * 3 + 1).x, texelFetch(u_vertices_normal, id_vertices.x * 3 + 2).x);
+  vec3 n2 = vec3(texelFetch(u_vertices_normal, id_vertices.y * 3).x, texelFetch(u_vertices_normal, id_vertices.y * 3 + 1).x, texelFetch(u_vertices_normal, id_vertices.y * 3 + 2).x);
+  vec3 n3 = vec3(texelFetch(u_vertices_normal, id_vertices.z * 3).x, texelFetch(u_vertices_normal, id_vertices.z * 3 + 1).x, texelFetch(u_vertices_normal, id_vertices.z * 3 + 2).x);
 
   vec2 u1;
   vec2 u2;
@@ -316,7 +316,9 @@ void main() {
   //   f_color = vec4(smoothstep(u_minmax_energy.x, u_minmax_energy.y, energy), 0., 0.  , 1.);
   // }
   // else
-    f_color = vec4(result);
+  
+  
+  f_color = result;
 
   mixmaxdata M;
 

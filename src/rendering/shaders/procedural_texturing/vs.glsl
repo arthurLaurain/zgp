@@ -7,7 +7,7 @@ layout(location = 1) in float a_scaling_field;
 layout(location = 2) in vec3 a_rotation_field;
 layout(location = 3) in vec3 a_edge_ref;
 
-uniform samplerBuffer vertices_normal;
+uniform samplerBuffer u_vertices_normal;
 
 out vec3 frag_position;
 out vec3 v_frag_position;
@@ -20,8 +20,7 @@ void main()
 {
 
     int id_triangle = gl_VertexID;
-    vertex_normal = vec3(texelFetch(vertices_normal, id_triangle).xyz);
-
+    vertex_normal = vec3(texelFetch(u_vertices_normal, id_triangle * 3).x, texelFetch(u_vertices_normal, id_triangle * 3 + 1).x, texelFetch(u_vertices_normal, id_triangle * 3 + 2).x);
     frag_position = a_position.xyz;
     vec4 view_pos = u_view_matrix *a_position;
     v_frag_position = view_pos.xyz;

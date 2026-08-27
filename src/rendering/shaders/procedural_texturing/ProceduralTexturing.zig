@@ -111,7 +111,6 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.visu_arap_energy_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_arap_energy");
     pt.compense_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_compense_distorsions");
     pt.distorsions_computed_uniform = gl.GetUniformLocation(pt.program.index, "u_distorsions_computed");
-    pt.tiles_transform_per_vertex_uniform = gl.GetUniformLocation(pt.program.index, "u_tiles_transform_per_vertex");
     pt.micro_priority_uniform = gl.GetUniformLocation(pt.program.index, "u_micro_priority");
     pt.blending_mode_uniform = gl.GetUniformLocation(pt.program.index, "u_blending_mode");
     pt.tbo_info_triangles_uniform = gl.GetUniformLocation(pt.program.index, "u_info_triangles");
@@ -420,6 +419,7 @@ pub const Parameters = struct {
         gl.ActiveTexture(gl.TEXTURE0);
         gl.BindTexture(gl.TEXTURE_2D, p.textureData.exemplar_texture.index);
         gl.Uniform1i(p.shader.exemplar_texture_uniform, 0);
+        defer gl.BindTexture(gl.TEXTURE_BUFFER, 0);
 
         if (p.textureData.exemplar_texture_normal) |t| {
             gl.ActiveTexture(gl.TEXTURE1);
@@ -430,36 +430,47 @@ pub const Parameters = struct {
         if (p.textureData.exemplar_texture_priority) |t| {
             gl.ActiveTexture(gl.TEXTURE2);
             gl.BindTexture(gl.TEXTURE_2D, t.index);
-            gl.Uniform1i(p.shader.exemplar_texture_priority_uniform, 1);
+            gl.Uniform1i(p.shader.exemplar_texture_priority_uniform, 2);
         }
 
         if (p.textureData.exemplar_texture_roughness) |t| {
             gl.ActiveTexture(gl.TEXTURE3);
             gl.BindTexture(gl.TEXTURE_2D, t.index);
-            gl.Uniform1i(p.shader.exemplar_texture_roughness_uniform, 1);
+            gl.Uniform1i(p.shader.exemplar_texture_roughness_uniform, 3);
         }
 
-        defer gl.BindTexture(gl.TEXTURE_2D, 0);
-        p.tbo_info_vertices.bindBufferToShader(0, ibo.index, gl.R32UI);
-        gl.Uniform1i(p.shader.tbo_info_triangles_uniform, 0);
-        p.tbo_info_triangles.bindBufferToShader(1, p.vertices_position_vbo.?.index, gl.RGBA32F);
-        gl.Uniform1i(p.shader.tbo_info_vertices_uniform, 1);
-        // p.tbo_edge_ref.bindBufferToShader(2, p.edge_ref_vbo.index, gl.RGBA32F);
-        p.tbo_normal_vertices.bindBufferToShader(3, p.vertices_normal_vbo.?.index, gl.RGBA32F);
-        gl.Uniform1i(p.shader.tbo_vertices_normal, 1);
-        // gl.BindBufferBase(gl.TEXTURE_BUFFER, 4, p.tbo_distorsion_primitives.index);
-        // gl.BindBufferBase(gl.TEXTURE_BUFFER, 5, p.tbo_neigh_selected_vertices.index);
-        // if (p.vertices_scaling_vbo) |vbo| {
-        //     p.tbo_scaling_tile.bindBufferToShader(6, vbo.index, gl.RGBA32F);
-        // } else {
-        //     p.tbo_scaling_tile.bindBufferToShader(6, 0, gl.RGBA32F);
-        // }
+        p.tbo_info_vertices.bindBufferToShader(
+            4,
+            ibo.index,
+            gl.R32UI,
+        );
+        gl.Uniform1i(
+            p.shader.tbo_info_triangles_uniform,
+            4,
+        );
 
-        // if (p.vertices_rotation_vbo) |vbo| {
-        //     p.tbo_rotation_tile.bindBufferToShader(7, vbo.index, gl.RGBA32F);
-        // } else {
-        //     p.tbo_rotation_tile.bindBufferToShader(7, 0, gl.RGBA32F);
-        // }
+        p.tbo_info_triangles.bindBufferToShader(
+            5,
+            p.vertices_position_vbo.?.index,
+            gl.R32F,
+        );
+        gl.Uniform1i(
+            p.shader.tbo_info_vertices_uniform,
+            5,
+        );
+
+        p.tbo_normal_vertices.bindBufferToShader(
+            6,
+            p.vertices_normal_vbo.?.index,
+            gl.R32F,
+        );
+        gl.Uniform1i(
+            p.shader.tbo_vertices_normal,
+            6,
+        );
+
+        // gl.BindBufferBase(gl.TEXTURE_BUFFER, 7, p.tbo_distorsion_primitives.index);
+        // gl.BindBufferBase(gl.TEXTURE_BUFFER, 8, p.tbo_neigh_selected_vertices.index);
 
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform2fv(p.shader.min_max_energy_uniform, 1, @ptrCast(&p.minmax_energy));

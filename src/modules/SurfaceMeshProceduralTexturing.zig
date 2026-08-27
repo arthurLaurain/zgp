@@ -391,12 +391,12 @@ pub fn rightPanel(m: *Module) void {
         // }
         // c.ImGui_PopID();
 
-        c.ImGui_Text("Compensate distorsions");
-        c.ImGui_PushID("Compensate distorsions");
-        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compense_distorsions)) {
-            smpt.app_ctx.requestRedraw();
-        }
-        c.ImGui_PopID();
+        // c.ImGui_Text("Compensate distorsions");
+        // c.ImGui_PushID("Compensate distorsions");
+        // if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compense_distorsions)) {
+        //     smpt.app_ctx.requestRedraw();
+        // }
+        // c.ImGui_PopID();
 
         c.ImGui_Text("Exemplar texture path");
         c.ImGui_PushID("Exemplar texture path");
@@ -490,22 +490,22 @@ pub fn rightPanel(m: *Module) void {
                     smpt.app_ctx.requestRedraw();
                 }
             }
-            c.ImGui_Text("Visualize cellset");
-            c.ImGui_PushID("Visualize cellset");
-            switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, tnb_data.cellset_selection_visualized)) {
-                .unchanged => {},
-                .cleared => {
-                    tnb_data.cellset_selection_visualized = null;
-                    smpt.clearCellSetVisualized(sm);
-                    smpt.app_ctx.requestRedraw();
-                },
-                .changed => |cellset| {
-                    tnb_data.cellset_selection_visualized = cellset;
-                    smpt.refreshCellsetVisualized(sm);
-                    smpt.app_ctx.requestRedraw();
-                },
-            }
-            c.ImGui_PopID();
+            // c.ImGui_Text("Visualize cellset");
+            // c.ImGui_PushID("Visualize cellset");
+            // switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, tnb_data.cellset_selection_visualized)) {
+            //     .unchanged => {},
+            //     .cleared => {
+            //         tnb_data.cellset_selection_visualized = null;
+            //         smpt.clearCellSetVisualized(sm);
+            //         smpt.app_ctx.requestRedraw();
+            //     },
+            //     .changed => |cellset| {
+            //         tnb_data.cellset_selection_visualized = cellset;
+            //         smpt.refreshCellsetVisualized(sm);
+            //         smpt.app_ctx.requestRedraw();
+            //     },
+            // }
+            // c.ImGui_PopID();
             c.ImGui_SeparatorText("Field");
 
             //TODO remove this part
