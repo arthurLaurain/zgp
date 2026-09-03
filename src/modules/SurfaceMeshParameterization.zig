@@ -773,6 +773,9 @@ const ParameterizationData = struct {
                     current_patch_distance_to_boundary.valueByIndex(v1_index),
                     current_patch_distance_to_boundary.valueByIndex(v2_index),
                 };
+
+                // TODO: could maybe compute the location of the maximum distance to boundary point in the patch
+                // and translate the UV coordinates of the patch so that this point is at (0, 0) in the UV space
             }
         }
 
