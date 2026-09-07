@@ -54,7 +54,7 @@ const TnBData = struct {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
 
-        const s = "bark";
+        const s = "mud";
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
