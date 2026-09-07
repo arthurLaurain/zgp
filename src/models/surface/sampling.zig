@@ -20,8 +20,8 @@ pub fn uniformlySamplePointsOnSurface(
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
     face_area: SurfaceMesh.CellData(.face, f32),
     pc: *PointCloud,
-    point_position: PointCloud.CellData(Vec3f),
-    point_surface_point: PointCloud.CellData(SurfacePoint),
+    sample_position: PointCloud.CellData(Vec3f),
+    sample_surface_point: PointCloud.CellData(SurfacePoint),
     nb_points: usize,
 ) !void {
     // ensure the inactive indices in the face_area data count
@@ -50,8 +50,8 @@ pub fn uniformlySamplePointsOnSurface(
                 .face = .{ .cell = faces.valueByIndex(face_index), .bcoords = bcoords },
             },
         };
-        point_surface_point.valuePtr(p).* = sp;
-        point_position.valuePtr(p).* = sp.readData(Vec3f, .vertex, vertex_position);
+        sample_surface_point.valuePtr(p).* = sp;
+        sample_position.valuePtr(p).* = sp.readData(Vec3f, .vertex, vertex_position);
     }
 }
 
@@ -62,8 +62,8 @@ pub fn poissonDiskSamplePointsOnSurface(
     vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
     face_normal: SurfaceMesh.CellData(.face, Vec3f),
     pc: *PointCloud,
-    point_position: PointCloud.CellData(Vec3f),
-    point_surface_point: PointCloud.CellData(SurfacePoint),
+    sample_position: PointCloud.CellData(Vec3f),
+    sample_surface_point: PointCloud.CellData(SurfacePoint),
     poisson_radius: f32,
 ) !void {
     if (sm.nbCells(.face) == 0) return;
@@ -90,9 +90,9 @@ pub fn poissonDiskSamplePointsOnSurface(
             },
         };
         const p = try pc.addPoint(); // add the point to the PointCloud
-        point_surface_point.valuePtr(p).* = sp;
+        sample_surface_point.valuePtr(p).* = sp;
         const pos = sp.readData(Vec3f, .vertex, vertex_position);
-        point_position.valuePtr(p).* = pos;
+        sample_position.valuePtr(p).* = pos;
         try active_points.append(app_ctx.allocator, sp); // add the SurfacePoint to the active list
         // compute the grid coordinates of the point with respect to the center of the bounding box
         const pos_grid_coord = vec.divScalar3f(vec.sub3f(pos, center), grid_unit_size);
@@ -118,11 +118,11 @@ pub fn poissonDiskSamplePointsOnSurface(
         const f_basis_Y: Vec3f = vec.normalized3f(vec.cross3f(face_normal.value(f), f_basis_X));
         const pos = sp.readData(Vec3f, .vertex, vertex_position);
         var new_point_added = false;
-        // 15 attempts to find a valid candidate point around the current point
-        for (0..15) |_| {
+        // 20 attempts to find a valid candidate point around the current point
+        for (0..20) |_| {
             // sample a random angle and distance
             const angle = r.float(f32) * std.math.pi * 2.0;
-            const dist = r.float(f32) * poisson_radius + poisson_radius; // TODO: try with a smaller distance annulus
+            const dist = r.float(f32) * poisson_radius + poisson_radius; // TODO: benchmark the effect of different (smallest ?) annulus radius
             // compute the candidate point in the tangent space of the face
             const candidate_pos_tangent = vec.add3f(pos, vec.add3f(
                 vec.mulScalar3f(f_basis_X, dist * @cos(angle)),
@@ -142,7 +142,7 @@ pub fn poissonDiskSamplePointsOnSurface(
                 continue; // if the grid cell of the candidate point is already occupied, it is not valid
             }
             var candidate_is_valid = true;
-            // check if the neighboring grid cells
+            // check if the neighboring grid cells are occupied by points that are too close to the candidate point
             for (0..3) |x| blk: {
                 for (0..3) |y| {
                     for (0..3) |z| {
@@ -162,15 +162,10 @@ pub fn poissonDiskSamplePointsOnSurface(
             }
             if (candidate_is_valid) {
                 const p = try pc.addPoint(); // add the point to the PointCloud
-                point_surface_point.valuePtr(p).* = candidate_sp;
-                point_position.valuePtr(p).* = candidate_pos;
+                sample_surface_point.valuePtr(p).* = candidate_sp;
+                sample_position.valuePtr(p).* = candidate_pos;
                 try active_points.append(app_ctx.allocator, candidate_sp); // add the SurfacePoint to the active list
-                const grid_idx: [3]i32 = .{
-                    @intFromFloat(candidate_pos_grid_coord[0]),
-                    @intFromFloat(candidate_pos_grid_coord[1]),
-                    @intFromFloat(candidate_pos_grid_coord[2]),
-                };
-                try grid.put(app_ctx.allocator, grid_idx, candidate_pos); // add the point in the spatial grid
+                try grid.put(app_ctx.allocator, candidate_pos_grid_idx, candidate_pos); // add the point in the spatial grid
                 new_point_added = true;
                 break;
             }

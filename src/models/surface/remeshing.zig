@@ -39,40 +39,6 @@ fn edgeShouldFlip(sm: *const SurfaceMesh, edge: SurfaceMesh.Cell) bool {
     return deviation_post < deviation_pre;
 }
 
-const EdgeInfo = struct {
-    edge: SurfaceMesh.Cell,
-    length: f32,
-    pub fn cmpAsc(ctx: EdgeQueueContext, a: EdgeInfo, b: EdgeInfo) std.math.Order {
-        const length_order = std.math.order(a.length, b.length);
-        if (length_order != .eq) return length_order;
-        // tie-breaker: use edge indices to order edges
-        return std.math.order(ctx.surface_mesh.cellIndex(a.edge), ctx.surface_mesh.cellIndex(b.edge));
-    }
-    pub fn cmpDesc(ctx: EdgeQueueContext, a: EdgeInfo, b: EdgeInfo) std.math.Order {
-        const length_order = std.math.order(b.length, a.length);
-        if (length_order != .eq) return length_order;
-        // tie-breaker: use edge indices to order edges
-        return std.math.order(ctx.surface_mesh.cellIndex(a.edge), ctx.surface_mesh.cellIndex(b.edge));
-    }
-    pub fn setEdgeIndexInQueue(ctx: EdgeQueueContext, a: EdgeInfo, index: usize) void {
-        ctx.edge_queue_index.valuePtr(a.edge).* = index;
-    }
-};
-const EdgeQueueContext = struct {
-    surface_mesh: *SurfaceMesh,
-    edge_queue_index: SurfaceMesh.CellData(.edge, ?usize),
-};
-const EdgeQueueAsc = PriorityQueue(EdgeInfo, EdgeQueueContext, EdgeInfo.cmpAsc, EdgeInfo.setEdgeIndexInQueue);
-const EdgeQueueDesc = PriorityQueue(EdgeInfo, EdgeQueueContext, EdgeInfo.cmpDesc, EdgeInfo.setEdgeIndexInQueue);
-
-fn removeEdgeFromQueue(queue: anytype, edge: SurfaceMesh.Cell) void {
-    assert(edge.cellType() == .edge);
-    if (queue.context.edge_queue_index.value(edge)) |index| {
-        _ = queue.popIndex(index);
-    }
-    queue.context.edge_queue_index.valuePtr(edge).* = null;
-}
-
 /// Remesh the given SurfaceMesh.
 /// The obtained mesh will be triangular, with isotropic triangles and edge lengths
 /// close to the mean edge length of the initial mesh times the given length factor.
@@ -152,6 +118,43 @@ pub fn isotropicRemeshing(
     // sizing field for adaptive remeshing
     var vertex_sizing_field = try sm.addData(.vertex, f32, "__vertex_sizing_field");
     defer sm.removeData(.vertex, f32, vertex_sizing_field);
+
+    // Priority queue types for edge cut & collapse, ordered by edge length (descending for cut, ascending for collapse)
+    const EdgeQueueContext = struct {
+        surface_mesh: *const SurfaceMesh,
+        edge_queue_index: SurfaceMesh.CellData(.edge, ?usize),
+    };
+    const EdgeInfo = struct {
+        const EdgeInfo = @This();
+        edge: SurfaceMesh.Cell,
+        length: f32,
+        pub fn cmpAsc(ctx: EdgeQueueContext, a: EdgeInfo, b: EdgeInfo) std.math.Order {
+            const length_order = std.math.order(a.length, b.length);
+            if (length_order != .eq) return length_order;
+            // tie-breaker: use edge indices to order edges
+            return std.math.order(ctx.surface_mesh.cellIndex(a.edge), ctx.surface_mesh.cellIndex(b.edge));
+        }
+        pub fn cmpDesc(ctx: EdgeQueueContext, a: EdgeInfo, b: EdgeInfo) std.math.Order {
+            const length_order = std.math.order(b.length, a.length);
+            if (length_order != .eq) return length_order;
+            // tie-breaker: use edge indices to order edges
+            return std.math.order(ctx.surface_mesh.cellIndex(a.edge), ctx.surface_mesh.cellIndex(b.edge));
+        }
+        pub fn setEdgeIndexInQueue(ctx: EdgeQueueContext, a: EdgeInfo, index: usize) void {
+            ctx.edge_queue_index.valuePtr(a.edge).* = index;
+        }
+    };
+    const EdgeQueueAsc = PriorityQueue(EdgeInfo, EdgeQueueContext, EdgeInfo.cmpAsc, EdgeInfo.setEdgeIndexInQueue);
+    const EdgeQueueDesc = PriorityQueue(EdgeInfo, EdgeQueueContext, EdgeInfo.cmpDesc, EdgeInfo.setEdgeIndexInQueue);
+    const EdgeQueueUtil = struct {
+        fn removeEdgeFromQueue(queue: anytype, edge: SurfaceMesh.Cell) void {
+            assert(edge.cellType() == .edge);
+            if (queue.context.edge_queue_index.value(edge)) |index| {
+                _ = queue.popIndex(index);
+            }
+            queue.context.edge_queue_index.valuePtr(edge).* = null;
+        }
+    };
 
     var cut_edge_queue_index = try sm.addData(.edge, ?usize, "__cut_edge_queue_index");
     defer sm.removeData(.edge, ?usize, cut_edge_queue_index);
@@ -322,13 +325,13 @@ pub fn isotropicRemeshing(
             // remove them from the queue
             // (edges incident to the resulting vertex will be re-inserted after collapsing if they satisfy collapse conditions)
             if (!sm.isBoundaryDart(d)) {
-                removeEdgeFromQueue(&collapse_edge_queue, .{ .edge = sm.phi1(d) });
-                removeEdgeFromQueue(&collapse_edge_queue, .{ .edge = sm.phi_1(d) });
+                EdgeQueueUtil.removeEdgeFromQueue(&collapse_edge_queue, .{ .edge = sm.phi1(d) });
+                EdgeQueueUtil.removeEdgeFromQueue(&collapse_edge_queue, .{ .edge = sm.phi_1(d) });
             }
             const dd = sm.phi2(d);
             if (!sm.isBoundaryDart(dd)) {
-                removeEdgeFromQueue(&collapse_edge_queue, .{ .edge = sm.phi1(dd) });
-                removeEdgeFromQueue(&collapse_edge_queue, .{ .edge = sm.phi_1(dd) });
+                EdgeQueueUtil.removeEdgeFromQueue(&collapse_edge_queue, .{ .edge = sm.phi1(dd) });
+                EdgeQueueUtil.removeEdgeFromQueue(&collapse_edge_queue, .{ .edge = sm.phi_1(dd) });
             }
 
             const v = sm.collapseEdge(edge);
@@ -345,7 +348,7 @@ pub fn isotropicRemeshing(
                 const e: SurfaceMesh.Cell = .{ .edge = dv };
                 const el = length.edgeLength(sm, e, vertex_position);
                 edge_length.valuePtr(e).* = el;
-                removeEdgeFromQueue(&collapse_edge_queue, e);
+                EdgeQueueUtil.removeEdgeFromQueue(&collapse_edge_queue, e);
                 const ev1: SurfaceMesh.Cell = .{ .vertex = dv };
                 const ev2: SurfaceMesh.Cell = .{ .vertex = sm.phi1(dv) };
                 const length_goal_edge = if (adaptive and iteration >= 1) @min(

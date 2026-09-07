@@ -36,6 +36,9 @@ const SelectionData = struct {
 
     selected_cell_set: ?*SurfaceMesh.CellSet = null,
 
+    // TODO: could also store the current selecting cell type on a per SurfaceMesh basis
+    // to be able to restore it when the selected model changes
+
     pub fn init() SelectionData {
         var p = PointSphere.Parameters.init();
         p.sphere_radius = 0.002;
@@ -77,6 +80,7 @@ module: Module = .{
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
+        .selectedModelChanged = selectedModelChanged,
         .draw = draw,
         .sdlEvent = sdlEvent,
         .rightPanel = rightPanel,
@@ -148,6 +152,24 @@ pub fn surfaceMeshStdDataChanged(
             }
         },
         else => return, // Ignore other standard data changes
+    }
+}
+
+/// Part of the Module interface.
+pub fn selectedModelChanged(m: *Module) void {
+    const sms: *SurfaceMeshSelection = @alignCast(@fieldParentPtr("module", m));
+    sms.selecting = false;
+    sms.hovered_cell = null;
+    sms.hovered_cell_ibo.fillFromIndexSlice(&.{}, &.{});
+    if (sms.app_ctx.selected_model.modelType() == .surface_mesh) {
+        const sm = sms.app_ctx.selected_model.surface_mesh;
+        const sd = sms.surface_meshes_data.getPtr(sm).?;
+        // if the previously selected CellSet for this SurfaceMesh is not compatible with the currently selected cell type, deselect it
+        if (sd.selected_cell_set) |selected_cell_set| {
+            if (sms.selecting_cell_type != selected_cell_set.cell_type) {
+                sd.selected_cell_set = null;
+            }
+        }
     }
 }
 
@@ -458,15 +480,6 @@ pub fn rightPanel(m: *Module) void {
         );
     }
 
-    c.ImGui_SeparatorText("Selection mode");
-    if (c.ImGui_RadioButton("Single", sms.selection_mode == .single)) {
-        sms.selection_mode = .single;
-    }
-    c.ImGui_SameLine();
-    if (c.ImGui_RadioButton("Within Sphere", sms.selection_mode == .within_sphere)) {
-        sms.selection_mode = .within_sphere;
-    }
-
     c.ImGui_SeparatorText("Cell type");
     c.ImGui_NewLine();
     inline for ([_]SurfaceMesh.CellType{ .vertex, .edge, .face }) |cell_type| {
@@ -488,16 +501,30 @@ pub fn rightPanel(m: *Module) void {
         }
     }
 
+    c.ImGui_SeparatorText("Selection mode");
+    if (c.ImGui_RadioButton("Single", sms.selection_mode == .single)) {
+        sms.selection_mode = .single;
+    }
+    c.ImGui_SameLine();
+    if (c.ImGui_RadioButton("Within Sphere", sms.selection_mode == .within_sphere)) {
+        sms.selection_mode = .within_sphere;
+    }
+
     c.ImGui_SeparatorText("Cell set");
     {
-        c.ImGui_Text("Cell set name:");
-        _ = c.ImGui_InputText("##Name", &UiData.cell_set_name_buf, UiData.cell_set_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
+        c.ImGui_Text("Cell set creation");
+        {
+            c.ImGui_PushItemWidth(c.ImGui_GetContentRegionAvail().x / 2.0 - style.*.ItemSpacing.x * 2);
+            defer c.ImGui_PopItemWidth();
+            _ = c.ImGui_InputText("##Name", &UiData.cell_set_name_buf, UiData.cell_set_name_buf.len, c.ImGuiInputTextFlags_CharsNoBlank);
+        }
         const cell_set_name = std.mem.sliceTo(&UiData.cell_set_name_buf, 0);
         const disabled = cell_set_name.len == 0;
         if (disabled) {
             c.ImGui_BeginDisabled(true);
         }
-        if (c.ImGui_ButtonEx("Create cell set", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+        c.ImGui_SameLine();
+        if (c.ImGui_ButtonEx("Create", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
             const cell_set = sm.addCellSet(sms.selecting_cell_type, cell_set_name) catch |err| {
                 std.debug.print("Error adding cell set: {}\n", .{err});
                 return;
@@ -513,7 +540,7 @@ pub fn rightPanel(m: *Module) void {
 
         c.ImGui_Separator();
 
-        c.ImGui_Text("Cell set:");
+        c.ImGui_Text("Cell set selection");
         c.ImGui_PushID("cell set");
         switch (imgui_utils.surfaceMeshCellSetComboBox(sm, sms.selecting_cell_type, sd.selected_cell_set)) {
             .unchanged => {},

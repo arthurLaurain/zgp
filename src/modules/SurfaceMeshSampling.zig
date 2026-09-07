@@ -2,6 +2,7 @@ const SurfaceMeshSampling = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
+const builtin = @import("builtin");
 
 const imgui_utils = @import("../ui/imgui.zig");
 const zgp_log = std.log.scoped(.zgp);
@@ -25,33 +26,36 @@ const sampling = @import("../models/surface/sampling.zig");
 
 const SamplingData = struct {
     app_ctx: *AppContext,
+    surface_mesh: *SurfaceMesh,
 
     samples: *PointCloud = undefined,
-    position: PointCloud.CellData(Vec3f) = undefined,
-    surface_point: PointCloud.CellData(SurfacePoint) = undefined,
+    sample_position: PointCloud.CellData(Vec3f) = undefined,
+    sample_surface_point: PointCloud.CellData(SurfacePoint) = undefined,
     initialized: bool = false,
 
     fn init(sd: *SamplingData, pointcloud_name: []const u8) !void {
         if (!sd.initialized) {
+            // create samples PointCloud & data
             sd.samples = try sd.app_ctx.point_cloud_store.createPointCloud(pointcloud_name);
-            sd.surface_point = try sd.samples.addData(SurfacePoint, "surface_point");
-            sd.position = try sd.samples.addData(Vec3f, "position");
-            sd.app_ctx.point_cloud_store.setPointCloudStdData(sd.samples, .{ .position = sd.position });
+            sd.sample_position = try sd.samples.addData(Vec3f, "position");
+            sd.sample_surface_point = try sd.samples.addData(SurfacePoint, "surface_point");
+            sd.app_ctx.point_cloud_store.setPointCloudStdData(sd.samples, .{ .position = sd.sample_position });
+
+            sd.initialized = true;
         } else {
             sd.samples.clearRetainingCapacity();
         }
+
         sd.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(sd.samples);
-        sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.position);
-        sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, SurfacePoint, sd.surface_point);
-        sd.initialized = true;
+        sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.sample_position);
     }
 
-    // do not destroy the PointCloud here
-    // this function is only called after having being notified of the PointCloud destruction
+    // this function is called after having being notified of the PointCloud destruction
+    // (so we have to forget everything about it)
     fn deinit(sd: *SamplingData) void {
         sd.samples = undefined;
-        sd.position = undefined;
-        sd.surface_point = undefined;
+        sd.sample_position = undefined;
+        sd.sample_surface_point = undefined;
         sd.initialized = false;
     }
 
@@ -75,68 +79,17 @@ const SamplingData = struct {
             }
         };
 
-        const dst_data = try sd.samples.getOrAddData(T, src_data.name());
+        const dst_data, _ = try sd.samples.getOrAddData(T, src_data.name());
 
         var pctr: PointCloud.ParallelPointTaskRunner = try .init(sd.samples);
         defer pctr.deinit();
         try pctr.run(sd.app_ctx, Task{
-            .surface_point = sd.surface_point,
+            .surface_point = sd.sample_surface_point,
             .src_data = src_data,
             .dst_data = dst_data,
         });
 
-        // var point_it = sd.samples.pointIterator();
-        // while (point_it.next()) |point| {
-        //     dst_data.valuePtr(point).* = sd.surface_point.value(point).readData(T, cell_type, src_data);
-        // }
-
         sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, T, dst_data);
-        sd.app_ctx.requestRedraw();
-    }
-
-    fn snapSamplesToSurfaceMeshVertices(
-        sd: *SamplingData,
-        surface_mesh: *SurfaceMesh,
-        vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    ) void {
-        assert(sd.initialized);
-
-        var point_it = sd.samples.pointIterator();
-        while (point_it.next()) |point| {
-            switch (sd.surface_point.value(point).type) {
-                .vertex => {},
-                .edge => |e| {
-                    const d = e.cell.dart();
-                    const v0: SurfaceMesh.Cell = .{ .vertex = d };
-                    const v1: SurfaceMesh.Cell = .{ .vertex = surface_mesh.phi1(d) };
-                    if (e.t < 0.5) {
-                        sd.surface_point.valuePtr(point).* = .{ .surface_mesh = surface_mesh, .type = .{ .vertex = v0 } };
-                        sd.position.valuePtr(point).* = vertex_position.value(v0);
-                    } else {
-                        sd.surface_point.valuePtr(point).* = .{ .surface_mesh = surface_mesh, .type = .{ .vertex = v1 } };
-                        sd.position.valuePtr(point).* = vertex_position.value(v1);
-                    }
-                },
-                .face => |f| {
-                    const d = f.cell.dart();
-                    const v0: SurfaceMesh.Cell = .{ .vertex = d };
-                    const v1: SurfaceMesh.Cell = .{ .vertex = surface_mesh.phi1(d) };
-                    const v2: SurfaceMesh.Cell = .{ .vertex = surface_mesh.phi_1(d) };
-                    if (f.bcoords[0] >= f.bcoords[1] and f.bcoords[0] >= f.bcoords[2]) {
-                        sd.surface_point.valuePtr(point).* = .{ .surface_mesh = surface_mesh, .type = .{ .vertex = v0 } };
-                        sd.position.valuePtr(point).* = vertex_position.value(v0);
-                    } else if (f.bcoords[1] >= f.bcoords[0] and f.bcoords[1] >= f.bcoords[2]) {
-                        sd.surface_point.valuePtr(point).* = .{ .surface_mesh = surface_mesh, .type = .{ .vertex = v1 } };
-                        sd.position.valuePtr(point).* = vertex_position.value(v1);
-                    } else {
-                        sd.surface_point.valuePtr(point).* = .{ .surface_mesh = surface_mesh, .type = .{ .vertex = v2 } };
-                        sd.position.valuePtr(point).* = vertex_position.value(v2);
-                    }
-                },
-            }
-        }
-        sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.position);
-        sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, SurfacePoint, sd.surface_point);
         sd.app_ctx.requestRedraw();
     }
 };
@@ -146,9 +99,9 @@ module: Module = .{
     .name = "Surface Mesh Sampling",
     .supported_models = .{ .surface_mesh = true },
     .vtable = &.{
-        .pointCloudDestroyed = pointCloudDestroyed,
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
+        .pointCloudDestroyed = pointCloudDestroyed,
         .rightPanel = rightPanel,
     },
 },
@@ -165,23 +118,13 @@ pub fn deinit(sms: *SurfaceMeshSampling) void {
 }
 
 /// Part of the Module interface.
-/// Deinit the SamplingData associated to the destroyed PointCloud.
-pub fn pointCloudDestroyed(m: *Module, point_cloud: *PointCloud) void {
-    const sms: *SurfaceMeshSampling = @alignCast(@fieldParentPtr("module", m));
-    var it = sms.surface_meshes_data.iterator();
-    while (it.next()) |entry| {
-        if (entry.value_ptr.samples == point_cloud) {
-            entry.value_ptr.deinit();
-            break;
-        }
-    }
-}
-
-/// Part of the Module interface.
 /// Create and store a SamplingData for the created SurfaceMesh.
 pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const sms: *SurfaceMeshSampling = @alignCast(@fieldParentPtr("module", m));
-    sms.surface_meshes_data.put(sms.app_ctx.allocator, surface_mesh, .{ .app_ctx = sms.app_ctx }) catch |err| {
+    sms.surface_meshes_data.put(sms.app_ctx.allocator, surface_mesh, .{
+        .app_ctx = sms.app_ctx,
+        .surface_mesh = surface_mesh,
+    }) catch |err| {
         std.debug.print("Failed to store SamplingData for new SurfaceMesh: {}\n", .{err});
         return;
     };
@@ -194,10 +137,24 @@ pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
     const sms: *SurfaceMeshSampling = @alignCast(@fieldParentPtr("module", m));
     const sd = sms.surface_meshes_data.getPtr(surface_mesh).?;
     if (sd.initialized) {
-        // the SurfacePoint data is no longer valid after the SurfaceMesh is destroyed
-        sd.samples.removeData(SurfacePoint, sd.surface_point);
+        // the SurfacePoint data of the samples PointCloud is no longer valid after the SurfaceMesh is destroyed
+        // (but there is no reason to destroy the PointCloud itself)
+        sd.samples.removeData(SurfacePoint, sd.sample_surface_point);
     }
     _ = sms.surface_meshes_data.remove(surface_mesh);
+}
+
+/// Part of the Module interface.
+/// Deinit the SamplingData associated to the destroyed PointCloud.
+pub fn pointCloudDestroyed(m: *Module, point_cloud: *PointCloud) void {
+    const sms: *SurfaceMeshSampling = @alignCast(@fieldParentPtr("module", m));
+    var it = sms.surface_meshes_data.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.samples == point_cloud) {
+            entry.value_ptr.deinit();
+            break;
+        }
+    }
 }
 
 fn uniformSampling(
@@ -208,29 +165,27 @@ fn uniformSampling(
     nb_points: usize,
     pointcloud_name: []const u8,
 ) !void {
-    const t = std.Io.Timestamp.now(sms.app_ctx.io, .real);
-
     const sd = sms.surface_meshes_data.getPtr(sm).?;
     try sd.init(pointcloud_name);
 
+    const t = std.Io.Timestamp.now(sms.app_ctx.io, .real);
     try sampling.uniformlySamplePointsOnSurface(
         sms.app_ctx,
         sm,
         vertex_position,
         face_area,
         sd.samples,
-        sd.position,
-        sd.surface_point,
+        sd.sample_position,
+        sd.sample_surface_point,
         nb_points,
     );
-    sms.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(sd.samples);
-    sms.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.position);
-    sms.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, SurfacePoint, sd.surface_point);
-
-    sms.app_ctx.requestRedraw();
-
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, sms.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Uniform sampling computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
+
+    sms.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(sd.samples);
+    sms.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.sample_position);
+
+    sms.app_ctx.requestRedraw();
 }
 
 fn poissonDiskSampling(
@@ -242,11 +197,10 @@ fn poissonDiskSampling(
     poisson_radius: f32,
     pointcloud_name: []const u8,
 ) !void {
-    const t = std.Io.Timestamp.now(sms.app_ctx.io, .real);
-
     const sd = sms.surface_meshes_data.getPtr(sm).?;
     try sd.init(pointcloud_name);
 
+    const t = std.Io.Timestamp.now(sms.app_ctx.io, .real);
     try sampling.poissonDiskSamplePointsOnSurface(
         sms.app_ctx,
         sm,
@@ -254,18 +208,17 @@ fn poissonDiskSampling(
         vertex_position,
         face_normal,
         sd.samples,
-        sd.position,
-        sd.surface_point,
+        sd.sample_position,
+        sd.sample_surface_point,
         poisson_radius,
     );
-    sms.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(sd.samples);
-    sms.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.position);
-    sms.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, SurfacePoint, sd.surface_point);
-
-    sms.app_ctx.requestRedraw();
-
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, sms.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Poisson disk sampling computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
+
+    sms.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(sd.samples);
+    sms.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.sample_position);
+
+    sms.app_ctx.requestRedraw();
 }
 
 /// Part of the Module interface.
@@ -386,45 +339,6 @@ pub fn rightPanel(m: *Module) void {
 
     if (sd.initialized) {
         c.ImGui_SeparatorText("Samples post-processing");
-
-        {
-            const disabled = info.std_datas.vertex_position == null;
-            if (disabled) {
-                c.ImGui_BeginDisabled(true);
-            }
-            if (c.ImGui_ButtonEx("Snap samples to vertices", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                sd.snapSamplesToSurfaceMeshVertices(sm, info.std_datas.vertex_position.?);
-            }
-            if (disabled) {
-                imgui_utils.tooltip(
-                    \\ Requires:
-                    \\ - an already sampled PointCloud
-                    \\ Following data should be available:
-                    \\ - std vertex_position
-                );
-                c.ImGui_EndDisabled();
-            }
-        }
-
-        {
-            if (c.ImGui_ButtonEx("Select samples vertices", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                var vertex_set = sm.getOrAddCellSet(.vertex, "selected_samples_vertices") catch |err| {
-                    std.debug.print("Error creating vertex set: {}\n", .{err});
-                    return;
-                };
-                vertex_set.clear();
-                var point_it = sd.samples.pointIterator();
-                while (point_it.next()) |point| {
-                    if (sd.surface_point.value(point).type == .vertex) {
-                        vertex_set.add(sd.surface_point.value(point).type.vertex) catch |err| {
-                            std.debug.print("Error adding vertex to set: {}\n", .{err});
-                        };
-                    }
-                }
-                sm_store.surfaceMeshCellSetUpdated(sm, vertex_set);
-                sms.app_ctx.requestRedraw();
-            }
-        }
 
         c.ImGui_SeparatorText("Push data SurfaceMesh -> PointCloud");
         {

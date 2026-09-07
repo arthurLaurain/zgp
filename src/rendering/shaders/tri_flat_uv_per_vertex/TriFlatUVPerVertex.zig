@@ -1,4 +1,4 @@
-const PointSphereColorPerVertex = @This();
+const TriFlatUVPerVertex = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -9,13 +9,13 @@ const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 
-var global_instance: ?PointSphereColorPerVertex = null;
+var global_instance: ?TriFlatUVPerVertex = null;
 fn init_global() void {
     if (global_instance) |_| return;
     global_instance = init() catch unreachable;
     Shader.register(&global_instance.?.program);
 }
-pub fn instance() *PointSphereColorPerVertex {
+pub fn instance() *TriFlatUVPerVertex {
     init_global();
     return &global_instance.?;
 }
@@ -26,61 +26,62 @@ model_view_matrix_uniform: c_int = undefined,
 projection_matrix_uniform: c_int = undefined,
 ambiant_color_uniform: c_int = undefined,
 light_position_uniform: c_int = undefined,
-sphere_radius_uniform: c_int = undefined,
+dim_backfaces_uniform: c_int = undefined,
+radial_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
-color_attrib: VAO.VertexAttribInfo = undefined,
+uv_attrib: VAO.VertexAttribInfo = undefined,
 
-fn init() !PointSphereColorPerVertex {
-    var pscpv: PointSphereColorPerVertex = .{
+const VertexAttrib = enum {
+    position,
+    uv,
+};
+
+fn init() !TriFlatUVPerVertex {
+    var tfuvpv: TriFlatUVPerVertex = .{
         .program = Shader.init(),
     };
 
     const vertex_shader_source = @embedFile("vs.glsl");
-    const geometry_shader_source = @embedFile("gs.glsl");
     const fragment_shader_source = @embedFile("fs.glsl");
 
-    try pscpv.program.setShader(.vertex, vertex_shader_source);
-    try pscpv.program.setShader(.geometry, geometry_shader_source);
-    try pscpv.program.setShader(.fragment, fragment_shader_source);
-    try pscpv.program.linkProgram();
+    try tfuvpv.program.setShader(.vertex, vertex_shader_source);
+    try tfuvpv.program.setShader(.fragment, fragment_shader_source);
+    try tfuvpv.program.linkProgram();
 
-    pscpv.model_view_matrix_uniform = gl.GetUniformLocation(pscpv.program.index, "u_model_view_matrix");
-    pscpv.projection_matrix_uniform = gl.GetUniformLocation(pscpv.program.index, "u_projection_matrix");
-    pscpv.ambiant_color_uniform = gl.GetUniformLocation(pscpv.program.index, "u_ambiant_color");
-    pscpv.light_position_uniform = gl.GetUniformLocation(pscpv.program.index, "u_light_position");
-    pscpv.sphere_radius_uniform = gl.GetUniformLocation(pscpv.program.index, "u_sphere_radius");
+    tfuvpv.model_view_matrix_uniform = gl.GetUniformLocation(tfuvpv.program.index, "u_model_view_matrix");
+    tfuvpv.projection_matrix_uniform = gl.GetUniformLocation(tfuvpv.program.index, "u_projection_matrix");
+    tfuvpv.ambiant_color_uniform = gl.GetUniformLocation(tfuvpv.program.index, "u_ambiant_color");
+    tfuvpv.light_position_uniform = gl.GetUniformLocation(tfuvpv.program.index, "u_light_position");
+    tfuvpv.dim_backfaces_uniform = gl.GetUniformLocation(tfuvpv.program.index, "u_dim_backfaces");
+    tfuvpv.radial_uniform = gl.GetUniformLocation(tfuvpv.program.index, "u_radial");
 
-    pscpv.position_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(pscpv.program.index, "a_position")),
+    tfuvpv.position_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(tfuvpv.program.index, "a_position")),
         .size = 3,
         .type = gl.FLOAT,
         .normalized = false,
     };
-    pscpv.color_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(pscpv.program.index, "a_color")),
-        .size = 3,
+    tfuvpv.uv_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(tfuvpv.program.index, "a_uv")),
+        .size = 2,
         .type = gl.FLOAT,
         .normalized = false,
     };
 
-    return pscpv;
+    return tfuvpv;
 }
 
 pub const Parameters = struct {
-    shader: *const PointSphereColorPerVertex,
+    shader: *const TriFlatUVPerVertex,
     vao: VAO,
 
     model_view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
     ambiant_color: [4]f32 = .{ 0.1, 0.1, 0.1, 1 },
-    light_position: [3]f32 = .{ -10, 0, 100 },
-    sphere_radius: f32 = 0.001,
-
-    const VertexAttrib = enum {
-        position,
-        color,
-    };
+    light_position: [3]f32 = .{ 10, 0, 100 },
+    dim_backfaces: bool = true,
+    radial: bool = false,
 
     pub fn init() Parameters {
         return .{
@@ -96,7 +97,7 @@ pub const Parameters = struct {
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
-            .color => p.shader.color_attrib,
+            .uv => p.shader.uv_attrib,
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
@@ -104,7 +105,7 @@ pub const Parameters = struct {
     pub fn unsetVertexAttribArray(p: *Parameters, attrib: VertexAttrib) void {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
-            .color => p.shader.color_attrib,
+            .uv => p.shader.uv_attrib,
         };
         p.vao.disableVertexAttribArray(attrib_info);
     }
@@ -117,15 +118,16 @@ pub const Parameters = struct {
         gl.UniformMatrix4fv(p.shader.projection_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.projection_matrix));
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
-        gl.Uniform1f(p.shader.sphere_radius_uniform, p.sphere_radius);
+        gl.Uniform1i(p.shader.dim_backfaces_uniform, @intFromBool(p.dim_backfaces));
+        gl.Uniform1i(p.shader.radial_uniform, @intFromBool(p.radial));
 
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
 
-        assert(ibo.primitive == .points);
+        assert(ibo.primitive == .triangles);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
         defer gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
 
-        gl.DrawElements(gl.POINTS, @intCast(ibo.nb_indices), gl.UNSIGNED_INT, 0);
+        gl.DrawElements(gl.TRIANGLES, @intCast(ibo.nb_indices), gl.UNSIGNED_INT, 0);
     }
 };

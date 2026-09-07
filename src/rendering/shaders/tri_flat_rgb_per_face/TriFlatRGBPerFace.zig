@@ -1,4 +1,4 @@
-const TriFlatColorPerFace = @This();
+const TriFlatRGBPerFace = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -10,13 +10,13 @@ const VBO = @import("../../VBO.zig");
 const IBO = @import("../../IBO.zig");
 const TextureBuffer = @import("../../TextureBuffer.zig");
 
-var global_instance: ?TriFlatColorPerFace = null;
+var global_instance: ?TriFlatRGBPerFace = null;
 fn init_global() void {
     if (global_instance) |_| return;
     global_instance = init() catch unreachable;
     Shader.register(&global_instance.?.program);
 }
-pub fn instance() *TriFlatColorPerFace {
+pub fn instance() *TriFlatRGBPerFace {
     init_global();
     return &global_instance.?;
 }
@@ -28,7 +28,7 @@ projection_matrix_uniform: c_int = undefined,
 ambiant_color_uniform: c_int = undefined,
 light_position_uniform: c_int = undefined,
 face_index_buffer_uniform: c_int = undefined,
-face_color_buffer_uniform: c_int = undefined,
+face_rgb_buffer_uniform: c_int = undefined,
 dim_backfaces_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
@@ -37,46 +37,46 @@ const VertexAttrib = enum {
     position,
 };
 
-fn init() !TriFlatColorPerFace {
-    var tfcpf: TriFlatColorPerFace = .{
+fn init() !TriFlatRGBPerFace {
+    var tfrpf: TriFlatRGBPerFace = .{
         .program = Shader.init(),
     };
 
     const vertex_shader_source = @embedFile("vs.glsl");
     const fragment_shader_source = @embedFile("fs.glsl");
 
-    try tfcpf.program.setShader(.vertex, vertex_shader_source);
-    try tfcpf.program.setShader(.fragment, fragment_shader_source);
-    try tfcpf.program.linkProgram();
+    try tfrpf.program.setShader(.vertex, vertex_shader_source);
+    try tfrpf.program.setShader(.fragment, fragment_shader_source);
+    try tfrpf.program.linkProgram();
 
-    tfcpf.model_view_matrix_uniform = gl.GetUniformLocation(tfcpf.program.index, "u_model_view_matrix");
-    tfcpf.projection_matrix_uniform = gl.GetUniformLocation(tfcpf.program.index, "u_projection_matrix");
-    tfcpf.ambiant_color_uniform = gl.GetUniformLocation(tfcpf.program.index, "u_ambiant_color");
-    tfcpf.light_position_uniform = gl.GetUniformLocation(tfcpf.program.index, "u_light_position");
-    tfcpf.face_index_buffer_uniform = gl.GetUniformLocation(tfcpf.program.index, "u_face_index_buffer");
-    tfcpf.face_color_buffer_uniform = gl.GetUniformLocation(tfcpf.program.index, "u_face_color_buffer");
-    tfcpf.dim_backfaces_uniform = gl.GetUniformLocation(tfcpf.program.index, "u_dim_backfaces");
+    tfrpf.model_view_matrix_uniform = gl.GetUniformLocation(tfrpf.program.index, "u_model_view_matrix");
+    tfrpf.projection_matrix_uniform = gl.GetUniformLocation(tfrpf.program.index, "u_projection_matrix");
+    tfrpf.ambiant_color_uniform = gl.GetUniformLocation(tfrpf.program.index, "u_ambiant_color");
+    tfrpf.light_position_uniform = gl.GetUniformLocation(tfrpf.program.index, "u_light_position");
+    tfrpf.face_index_buffer_uniform = gl.GetUniformLocation(tfrpf.program.index, "u_face_index_buffer");
+    tfrpf.face_rgb_buffer_uniform = gl.GetUniformLocation(tfrpf.program.index, "u_face_rgb_buffer");
+    tfrpf.dim_backfaces_uniform = gl.GetUniformLocation(tfrpf.program.index, "u_dim_backfaces");
 
-    tfcpf.position_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(tfcpf.program.index, "a_position")),
+    tfrpf.position_attrib = .{
+        .index = @intCast(gl.GetAttribLocation(tfrpf.program.index, "a_position")),
         .size = 3,
         .type = gl.FLOAT,
         .normalized = false,
     };
 
-    return tfcpf;
+    return tfrpf;
 }
 
 pub const Parameters = struct {
-    shader: *const TriFlatColorPerFace,
+    shader: *const TriFlatRGBPerFace,
     vao: VAO,
 
     face_index_buffer_texture: TextureBuffer,
     face_index_buffer_texture_unit: c_int,
-    face_color_buffer_texture: TextureBuffer,
-    face_color_buffer_texture_unit: c_int,
+    face_rgb_buffer_texture: TextureBuffer,
+    face_rgb_buffer_texture_unit: c_int,
 
-    face_color_buffer: ?VBO = null,
+    face_rgb_buffer: ?VBO = null,
 
     model_view_matrix: [16]f32 = undefined,
     projection_matrix: [16]f32 = undefined,
@@ -90,15 +90,15 @@ pub const Parameters = struct {
             .vao = VAO.init(),
             .face_index_buffer_texture = TextureBuffer.init(),
             .face_index_buffer_texture_unit = 0,
-            .face_color_buffer_texture = TextureBuffer.init(),
-            .face_color_buffer_texture_unit = 1,
+            .face_rgb_buffer_texture = TextureBuffer.init(),
+            .face_rgb_buffer_texture_unit = 1,
         };
     }
 
     pub fn deinit(p: *Parameters) void {
         p.vao.deinit();
         p.face_index_buffer_texture.deinit();
-        p.face_color_buffer_texture.deinit();
+        p.face_rgb_buffer_texture.deinit();
     }
 
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
@@ -134,14 +134,14 @@ pub const Parameters = struct {
             gl.BindTexture(gl.TEXTURE_BUFFER, 0);
         }
 
-        if (p.face_color_buffer) |face_color_buffer| {
-            gl.ActiveTexture(gl.TEXTURE0 + @as(c_uint, @intCast(p.face_color_buffer_texture_unit)));
-            gl.BindTexture(gl.TEXTURE_BUFFER, p.face_color_buffer_texture.index);
-            gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RGB32F, face_color_buffer.index);
-            gl.Uniform1i(p.shader.face_color_buffer_uniform, p.face_color_buffer_texture_unit);
+        if (p.face_rgb_buffer) |face_rgb_buffer| {
+            gl.ActiveTexture(gl.TEXTURE0 + @as(c_uint, @intCast(p.face_rgb_buffer_texture_unit)));
+            gl.BindTexture(gl.TEXTURE_BUFFER, p.face_rgb_buffer_texture.index);
+            gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RGB32F, face_rgb_buffer.index);
+            gl.Uniform1i(p.shader.face_rgb_buffer_uniform, p.face_rgb_buffer_texture_unit);
         }
         defer {
-            gl.ActiveTexture(gl.TEXTURE0 + @as(c_uint, @intCast(p.face_color_buffer_texture_unit)));
+            gl.ActiveTexture(gl.TEXTURE0 + @as(c_uint, @intCast(p.face_rgb_buffer_texture_unit)));
             gl.BindTexture(gl.TEXTURE_BUFFER, 0);
         }
 

@@ -244,11 +244,15 @@ pub fn getData(ig: *const IncidenceGraph, comptime cell_type: CellType, comptime
 
 /// Returns a handle to the data array of the type `T` associated with cells of the given CellType
 /// if it exists with the given name, otherwise creates a new data array of the type `T` associated with cells of the given CellType
-/// and returns a handle to it.
-pub fn getOrAddData(ig: *IncidenceGraph, comptime cell_type: CellType, comptime T: type, name: []const u8) !CellData(cell_type, T) {
+/// and returns a handle to it, along with a boolean indicating whether the data array was newly created (true) or already existed (false).
+pub fn getOrAddData(ig: *IncidenceGraph, comptime cell_type: CellType, comptime T: type, name: []const u8) !struct { CellData(cell_type, T), bool } {
+    const d, const created = try ig.dataContainerPtr(cell_type).getOrAddData(T, name);
     return .{
-        .incidence_graph = ig,
-        .data = try ig.dataContainerPtr(cell_type).getOrAddData(T, name),
+        .{
+            .incidence_graph = ig,
+            .data = d,
+        },
+        created,
     };
 }
 

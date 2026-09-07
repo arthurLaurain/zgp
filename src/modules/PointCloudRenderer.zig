@@ -16,11 +16,11 @@ const PointCloudStdData = @import("../models/PointCloudStore.zig").PointCloudStd
 const DataGen = @import("../utils/data.zig").DataGen;
 
 const PointSphere = @import("../rendering/shaders/point_sphere/PointSphere.zig");
-const PointSphereColorPerVertex = @import("../rendering/shaders/point_sphere_color_per_vertex/PointSphereColorPerVertex.zig");
-const PointSphereRadiusPerVertex = @import("../rendering/shaders/point_sphere_radius_per_vertex/PointSphereRadiusPerVertex.zig");
 const PointSphereScalarPerVertex = @import("../rendering/shaders/point_sphere_scalar_per_vertex/PointSphereScalarPerVertex.zig");
-const PointSphereColorRadiusPerVertex = @import("../rendering/shaders/point_sphere_color_radius_per_vertex/PointSphereColorRadiusPerVertex.zig");
+const PointSphereRGBPerVertex = @import("../rendering/shaders/point_sphere_rgb_per_vertex/PointSphereRGBPerVertex.zig");
+const PointSphereRadiusPerVertex = @import("../rendering/shaders/point_sphere_radius_per_vertex/PointSphereRadiusPerVertex.zig");
 const PointSphereScalarRadiusPerVertex = @import("../rendering/shaders/point_sphere_scalar_radius_per_vertex/PointSphereScalarRadiusPerVertex.zig");
+const PointSphereRGBRadiusPerVertex = @import("../rendering/shaders/point_sphere_rgb_radius_per_vertex/PointSphereRGBRadiusPerVertex.zig");
 const VBO = @import("../rendering/VBO.zig");
 
 const vec = @import("../geometry/vec.zig");
@@ -34,13 +34,13 @@ const ColorDefinedOn = enum {
 };
 const ColorType = enum {
     scalar,
-    vector,
+    rgb,
 };
 const ColorParameters = struct {
     defined_on: ColorDefinedOn,
-    type: ColorType = .vector,
-    point_vector_data: ?PointCloud.CellData(Vec3f) = null, // data used if definedOn is point & type is vector
-    point_scalar_data: ?PointCloud.CellData(f32) = null, // data used if definedOn is point & type is scalar
+    type: ColorType = .rgb,
+    point_scalar_data: ?PointCloud.CellData(f32) = null, // data used if defined_on is point & type is scalar
+    point_rgb_data: ?PointCloud.CellData(Vec3f) = null, // data used if defined_on is point & type is rgb
 };
 
 const RadiusDefinedOn = enum {
@@ -54,11 +54,11 @@ const RadiusParameters = struct {
 
 const PointCloudRendererParameters = struct {
     point_sphere_shader_parameters: PointSphere.Parameters,
-    point_sphere_color_per_vertex_shader_parameters: PointSphereColorPerVertex.Parameters,
     point_sphere_radius_per_vertex_shader_parameters: PointSphereRadiusPerVertex.Parameters,
     point_sphere_scalar_per_vertex_shader_parameters: PointSphereScalarPerVertex.Parameters,
-    point_sphere_color_radius_per_vertex_shader_parameters: PointSphereColorRadiusPerVertex.Parameters,
+    point_sphere_rgb_per_vertex_shader_parameters: PointSphereRGBPerVertex.Parameters,
     point_sphere_scalar_radius_per_vertex_shader_parameters: PointSphereScalarRadiusPerVertex.Parameters,
+    point_sphere_rgb_radius_per_vertex_shader_parameters: PointSphereRGBRadiusPerVertex.Parameters,
 
     draw_points: bool = true,
     draw_points_color: ColorParameters = .{
@@ -71,21 +71,21 @@ const PointCloudRendererParameters = struct {
     pub fn init() PointCloudRendererParameters {
         return .{
             .point_sphere_shader_parameters = PointSphere.Parameters.init(),
-            .point_sphere_color_per_vertex_shader_parameters = PointSphereColorPerVertex.Parameters.init(),
             .point_sphere_radius_per_vertex_shader_parameters = PointSphereRadiusPerVertex.Parameters.init(),
             .point_sphere_scalar_per_vertex_shader_parameters = PointSphereScalarPerVertex.Parameters.init(),
-            .point_sphere_color_radius_per_vertex_shader_parameters = PointSphereColorRadiusPerVertex.Parameters.init(),
+            .point_sphere_rgb_per_vertex_shader_parameters = PointSphereRGBPerVertex.Parameters.init(),
             .point_sphere_scalar_radius_per_vertex_shader_parameters = PointSphereScalarRadiusPerVertex.Parameters.init(),
+            .point_sphere_rgb_radius_per_vertex_shader_parameters = PointSphereRGBRadiusPerVertex.Parameters.init(),
         };
     }
 
     pub fn deinit(self: *PointCloudRendererParameters) void {
         self.point_sphere_shader_parameters.deinit();
-        self.point_sphere_color_per_vertex_shader_parameters.deinit();
         self.point_sphere_radius_per_vertex_shader_parameters.deinit();
         self.point_sphere_scalar_per_vertex_shader_parameters.deinit();
-        self.point_sphere_color_radius_per_vertex_shader_parameters.deinit();
+        self.point_sphere_rgb_per_vertex_shader_parameters.deinit();
         self.point_sphere_scalar_radius_per_vertex_shader_parameters.deinit();
+        self.point_sphere_rgb_radius_per_vertex_shader_parameters.deinit();
     }
 };
 
@@ -151,30 +151,30 @@ pub fn pointCloudStdDataChanged(
             if (maybe_position) |position| {
                 const position_vbo = pcr.app_ctx.point_cloud_store.dataVBO(Vec3f, position);
                 p.point_sphere_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
-                p.point_sphere_color_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.point_sphere_radius_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.point_sphere_scalar_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
-                p.point_sphere_color_radius_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.point_sphere_rgb_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.point_sphere_scalar_radius_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.point_sphere_rgb_radius_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
             } else {
                 p.point_sphere_shader_parameters.unsetVertexAttribArray(.position);
-                p.point_sphere_color_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
                 p.point_sphere_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
                 p.point_sphere_scalar_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
-                p.point_sphere_color_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
+                p.point_sphere_rgb_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
                 p.point_sphere_scalar_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
+                p.point_sphere_rgb_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
             }
         },
         .radius => |maybe_radius| {
             if (maybe_radius) |radius| {
                 const radius_vbo = pcr.app_ctx.point_cloud_store.dataVBO(f32, radius);
-                p.point_sphere_color_radius_per_vertex_shader_parameters.setVertexAttribArray(.radius, radius_vbo, 0, 0);
                 p.point_sphere_radius_per_vertex_shader_parameters.setVertexAttribArray(.radius, radius_vbo, 0, 0);
                 p.point_sphere_scalar_radius_per_vertex_shader_parameters.setVertexAttribArray(.radius, radius_vbo, 0, 0);
+                p.point_sphere_rgb_radius_per_vertex_shader_parameters.setVertexAttribArray(.radius, radius_vbo, 0, 0);
             } else {
-                p.point_sphere_color_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.radius);
                 p.point_sphere_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.radius);
                 p.point_sphere_scalar_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.radius);
+                p.point_sphere_rgb_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.radius);
             }
         },
         else => return, // Ignore other standard data changes
@@ -239,14 +239,14 @@ fn setPointCloudDrawPointsColorData(
             if (@typeInfo(@typeInfo(T).array.child) != .float) {
                 @compileError("PointCloudRenderer bad vertex color data type");
             }
-            p.draw_points_color.point_vector_data = data;
-            if (p.draw_points_color.point_vector_data) |vector| {
-                const vector_vbo = pcr.app_ctx.point_cloud_store.dataVBO(Vec3f, vector);
-                p.point_sphere_color_per_vertex_shader_parameters.setVertexAttribArray(.color, vector_vbo, 0, 0);
-                p.point_sphere_color_radius_per_vertex_shader_parameters.setVertexAttribArray(.color, vector_vbo, 0, 0);
+            p.draw_points_color.point_rgb_data = data;
+            if (p.draw_points_color.point_rgb_data) |rgb| {
+                const rgb_vbo = pcr.app_ctx.point_cloud_store.dataVBO(Vec3f, rgb);
+                p.point_sphere_rgb_per_vertex_shader_parameters.setVertexAttribArray(.rgb, rgb_vbo, 0, 0);
+                p.point_sphere_rgb_radius_per_vertex_shader_parameters.setVertexAttribArray(.rgb, rgb_vbo, 0, 0);
             } else {
-                p.point_sphere_color_per_vertex_shader_parameters.unsetVertexAttribArray(.color);
-                p.point_sphere_color_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.color);
+                p.point_sphere_rgb_per_vertex_shader_parameters.unsetVertexAttribArray(.rgb);
+                p.point_sphere_rgb_radius_per_vertex_shader_parameters.unsetVertexAttribArray(.rgb);
             }
         },
         else => @compileError("PointCloudRenderer bad vertex color data type"),
@@ -299,17 +299,17 @@ pub fn draw(
                                 },
                             }
                         },
-                        .vector => {
+                        .rgb => {
                             switch (p.draw_points_radius.defined_on) {
                                 .global => {
-                                    p.point_sphere_color_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
-                                    p.point_sphere_color_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
-                                    p.point_sphere_color_per_vertex_shader_parameters.draw(info.points_ibo);
+                                    p.point_sphere_rgb_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+                                    p.point_sphere_rgb_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+                                    p.point_sphere_rgb_per_vertex_shader_parameters.draw(info.points_ibo);
                                 },
                                 .point => {
-                                    p.point_sphere_color_radius_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
-                                    p.point_sphere_color_radius_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
-                                    p.point_sphere_color_radius_per_vertex_shader_parameters.draw(info.points_ibo);
+                                    p.point_sphere_rgb_radius_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+                                    p.point_sphere_rgb_radius_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+                                    p.point_sphere_rgb_radius_per_vertex_shader_parameters.draw(info.points_ibo);
                                 },
                             }
                         },
@@ -357,8 +357,8 @@ pub fn rightPanel(m: *Module) void {
                 c.ImGui_PushID("DrawPointsSize");
                 if (c.ImGui_SliderFloatEx("", &p.point_sphere_shader_parameters.sphere_radius, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
                     // sync value to other point sphere shaders
-                    p.point_sphere_color_per_vertex_shader_parameters.sphere_radius = p.point_sphere_shader_parameters.sphere_radius;
                     p.point_sphere_scalar_per_vertex_shader_parameters.sphere_radius = p.point_sphere_shader_parameters.sphere_radius;
+                    p.point_sphere_rgb_per_vertex_shader_parameters.sphere_radius = p.point_sphere_shader_parameters.sphere_radius;
                     pcr.app_ctx.requestRedraw();
                 }
                 c.ImGui_PopID();
@@ -399,8 +399,8 @@ pub fn rightPanel(m: *Module) void {
                         pcr.app_ctx.requestRedraw();
                     }
                     c.ImGui_SameLine();
-                    if (c.ImGui_RadioButton("Vector##DrawPointsColorPointVector", p.draw_points_color.type == .vector)) {
-                        p.draw_points_color.type = .vector;
+                    if (c.ImGui_RadioButton("RGB##DrawPointsColorPointRGB", p.draw_points_color.type == .rgb)) {
+                        p.draw_points_color.type = .rgb;
                         pcr.app_ctx.requestRedraw();
                     }
                 }
@@ -411,7 +411,7 @@ pub fn rightPanel(m: *Module) void {
                         .cleared => pcr.setPointCloudDrawPointsColorData(pc, f32, null),
                         .changed => |data| pcr.setPointCloudDrawPointsColorData(pc, f32, data),
                     },
-                    .vector => switch (imgui_utils.pointCloudDataComboBox(pc, Vec3f, p.draw_points_color.point_vector_data)) {
+                    .rgb => switch (imgui_utils.pointCloudDataComboBox(pc, Vec3f, p.draw_points_color.point_rgb_data)) {
                         .unchanged => {},
                         .cleared => pcr.setPointCloudDrawPointsColorData(pc, Vec3f, null),
                         .changed => |data| pcr.setPointCloudDrawPointsColorData(pc, Vec3f, data),

@@ -4,7 +4,7 @@ precision highp int;
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
 uniform usamplerBuffer u_face_index_buffer;
-uniform samplerBuffer u_face_color_buffer;
+uniform samplerBuffer u_face_rgb_buffer;
 uniform bool u_dim_backfaces;
 
 in vec3 v_position;
@@ -16,8 +16,8 @@ void main() {
     vec3 L = normalize(u_light_position - v_position);
     float lambert_term = dot(N, L);
     int face_index = int(texelFetch(u_face_index_buffer, int(gl_PrimitiveID)).r);
-    vec3 color = texelFetch(u_face_color_buffer, face_index).rgb;
-    vec4 result = vec4(color.rgb * lambert_term, 1.0);
+    vec3 rgb = texelFetch(u_face_rgb_buffer, face_index).rgb;
+    vec4 result = vec4(rgb.rgb * lambert_term, 1.0);
     result += vec4(u_ambiant_color.rgb, 0.0);
     f_color = result;
     if (u_dim_backfaces && !gl_FrontFacing) {
