@@ -58,8 +58,8 @@ const TnBData = struct {
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
-            tbd.vertex_ref_edge = try tbd.surface_mesh.getOrAddData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
-            tbd.vertex_ref_edge_vec = try tbd.surface_mesh.getOrAddData(.vertex, Vec3f, "vertex_ref_edge_vec");
+            tbd.vertex_ref_edge, _ = try tbd.surface_mesh.getOrAddData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
+            tbd.vertex_ref_edge_vec, _ = try tbd.surface_mesh.getOrAddData(.vertex, Vec3f, "vertex_ref_edge_vec");
         }
         try tbd.computeVertexRefEdges();
         try tbd.computeVertexRefEdgesVec();

@@ -183,7 +183,7 @@ pub fn vertexGaussianCurvature(
     corner_angle: SurfaceMesh.CellData(.corner, f32),
 ) f32 {
     assert(vertex.cellType() == .vertex);
-    var base: f32 = 2.0 * std.math.pi;
+    var base: f32 = std.math.tau;
     if (sm.isIncidentToBoundary(vertex)) {
         base = std.math.pi;
     }

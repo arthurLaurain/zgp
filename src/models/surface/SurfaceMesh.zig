@@ -749,11 +749,15 @@ pub fn getData(sm: *const SurfaceMesh, comptime cell_type: CellType, comptime T:
 
 /// Returns a handle to the data array of the type `T` associated with cells of the given CellType
 /// if it exists with the given name, otherwise creates a new data array of the type `T` associated with cells of the given CellType
-/// and returns a handle to it.
-pub fn getOrAddData(sm: *SurfaceMesh, comptime cell_type: CellType, comptime T: type, name: []const u8) !CellData(cell_type, T) {
+/// and returns a handle to it, along with a boolean indicating whether the data array was newly created (true) or already existed (false).
+pub fn getOrAddData(sm: *SurfaceMesh, comptime cell_type: CellType, comptime T: type, name: []const u8) !struct { CellData(cell_type, T), bool } {
+    const d, const created = try sm.dataContainerPtr(cell_type).getOrAddData(T, name);
     return .{
-        .surface_mesh = sm,
-        .data = try sm.dataContainerPtr(cell_type).getOrAddData(T, name),
+        .{
+            .surface_mesh = sm,
+            .data = d,
+        },
+        created,
     };
 }
 
@@ -1418,7 +1422,7 @@ pub fn cutEdge(sm: *SurfaceMesh, edge: Cell) !Cell {
     return .{ .vertex = d1 };
 }
 
-/// Flips the given edge.
+/// Flips the given edge (following the orientation of the faces).
 /// Should only be called after a call to `canFlipEdge`.
 /// TODO: write a more detailed comment
 pub fn flipEdge(sm: *SurfaceMesh, edge: Cell) void {
@@ -1457,6 +1461,63 @@ pub fn flipEdge(sm: *SurfaceMesh, edge: Cell) void {
 ///  2 - edges having an incident vertex of degree 2
 /// No geometry conditions are checked here.
 pub fn canFlipEdge(sm: *SurfaceMesh, edge: Cell) bool {
+    assert(edge.cellType() == .edge);
+
+    const d = edge.dart();
+    const dd = sm.phi2(d);
+
+    // condition 1: do not flip boundary edges
+    if (sm.isIncidentToBoundary(edge)) {
+        return false;
+    }
+
+    // condition 2: avoid creating degree 1 vertices
+    if (sm.degree(.{ .vertex = d }) == 2 or sm.degree(.{ .vertex = dd }) == 2) {
+        return false;
+    }
+
+    return true;
+}
+
+/// Unflips the given edge (following the inverse orientation of the faces).
+/// Should only be called after a call to `canUnflipEdge`.
+/// TODO: write a more detailed comment
+pub fn unflipEdge(sm: *SurfaceMesh, edge: Cell) void {
+    assert(edge.cellType() == .edge);
+
+    const d = edge.dart();
+    const dd = sm.phi2(d);
+    const d_1 = sm.phi_1(d);
+    const dd_1 = sm.phi_1(dd);
+    const d_1_1 = sm.phi_1(d_1);
+    const dd_1_1 = sm.phi_1(dd_1);
+
+    sm.phi1Sew(d, dd_1);
+    sm.phi1Sew(dd, d_1);
+    sm.phi1Sew(d, dd_1_1);
+    sm.phi1Sew(dd, d_1_1);
+
+    {
+        // Vertex indices.
+        sm.setDartCellIndex(d, .vertex, sm.dartCellIndex(sm.phi1(dd), .vertex));
+        sm.setDartCellIndex(dd, .vertex, sm.dartCellIndex(sm.phi1(d), .vertex));
+    }
+    {
+        // Edge indices.
+        // no new edges are created & no existing edges are modified
+    }
+    {
+        // Face indices.
+        sm.setDartCellIndex(sm.phi1(d), .face, sm.dartCellIndex(d, .face));
+        sm.setDartCellIndex(sm.phi1(dd), .face, sm.dartCellIndex(dd, .face));
+    }
+}
+
+/// Check if the given edge can be unflipped. Edges that cannot be unflipped:
+///  1 - boundary edges
+///  2 - edges having an incident vertex of degree 2
+/// No geometry conditions are checked here.
+pub fn canUnflipEdge(sm: *SurfaceMesh, edge: Cell) bool {
     assert(edge.cellType() == .edge);
 
     const d = edge.dart();

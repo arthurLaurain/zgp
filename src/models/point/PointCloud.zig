@@ -186,6 +186,8 @@ pub fn CellData(comptime T: type) type {
     };
 }
 
+/// Creates a new data array of the type `T`.
+/// The `name` must be unique for the creation to succeed.
 pub fn addData(pc: *PointCloud, comptime T: type, name: []const u8) !CellData(T) {
     return .{
         .point_cloud = pc,
@@ -193,14 +195,21 @@ pub fn addData(pc: *PointCloud, comptime T: type, name: []const u8) !CellData(T)
     };
 }
 
+/// Returns a handle to the data array of the type `T` if it exists with the given name, otherwise returns null.
 pub fn getData(pc: *PointCloud, comptime T: type, name: []const u8) ?CellData(T) {
     return if (pc.point_data.getData(T, name)) |d| .{ .point_cloud = pc, .data = d } else null;
 }
 
-pub fn getOrAddData(pc: *PointCloud, comptime T: type, name: []const u8) !CellData(T) {
+/// Returns a handle to the data array of the type `T` if it exists with the given name, otherwise creates a new data array of the type `T`,
+/// and returns a handle to it, along with a boolean indicating whether the data array was newly created (true) or already existed (false).
+pub fn getOrAddData(pc: *PointCloud, comptime T: type, name: []const u8) !struct { CellData(T), bool } {
+    const d, const created = try pc.point_data.getOrAddData(T, name);
     return .{
-        .point_cloud = pc,
-        .data = try pc.point_data.getOrAddData(T, name),
+        .{
+            .point_cloud = pc,
+            .data = d,
+        },
+        created,
     };
 }
 

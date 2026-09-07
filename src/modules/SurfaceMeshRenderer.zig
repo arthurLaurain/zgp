@@ -16,19 +16,22 @@ const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMesh
 const DataGen = @import("../utils/data.zig").DataGen;
 
 const PointSphere = @import("../rendering/shaders/point_sphere/PointSphere.zig");
-const PointSphereColorPerVertex = @import("../rendering/shaders/point_sphere_color_per_vertex/PointSphereColorPerVertex.zig");
 const PointSphereScalarPerVertex = @import("../rendering/shaders/point_sphere_scalar_per_vertex/PointSphereScalarPerVertex.zig");
+const PointSphereRGBPerVertex = @import("../rendering/shaders/point_sphere_rgb_per_vertex/PointSphereRGBPerVertex.zig");
+const Line = @import("../rendering/shaders/line/Line.zig");
 const LineCylinder = @import("../rendering/shaders/line_cylinder/LineCylinder.zig");
 const TriFlat = @import("../rendering/shaders/tri_flat/TriFlat.zig");
-const TriFlatColorPerVertex = @import("../rendering/shaders/tri_flat_color_per_vertex/TriFlatColorPerVertex.zig");
 const TriFlatScalarPerVertex = @import("../rendering/shaders/tri_flat_scalar_per_vertex/TriFlatScalarPerVertex.zig");
-const TriFlatColorPerFace = @import("../rendering/shaders/tri_flat_color_per_face/TriFlatColorPerFace.zig");
+const TriFlatUVPerVertex = @import("../rendering/shaders/tri_flat_uv_per_vertex/TriFlatUVPerVertex.zig");
+const TriFlatRGBPerVertex = @import("../rendering/shaders/tri_flat_rgb_per_vertex/TriFlatRGBPerVertex.zig");
 const TriFlatScalarPerFace = @import("../rendering/shaders/tri_flat_scalar_per_face/TriFlatScalarPerFace.zig");
+const TriFlatRGBPerFace = @import("../rendering/shaders/tri_flat_rgb_per_face/TriFlatRGBPerFace.zig");
 const VBO = @import("../rendering/VBO.zig");
 
 const eigen = @import("../geometry/eigen.zig");
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
+const Vec2f = vec.Vec2f;
 const mat = @import("../geometry/mat.zig");
 const Mat4f = mat.Mat4f;
 
@@ -39,31 +42,36 @@ const ColorDefinedOn = enum {
 };
 const ColorType = enum {
     scalar,
-    vector,
+    uv,
+    rgb,
 };
 const ColorParameters = struct {
     defined_on: ColorDefinedOn,
-    type: ColorType = .vector,
-    vertex_vector_data: ?SurfaceMesh.CellData(.vertex, Vec3f) = null, // data used if definedOn is vertex & type is vector
-    vertex_scalar_data: ?SurfaceMesh.CellData(.vertex, f32) = null, // data used if definedOn is vertex & type is scalar
-    face_vector_data: ?SurfaceMesh.CellData(.face, Vec3f) = null, // data used if definedOn is face & type is vector
-    face_scalar_data: ?SurfaceMesh.CellData(.face, f32) = null, // data used if definedOn is face & type is scalar
+    type: ColorType = .rgb,
+    vertex_scalar_data: ?SurfaceMesh.CellData(.vertex, f32) = null, // data used if defined_on is vertex & type is scalar
+    vertex_uv_data: ?SurfaceMesh.CellData(.vertex, Vec2f) = null, // data used if defined_on is vertex & type is uv
+    vertex_rgb_data: ?SurfaceMesh.CellData(.vertex, Vec3f) = null, // data used if defined_on is vertex & type is rgb
+    face_scalar_data: ?SurfaceMesh.CellData(.face, f32) = null, // data used if defined_on is face & type is scalar
+    face_rgb_data: ?SurfaceMesh.CellData(.face, Vec3f) = null, // data used if defined_on is face & type is rgb
 };
 
 const SurfaceMeshRendererParameters = struct {
     point_sphere_shader_parameters: PointSphere.Parameters,
-    point_sphere_color_per_vertex_shader_parameters: PointSphereColorPerVertex.Parameters,
     point_sphere_scalar_per_vertex_shader_parameters: PointSphereScalarPerVertex.Parameters,
+    point_sphere_rgb_per_vertex_shader_parameters: PointSphereRGBPerVertex.Parameters,
+    line_shader_parameters: Line.Parameters,
     line_cylinder_shader_parameters: LineCylinder.Parameters,
     tri_flat_shader_parameters: TriFlat.Parameters,
-    tri_flat_color_per_vertex_shader_parameters: TriFlatColorPerVertex.Parameters,
     tri_flat_scalar_per_vertex_shader_parameters: TriFlatScalarPerVertex.Parameters,
-    tri_flat_color_per_face_shader_parameters: TriFlatColorPerFace.Parameters,
+    tri_flat_uv_per_vertex_shader_parameters: TriFlatUVPerVertex.Parameters,
+    tri_flat_rgb_per_vertex_shader_parameters: TriFlatRGBPerVertex.Parameters,
     tri_flat_scalar_per_face_shader_parameters: TriFlatScalarPerFace.Parameters,
+    tri_flat_rgb_per_face_shader_parameters: TriFlatRGBPerFace.Parameters,
     boundary_shader_parameters: LineCylinder.Parameters,
 
-    draw_vertices: bool = false,
-    draw_edges: bool = false,
+    draw_vertices: bool = true,
+    draw_edges: bool = true,
+    draw_edges_as_cylinders: bool = true,
     draw_faces: bool = true,
     draw_boundaries: bool = false,
 
@@ -77,28 +85,32 @@ const SurfaceMeshRendererParameters = struct {
     pub fn init() SurfaceMeshRendererParameters {
         return .{
             .point_sphere_shader_parameters = PointSphere.Parameters.init(),
-            .point_sphere_color_per_vertex_shader_parameters = PointSphereColorPerVertex.Parameters.init(),
             .point_sphere_scalar_per_vertex_shader_parameters = PointSphereScalarPerVertex.Parameters.init(),
+            .point_sphere_rgb_per_vertex_shader_parameters = PointSphereRGBPerVertex.Parameters.init(),
+            .line_shader_parameters = Line.Parameters.init(),
             .line_cylinder_shader_parameters = LineCylinder.Parameters.init(),
             .tri_flat_shader_parameters = TriFlat.Parameters.init(),
-            .tri_flat_color_per_vertex_shader_parameters = TriFlatColorPerVertex.Parameters.init(),
             .tri_flat_scalar_per_vertex_shader_parameters = TriFlatScalarPerVertex.Parameters.init(),
-            .tri_flat_color_per_face_shader_parameters = TriFlatColorPerFace.Parameters.init(),
+            .tri_flat_uv_per_vertex_shader_parameters = TriFlatUVPerVertex.Parameters.init(),
+            .tri_flat_rgb_per_vertex_shader_parameters = TriFlatRGBPerVertex.Parameters.init(),
             .tri_flat_scalar_per_face_shader_parameters = TriFlatScalarPerFace.Parameters.init(),
+            .tri_flat_rgb_per_face_shader_parameters = TriFlatRGBPerFace.Parameters.init(),
             .boundary_shader_parameters = LineCylinder.Parameters.init(),
         };
     }
 
     pub fn deinit(self: *SurfaceMeshRendererParameters) void {
         self.point_sphere_shader_parameters.deinit();
-        self.point_sphere_color_per_vertex_shader_parameters.deinit();
         self.point_sphere_scalar_per_vertex_shader_parameters.deinit();
+        self.point_sphere_rgb_per_vertex_shader_parameters.deinit();
+        self.line_shader_parameters.deinit();
         self.line_cylinder_shader_parameters.deinit();
         self.tri_flat_shader_parameters.deinit();
-        self.tri_flat_color_per_vertex_shader_parameters.deinit();
         self.tri_flat_scalar_per_vertex_shader_parameters.deinit();
-        self.tri_flat_color_per_face_shader_parameters.deinit();
+        self.tri_flat_uv_per_vertex_shader_parameters.deinit();
+        self.tri_flat_rgb_per_vertex_shader_parameters.deinit();
         self.tri_flat_scalar_per_face_shader_parameters.deinit();
+        self.tri_flat_rgb_per_face_shader_parameters.deinit();
         self.boundary_shader_parameters.deinit();
     }
 };
@@ -165,25 +177,29 @@ pub fn surfaceMeshStdDataChanged(
             if (maybe_vertex_position) |vertex_position| {
                 const position_vbo: VBO = smr.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, vertex_position);
                 p.point_sphere_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
-                p.point_sphere_color_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.point_sphere_scalar_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.point_sphere_rgb_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.line_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.line_cylinder_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.tri_flat_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
-                p.tri_flat_color_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.tri_flat_scalar_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
-                p.tri_flat_color_per_face_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.tri_flat_uv_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.tri_flat_rgb_per_vertex_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.tri_flat_scalar_per_face_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+                p.tri_flat_rgb_per_face_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
                 p.boundary_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
             } else {
                 p.point_sphere_shader_parameters.unsetVertexAttribArray(.position);
-                p.point_sphere_color_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
                 p.point_sphere_scalar_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
+                p.point_sphere_rgb_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
+                p.line_shader_parameters.unsetVertexAttribArray(.position);
                 p.line_cylinder_shader_parameters.unsetVertexAttribArray(.position);
                 p.tri_flat_shader_parameters.unsetVertexAttribArray(.position);
-                p.tri_flat_color_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
                 p.tri_flat_scalar_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
-                p.tri_flat_color_per_face_shader_parameters.unsetVertexAttribArray(.position);
+                p.tri_flat_uv_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
+                p.tri_flat_rgb_per_vertex_shader_parameters.unsetVertexAttribArray(.position);
                 p.tri_flat_scalar_per_face_shader_parameters.unsetVertexAttribArray(.position);
+                p.tri_flat_rgb_per_face_shader_parameters.unsetVertexAttribArray(.position);
                 p.boundary_shader_parameters.unsetVertexAttribArray(.position);
             }
         },
@@ -272,12 +288,12 @@ fn setSurfaceMeshDrawVerticesColorData(
             }
             switch (cell_type) {
                 .vertex => {
-                    p.draw_vertices_color.vertex_vector_data = data;
-                    if (p.draw_vertices_color.vertex_vector_data) |vector| {
-                        const vector_vbo = smr.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, vector);
-                        p.point_sphere_color_per_vertex_shader_parameters.setVertexAttribArray(.color, vector_vbo, 0, 0);
+                    p.draw_vertices_color.vertex_rgb_data = data;
+                    if (p.draw_vertices_color.vertex_rgb_data) |rgb| {
+                        const rgb_vbo = smr.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, rgb);
+                        p.point_sphere_rgb_per_vertex_shader_parameters.setVertexAttribArray(.rgb, rgb_vbo, 0, 0);
                     } else {
-                        p.point_sphere_color_per_vertex_shader_parameters.unsetVertexAttribArray(.color);
+                        p.point_sphere_rgb_per_vertex_shader_parameters.unsetVertexAttribArray(.rgb);
                     }
                 },
                 else => unreachable,
@@ -339,21 +355,35 @@ fn setSurfaceMeshDrawFacesColorData(
             }
             switch (cell_type) {
                 .vertex => {
-                    p.draw_faces_color.vertex_vector_data = data;
-                    if (p.draw_faces_color.vertex_vector_data) |vector| {
-                        const vector_vbo = smr.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, vector);
-                        p.tri_flat_color_per_vertex_shader_parameters.setVertexAttribArray(.color, vector_vbo, 0, 0);
-                    } else {
-                        p.tri_flat_color_per_vertex_shader_parameters.unsetVertexAttribArray(.color);
+                    switch (@typeInfo(T).array.len) {
+                        2 => {
+                            p.draw_faces_color.vertex_uv_data = data;
+                            if (p.draw_faces_color.vertex_uv_data) |uv| {
+                                const uv_vbo = smr.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec2f, uv);
+                                p.tri_flat_uv_per_vertex_shader_parameters.setVertexAttribArray(.uv, uv_vbo, 0, 0);
+                            } else {
+                                p.tri_flat_uv_per_vertex_shader_parameters.unsetVertexAttribArray(.uv);
+                            }
+                        },
+                        3 => {
+                            p.draw_faces_color.vertex_rgb_data = data;
+                            if (p.draw_faces_color.vertex_rgb_data) |rgb| {
+                                const rgb_vbo = smr.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, rgb);
+                                p.tri_flat_rgb_per_vertex_shader_parameters.setVertexAttribArray(.rgb, rgb_vbo, 0, 0);
+                            } else {
+                                p.tri_flat_rgb_per_vertex_shader_parameters.unsetVertexAttribArray(.rgb);
+                            }
+                        },
+                        else => unreachable,
                     }
                 },
                 .face => {
-                    p.draw_faces_color.face_vector_data = data;
-                    if (p.draw_faces_color.face_vector_data) |vector| {
-                        const vector_vbo = smr.app_ctx.surface_mesh_store.dataVBO(.face, Vec3f, vector);
-                        p.tri_flat_color_per_face_shader_parameters.face_color_buffer = vector_vbo;
+                    p.draw_faces_color.face_rgb_data = data;
+                    if (p.draw_faces_color.face_rgb_data) |rgb| {
+                        const rgb_vbo = smr.app_ctx.surface_mesh_store.dataVBO(.face, Vec3f, rgb);
+                        p.tri_flat_rgb_per_face_shader_parameters.face_rgb_buffer = rgb_vbo;
                     } else {
-                        p.tri_flat_color_per_face_shader_parameters.face_color_buffer = null;
+                        p.tri_flat_rgb_per_face_shader_parameters.face_rgb_buffer = null;
                     }
                 },
                 else => unreachable,
@@ -389,10 +419,15 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
                             p.tri_flat_scalar_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
                             p.tri_flat_scalar_per_vertex_shader_parameters.draw(info.triangles_ibo);
                         },
-                        .vector => {
-                            p.tri_flat_color_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
-                            p.tri_flat_color_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
-                            p.tri_flat_color_per_vertex_shader_parameters.draw(info.triangles_ibo);
+                        .uv => {
+                            p.tri_flat_uv_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+                            p.tri_flat_uv_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+                            p.tri_flat_uv_per_vertex_shader_parameters.draw(info.triangles_ibo);
+                        },
+                        .rgb => {
+                            p.tri_flat_rgb_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+                            p.tri_flat_rgb_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+                            p.tri_flat_rgb_per_vertex_shader_parameters.draw(info.triangles_ibo);
                         },
                     }
                 },
@@ -403,10 +438,13 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
                             p.tri_flat_scalar_per_face_shader_parameters.projection_matrix = @bitCast(projection_matrix);
                             p.tri_flat_scalar_per_face_shader_parameters.draw(info.triangles_ibo);
                         },
-                        .vector => {
-                            p.tri_flat_color_per_face_shader_parameters.model_view_matrix = @bitCast(view_matrix);
-                            p.tri_flat_color_per_face_shader_parameters.projection_matrix = @bitCast(projection_matrix);
-                            p.tri_flat_color_per_face_shader_parameters.draw(info.triangles_ibo);
+                        .uv => {
+                            // not supported
+                        },
+                        .rgb => {
+                            p.tri_flat_rgb_per_face_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+                            p.tri_flat_rgb_per_face_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+                            p.tri_flat_rgb_per_face_shader_parameters.draw(info.triangles_ibo);
                         },
                     }
                 },
@@ -414,12 +452,22 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
             gl.Disable(gl.POLYGON_OFFSET_FILL);
         }
         if (p.draw_edges) {
-            gl.Enable(gl.CULL_FACE);
-            gl.CullFace(gl.BACK);
-            p.line_cylinder_shader_parameters.model_view_matrix = @bitCast(view_matrix);
-            p.line_cylinder_shader_parameters.projection_matrix = @bitCast(projection_matrix);
-            p.line_cylinder_shader_parameters.draw(info.lines_ibo);
-            gl.Disable(gl.CULL_FACE);
+            if (p.draw_edges_as_cylinders) {
+                gl.Enable(gl.CULL_FACE);
+                gl.CullFace(gl.BACK);
+                p.line_cylinder_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+                p.line_cylinder_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+                p.line_cylinder_shader_parameters.draw(info.lines_ibo);
+                gl.Disable(gl.CULL_FACE);
+            } else {
+                p.line_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+                p.line_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+                p.line_shader_parameters.viewport_size = .{
+                    @floatFromInt(smr.app_ctx.view.width),
+                    @floatFromInt(smr.app_ctx.view.height),
+                };
+                p.line_shader_parameters.draw(info.lines_ibo);
+            }
         }
         if (p.draw_vertices) {
             switch (p.draw_vertices_color.defined_on) {
@@ -435,10 +483,13 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
                             p.point_sphere_scalar_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
                             p.point_sphere_scalar_per_vertex_shader_parameters.draw(info.points_ibo);
                         },
-                        .vector => {
-                            p.point_sphere_color_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
-                            p.point_sphere_color_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
-                            p.point_sphere_color_per_vertex_shader_parameters.draw(info.points_ibo);
+                        .uv => {
+                            // not supported
+                        },
+                        .rgb => {
+                            p.point_sphere_rgb_per_vertex_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+                            p.point_sphere_rgb_per_vertex_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+                            p.point_sphere_rgb_per_vertex_shader_parameters.draw(info.points_ibo);
                         },
                     }
                 },
@@ -481,7 +532,7 @@ pub fn rightPanel(m: *Module) void {
         if (c.ImGui_SliderFloatEx("", &p.point_sphere_shader_parameters.sphere_radius, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
             // sync value to other point sphere shaders
             p.point_sphere_scalar_per_vertex_shader_parameters.sphere_radius = p.point_sphere_shader_parameters.sphere_radius;
-            p.point_sphere_color_per_vertex_shader_parameters.sphere_radius = p.point_sphere_shader_parameters.sphere_radius;
+            p.point_sphere_rgb_per_vertex_shader_parameters.sphere_radius = p.point_sphere_shader_parameters.sphere_radius;
             smr.app_ctx.requestRedraw();
         }
         c.ImGui_PopID();
@@ -514,8 +565,8 @@ pub fn rightPanel(m: *Module) void {
                         smr.app_ctx.requestRedraw();
                     }
                     c.ImGui_SameLine();
-                    if (c.ImGui_RadioButton("Vector##DrawVerticesColorVertexVector", p.draw_vertices_color.type == .vector)) {
-                        p.draw_vertices_color.type = .vector;
+                    if (c.ImGui_RadioButton("RGB##DrawVerticesColorVertexRGB", p.draw_vertices_color.type == .rgb)) {
+                        p.draw_vertices_color.type = .rgb;
                         smr.app_ctx.requestRedraw();
                     }
                 }
@@ -526,7 +577,10 @@ pub fn rightPanel(m: *Module) void {
                         .cleared => smr.setSurfaceMeshDrawVerticesColorData(sm, .vertex, f32, null),
                         .changed => |data| smr.setSurfaceMeshDrawVerticesColorData(sm, .vertex, f32, data),
                     },
-                    .vector => switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, Vec3f, p.draw_vertices_color.vertex_vector_data)) {
+                    .uv => {
+                        // not supported
+                    },
+                    .rgb => switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, Vec3f, p.draw_vertices_color.vertex_rgb_data)) {
                         .unchanged => {},
                         .cleared => smr.setSurfaceMeshDrawVerticesColorData(sm, .vertex, Vec3f, null),
                         .changed => |data| smr.setSurfaceMeshDrawVerticesColorData(sm, .vertex, Vec3f, data),
@@ -543,13 +597,26 @@ pub fn rightPanel(m: *Module) void {
         smr.app_ctx.requestRedraw();
     }
     if (p.draw_edges) {
-        c.ImGui_Text("Width");
-        c.ImGui_PushID("DrawEdgesWidth");
-        if (c.ImGui_SliderFloatEx("", &p.line_cylinder_shader_parameters.cylinder_radius, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
+        if (c.ImGui_Checkbox("draw edges as cylinders", &p.draw_edges_as_cylinders)) {
             smr.app_ctx.requestRedraw();
         }
-        c.ImGui_PopID();
+        if (p.draw_edges_as_cylinders) {
+            c.ImGui_Text("Width (world)");
+            c.ImGui_PushID("DrawEdgesWidth");
+            if (c.ImGui_SliderFloatEx("", &p.line_cylinder_shader_parameters.cylinder_radius, 0.0001, 0.1, "%.4f", c.ImGuiSliderFlags_Logarithmic)) {
+                smr.app_ctx.requestRedraw();
+            }
+            c.ImGui_PopID();
+        } else {
+            c.ImGui_Text("Width (screen)");
+            c.ImGui_PushID("DrawEdgesWidth");
+            if (c.ImGui_SliderFloatEx("", &p.line_shader_parameters.line_width, 0.1, 5.0, "%.1f", c.ImGuiSliderFlags_None)) {
+                smr.app_ctx.requestRedraw();
+            }
+            c.ImGui_PopID();
+        }
         if (c.ImGui_ColorEdit4("Global color##DrawEdgesColorGlobalEdit", &p.line_cylinder_shader_parameters.cylinder_color, c.ImGuiColorEditFlags_NoInputs)) {
+            p.line_shader_parameters.line_color = p.line_cylinder_shader_parameters.cylinder_color;
             smr.app_ctx.requestRedraw();
         }
     }
@@ -593,8 +660,13 @@ pub fn rightPanel(m: *Module) void {
                         smr.app_ctx.requestRedraw();
                     }
                     c.ImGui_SameLine();
-                    if (c.ImGui_RadioButton("Vector##DrawFacesColorVertexVector", p.draw_faces_color.type == .vector)) {
-                        p.draw_faces_color.type = .vector;
+                    if (c.ImGui_RadioButton("UV##DrawFacesColorVertexUV", p.draw_faces_color.type == .uv)) {
+                        p.draw_faces_color.type = .uv;
+                        smr.app_ctx.requestRedraw();
+                    }
+                    c.ImGui_SameLine();
+                    if (c.ImGui_RadioButton("RGB##DrawFacesColorVertexRGB", p.draw_faces_color.type == .rgb)) {
+                        p.draw_faces_color.type = .rgb;
                         smr.app_ctx.requestRedraw();
                     }
                 }
@@ -616,7 +688,17 @@ pub fn rightPanel(m: *Module) void {
                         }
                         c.ImGui_PopID();
                     },
-                    .vector => switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, Vec3f, p.draw_faces_color.vertex_vector_data)) {
+                    .uv => {
+                        switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, Vec2f, p.draw_faces_color.vertex_uv_data)) {
+                            .unchanged => {},
+                            .cleared => smr.setSurfaceMeshDrawFacesColorData(sm, .vertex, Vec2f, null),
+                            .changed => |data| smr.setSurfaceMeshDrawFacesColorData(sm, .vertex, Vec2f, data),
+                        }
+                        if (c.ImGui_Checkbox("Radial", &p.tri_flat_uv_per_vertex_shader_parameters.radial)) {
+                            smr.app_ctx.requestRedraw();
+                        }
+                    },
+                    .rgb => switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, Vec3f, p.draw_faces_color.vertex_rgb_data)) {
                         .unchanged => {},
                         .cleared => smr.setSurfaceMeshDrawFacesColorData(sm, .vertex, Vec3f, null),
                         .changed => |data| smr.setSurfaceMeshDrawFacesColorData(sm, .vertex, Vec3f, data),
@@ -633,8 +715,8 @@ pub fn rightPanel(m: *Module) void {
                         smr.app_ctx.requestRedraw();
                     }
                     c.ImGui_SameLine();
-                    if (c.ImGui_RadioButton("Vector##DrawFacesColorFaceVector", p.draw_faces_color.type == .vector)) {
-                        p.draw_faces_color.type = .vector;
+                    if (c.ImGui_RadioButton("RGB##DrawFacesColorFaceRGB", p.draw_faces_color.type == .rgb)) {
+                        p.draw_faces_color.type = .rgb;
                         smr.app_ctx.requestRedraw();
                     }
                 }
@@ -645,7 +727,10 @@ pub fn rightPanel(m: *Module) void {
                         .cleared => smr.setSurfaceMeshDrawFacesColorData(sm, .face, f32, null),
                         .changed => |data| smr.setSurfaceMeshDrawFacesColorData(sm, .face, f32, data),
                     },
-                    .vector => switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .face, Vec3f, p.draw_faces_color.face_vector_data)) {
+                    .uv => {
+                        // not supported
+                    },
+                    .rgb => switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .face, Vec3f, p.draw_faces_color.face_rgb_data)) {
                         .unchanged => {},
                         .cleared => smr.setSurfaceMeshDrawFacesColorData(sm, .face, Vec3f, null),
                         .changed => |data| smr.setSurfaceMeshDrawFacesColorData(sm, .face, Vec3f, data),
