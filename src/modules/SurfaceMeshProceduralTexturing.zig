@@ -30,11 +30,21 @@ const Mat3f = mat.Mat3f;
 const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
 const TextureBuffer = @import("../rendering/TextureBuffer.zig");
+const SurfaceMeshParameterization = @import("SurfaceMeshParameterization.zig");
+const TriangleUVs = @import("SurfaceMeshParameterization.zig").ParameterizationData.TriangleUVs;
 
 pub const BlendingMode = enum { LINEAR, MIXMAX };
 
+const tnb_visu_option = [_]struct { name: []const u8, value: u32 }{
+    .{ .name = "TnB", .value = 0 },
+    .{ .name = "Samples ID", .value = 1 },
+    .{ .name = "UVs", .value = 2 },
+    .{ .name = "Distance to borders", .value = 3 },
+};
+
 const TnBData = struct {
     surface_mesh: *SurfaceMesh,
+    face_triangleUVs: SurfaceMesh.CellData(.face, TriangleUVs),
     vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
@@ -48,7 +58,9 @@ const TnBData = struct {
     cellset_selection_visualized: ?*SurfaceMesh.CellSet = null,
     draw_texture: bool = true,
     initialized: bool = false,
-    exemplar_texture_path: [128]u8 = undefined,
+    exemplar_texture_path: [128]u8 = [_]u8{0} ** 128,
+    current_visu_option: u32 = 0,
+    current_focus_sample: u32 = 1,
 
     pub fn init(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
         tbd.procedural_texturing_parameters = .init();
@@ -97,6 +109,7 @@ const TnBData = struct {
 };
 
 app_ctx: *AppContext,
+surface_mesh_parameterization: *SurfaceMeshParameterization,
 module: Module = .{
     .name = "Surface Mesh Procedural Texturing",
     .supported_models = .{ .surface_mesh = true },
@@ -112,9 +125,10 @@ module: Module = .{
 },
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, TnBData) = .empty,
 
-pub fn init(app_ctx: *AppContext) SurfaceMeshProceduralTexturing {
+pub fn init(app_ctx: *AppContext, surface_mesh_parameterization: *SurfaceMeshParameterization) SurfaceMeshProceduralTexturing {
     return .{
         .app_ctx = app_ctx,
+        .surface_mesh_parameterization = surface_mesh_parameterization,
     };
 }
 
@@ -169,6 +183,7 @@ pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
     smpt.surface_meshes_data.put(smpt.app_ctx.allocator, surface_mesh, .{
         .surface_mesh = surface_mesh,
+        .face_triangleUVs = smpt.surface_mesh_parameterization.surfaceMeshParameterizationData(surface_mesh).triangle_uvs,
     }) catch |err| {
         std.debug.print("Failed to store TnBData for new SurfaceMesh: {}\n", .{err});
         return;
@@ -358,6 +373,10 @@ pub fn rightPanel(m: *Module) void {
         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.position, tnb_data.position_vbo.?, 0, 0);
         smpt.setSurfaceMeshVectorData(sm, .{ .surface_mesh = sm, .data = tnb_data.vertex_ref_edge_vec.?.data });
         tnb_data.procedural_texturing_parameters.vertices_normal_vbo = tnb_data.normal_vbo.?;
+
+        //TODO remove hard coded CellData
+        const triangle_uvs_data = sm.getData(.face, TriangleUVs, "triangle_uvs").?;
+        tnb_data.procedural_texturing_parameters.face_triangle_uvs = smpt.app_ctx.surface_mesh_store.dataVBO(.face, TriangleUVs, triangle_uvs_data);
     }
     if (disabled) {
         c.ImGui_EndDisabled();
@@ -490,6 +509,68 @@ pub fn rightPanel(m: *Module) void {
                     smpt.app_ctx.requestRedraw();
                 }
             }
+
+            c.ImGui_SeparatorText("Tiling and blending visualisation");
+
+            c.ImGui_Text("Visualization options");
+            c.ImGui_PushID("Visualization");
+            if (c.ImGui_BeginCombo("", tnb_visu_option[@intCast(tnb_data.current_visu_option)].name.ptr, 0)) {
+                for (tnb_visu_option) |option| {
+                    const selected = tnb_data.current_visu_option == option.value;
+
+                    if (c.ImGui_SelectableEx(option.name.ptr, selected, 0, .{ .x = 0, .y = 0 })) {
+                        tnb_data.current_visu_option = option.value;
+                        tnb_data.procedural_texturing_parameters.visu_option = option.value;
+                        smpt.app_ctx.requestRedraw();
+                    }
+
+                    if (selected) {
+                        c.ImGui_SetItemDefaultFocus();
+                    }
+                }
+
+                c.ImGui_EndCombo();
+            }
+            c.ImGui_PopID();
+
+            var current_label: [16]u8 = [_]u8{0} ** 16;
+            const current_label_slice = std.fmt.bufPrint(&current_label, "{}", .{tnb_data.current_focus_sample}) catch unreachable;
+
+            c.ImGui_Text("Focus on sample");
+            c.ImGui_PushID("Focus sample");
+            if (c.ImGui_BeginCombo(
+                "",
+                current_label_slice.ptr,
+                0,
+            )) {
+                var label: [16]u8 = [_]u8{0} ** 16;
+
+                for (1..4) |i| {
+                    const v: u32 = @intCast(i);
+                    const selected = tnb_data.current_focus_sample == v;
+
+                    const label_slice = std.fmt.bufPrint(&label, "{}", .{v}) catch unreachable;
+
+                    if (c.ImGui_SelectableEx(
+                        label_slice.ptr,
+                        selected,
+                        0,
+                        .{ .x = 0, .y = 0 },
+                    )) {
+                        tnb_data.current_focus_sample = v;
+                        tnb_data.procedural_texturing_parameters.visu_sample = v - 1;
+                        smpt.app_ctx.requestRedraw();
+                    }
+
+                    if (selected) {
+                        c.ImGui_SetItemDefaultFocus();
+                    }
+                }
+
+                c.ImGui_EndCombo();
+            }
+            c.ImGui_PopID();
+
             // c.ImGui_Text("Visualize cellset");
             // c.ImGui_PushID("Visualize cellset");
             // switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, tnb_data.cellset_selection_visualized)) {

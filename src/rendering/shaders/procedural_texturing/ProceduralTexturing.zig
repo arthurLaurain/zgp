@@ -59,12 +59,14 @@ scale_tex_coords_uniform: c_int = undefined,
 visu_arap_energy_uniform: c_int = undefined,
 compense_distorsions_uniform: c_int = undefined,
 distorsions_computed_uniform: c_int = undefined,
-tiles_transform_per_vertex_uniform: c_int = undefined,
 micro_priority_uniform: c_int = undefined,
 blending_mode_uniform: c_int = undefined,
 tbo_info_triangles_uniform: c_int = undefined,
 tbo_info_vertices_uniform: c_int = undefined,
-tbo_vertices_normal: c_int = undefined,
+tbo_vertices_normal_uniform: c_int = undefined,
+tbo_uvs_triangles_uniform: c_int = undefined,
+visu_option_uniform: c_int = undefined,
+visu_sample_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 scaling_field_attrib: VAO.VertexAttribInfo = undefined,
@@ -115,7 +117,11 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.blending_mode_uniform = gl.GetUniformLocation(pt.program.index, "u_blending_mode");
     pt.tbo_info_triangles_uniform = gl.GetUniformLocation(pt.program.index, "u_info_triangles");
     pt.tbo_info_vertices_uniform = gl.GetUniformLocation(pt.program.index, "u_info_vertices");
-    pt.tbo_vertices_normal = gl.GetUniformLocation(pt.program.index, "u_vertices_normal");
+    pt.tbo_vertices_normal_uniform = gl.GetUniformLocation(pt.program.index, "u_vertices_normal");
+    pt.tbo_uvs_triangles_uniform = gl.GetUniformLocation(pt.program.index, "u_triangle_uvs");
+    pt.visu_option_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_option");
+    pt.visu_sample_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_sample");
+
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -163,21 +169,24 @@ pub const Parameters = struct {
     tbo_normal_vertices: TextureBuffer,
     // tbo_distorsion_primitives: TextureBuffer,
     tbo_neigh_selected_vertices: TextureBuffer,
+    tbo_triangle_uvs: TextureBuffer,
     // tbo_scaling_tile: TextureBuffer,
     // tbo_rotation_tile: TextureBuffer,
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
     vertices_scaling_vbo: ?VBO = undefined,
     vertices_rotation_vbo: ?VBO = undefined,
+    face_triangle_uvs: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
     visu_arap_energy: bool = false,
     compense_distorsions: bool = false,
     minmax_energy: Vec2f = .{ 0, 0 },
     distorsions_computed: bool = false,
-    tiles_transform_per_vertex: bool = false,
     mixmax_micro_priority: f32 = 0.001,
     blending_mode: BlendingMode = BlendingMode.LINEAR,
+    visu_option: u32 = 0,
+    visu_sample: u32 = 0,
 
     pub fn init() Parameters {
         return .{
@@ -189,6 +198,7 @@ pub const Parameters = struct {
             .tbo_normal_vertices = .init(),
             // .tbo_distorsion_primitives = .init(),
             .tbo_neigh_selected_vertices = .init(),
+            .tbo_triangle_uvs = .init(),
             // .tbo_scaling_tile = .init(),
             // .tbo_rotation_tile = .init(),
         };
@@ -204,6 +214,7 @@ pub const Parameters = struct {
         p.tbo_neigh_selected_vertices.deinit();
         // p.tbo_scaling_tile.deinit();
         // p.tbo_rotation_tile.deinit();
+        p.tbo_triangle_uvs.deinit();
         p.textureData.exemplar_texture.deinit();
         if (p.textureData.exemplar_texture_normal) |*t| {
             t.deinit();
@@ -465,9 +476,12 @@ pub const Parameters = struct {
             gl.R32F,
         );
         gl.Uniform1i(
-            p.shader.tbo_vertices_normal,
+            p.shader.tbo_vertices_normal_uniform,
             6,
         );
+
+        p.tbo_triangle_uvs.bindBufferToShader(7, p.face_triangle_uvs.?.index, gl.R32UI);
+        gl.Uniform1i(p.shader.tbo_uvs_triangles_uniform, 7);
 
         // gl.BindBufferBase(gl.TEXTURE_BUFFER, 7, p.tbo_distorsion_primitives.index);
         // gl.BindBufferBase(gl.TEXTURE_BUFFER, 8, p.tbo_neigh_selected_vertices.index);
@@ -481,9 +495,10 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.visu_arap_energy_uniform, @intFromBool(p.visu_arap_energy));
         gl.Uniform1i(p.shader.compense_distorsions_uniform, @intFromBool(p.compense_distorsions));
         gl.Uniform1i(p.shader.distorsions_computed_uniform, @intFromBool(p.distorsions_computed));
-        gl.Uniform1i(p.shader.tiles_transform_per_vertex_uniform, @intFromBool(p.tiles_transform_per_vertex));
         gl.Uniform1f(p.shader.micro_priority_uniform, p.mixmax_micro_priority);
         gl.Uniform1i(p.shader.blending_mode_uniform, @intFromEnum(p.blending_mode));
+        gl.Uniform1ui(p.shader.visu_option_uniform, p.visu_option);
+        gl.Uniform1ui(p.shader.visu_sample_uniform, p.visu_sample);
 
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);

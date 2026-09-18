@@ -192,7 +192,7 @@ fn sdlAppInit(appstate: ?*?*anyopaque, argv: [][*:0]u8) !c.SDL_AppResult {
     surface_mesh_parameterization = .init(&app_ctx, &surface_mesh_intrinsic_triangulation);
     surface_mesh_medial_axis = .init(&app_ctx);
     point_cloud_medial_axis = .init(&app_ctx);
-    surface_mesh_procedural_texturing = .init(&app_ctx);
+    surface_mesh_procedural_texturing = .init(&app_ctx, &surface_mesh_parameterization);
     field_generator = .init(&app_ctx);
 
     errdefer point_cloud_std_datas.deinit();

@@ -69,8 +69,8 @@ const SurfaceMeshRendererParameters = struct {
     tri_flat_rgb_per_face_shader_parameters: TriFlatRGBPerFace.Parameters,
     boundary_shader_parameters: LineCylinder.Parameters,
 
-    draw_vertices: bool = true,
-    draw_edges: bool = true,
+    draw_vertices: bool = false,
+    draw_edges: bool = false,
     draw_edges_as_cylinders: bool = true,
     draw_faces: bool = true,
     draw_boundaries: bool = false,

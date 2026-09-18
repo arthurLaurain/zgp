@@ -16,6 +16,8 @@ uniform sampler2D u_exemplar_texture_normal;
 uniform sampler2D u_exemplar_texture_roughness;
 uniform float u_micro_priority;
 uniform int u_blending_mode;
+uniform uint u_visu_option;
+uniform uint u_visu_sample;
 
 in vec3 frag_position;
 in vec3 edge_ref;
@@ -28,6 +30,7 @@ out vec4 f_color;
 uniform usamplerBuffer u_info_triangles;
 uniform samplerBuffer u_info_vertices;
 uniform samplerBuffer u_vertices_normal;
+uniform usamplerBuffer u_triangle_uvs;
 // uniform samplerBuffer u_distorsions;
 // uniform samplerBuffer u_neigh_selected_vertices;
 
@@ -192,6 +195,14 @@ float pointInTriangleBary(vec3 P, vec3 A, vec3 B, vec3 C)
     return 0.0;
 }
 
+vec3 idColor(uint id)
+{
+    return fract(
+        sin(vec3(id, id + 31u, id + 67u)) *
+        43758.5453
+    );
+}
+
 // vec4 addColorForSelectedOneRing(vec4 rgba)
 // {
 //   vec4 color = vec4(1.);
@@ -239,6 +250,46 @@ float pointInTriangleBary(vec3 P, vec3 A, vec3 B, vec3 C)
 //   return mix(color, rgba, t);
 // }
 
+struct TriangleUVs
+{
+    uint samples[3];
+    vec2 uvs[9];
+    float distance_to_boundary[9];
+};
+
+TriangleUVs loadTriangleUVs(int id_triangle)
+{
+    TriangleUVs t;
+
+    int base = id_triangle * 30;
+
+    t.samples[0] = texelFetch(u_triangle_uvs, base + 0).r;
+    t.samples[1] = texelFetch(u_triangle_uvs, base + 1).r;
+    t.samples[2] = texelFetch(u_triangle_uvs, base + 2).r;
+
+    int offset = base + 3;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            t.uvs[i * 3 + j].x = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
+
+            t.uvs[i * 3 + j].y = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
+        }
+    }
+
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            t.distance_to_boundary[i * 3 + j] = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
+        }
+    }
+
+    return t;
+}
+
 void main() {
 
   vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
@@ -247,7 +298,9 @@ void main() {
 
   int id_triangle = gl_PrimitiveID;
 
+
   ivec3 id_vertices = ivec3(texelFetch(u_info_triangles, id_triangle * 3).x, texelFetch(u_info_triangles, id_triangle * 3 + 1).x, texelFetch(u_info_triangles, id_triangle * 3 + 2).x);
+  TriangleUVs triangleUVs = loadTriangleUVs(id_triangle);
 
   vec3 p1 = vec3(texelFetch(u_info_vertices, id_vertices.x * 3).x, texelFetch(u_info_vertices, id_vertices.x * 3 + 1).x, texelFetch(u_info_vertices, id_vertices.x * 3 + 2).x);
   vec3 p2 = vec3(texelFetch(u_info_vertices, id_vertices.y * 3).x, texelFetch(u_info_vertices, id_vertices.y * 3 + 1).x, texelFetch(u_info_vertices, id_vertices.y * 3 + 2).x);
@@ -269,28 +322,43 @@ void main() {
 
   mat2 rotation_transform = inverse(rotate(angle));
 
-  u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * (u_scale_tex_coords + scaling_field);
-  u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * (u_scale_tex_coords + scaling_field);
-  u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * (u_scale_tex_coords + scaling_field);
-  
+
+
+  // u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * (u_scale_tex_coords + scaling_field);
+  // u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * (u_scale_tex_coords + scaling_field);
+  // u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * (u_scale_tex_coords + scaling_field);
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
-
-  vec2 r1 = hash12(int(id_vertices.x));
-  vec2 r2 = hash12(int(id_vertices.y));
-  vec2 r3 = hash12(int(id_vertices.z));
-
-  vec3 c1;
-  vec3 c2;
-  vec3 c3;
 
   float w1 = bary.x;
   float w2 = bary.y;
   float w3 = bary.z;
 
-  vec2 uv1 = u1 + r1;
-  vec2 uv2 = u2 + r2;
-  vec2 uv3 = u3 + r3;
+  vec2 uv_sample1 = w1 * triangleUVs.uvs[0] + w2 * triangleUVs.uvs[1] + w3 * triangleUVs.uvs[2];
+  u1 = rotation_transform * uv_sample1 * (u_scale_tex_coords + scaling_field);
+  vec2 uv_sample2 = w1 * triangleUVs.uvs[3] + w2 * triangleUVs.uvs[4] + w3 * triangleUVs.uvs[5];
+  u2 = rotation_transform * uv_sample2 * (u_scale_tex_coords + scaling_field);
+  vec2 uv_sample3 = w1 * triangleUVs.uvs[6] + w2 * triangleUVs.uvs[7] + w3 * triangleUVs.uvs[8];
+  u3 = rotation_transform * uv_sample3 * (u_scale_tex_coords + scaling_field);
+  
+  float distance_sample[3];
+  distance_sample[0] = w1 * triangleUVs.distance_to_boundary[0] + w2 * triangleUVs.distance_to_boundary[1] + w3 * triangleUVs.distance_to_boundary[2];
+  distance_sample[1] = w1 * triangleUVs.distance_to_boundary[3] + w2 * triangleUVs.distance_to_boundary[4] + w3 * triangleUVs.distance_to_boundary[5];
+  distance_sample[2] = w1 * triangleUVs.distance_to_boundary[6] + w2 * triangleUVs.distance_to_boundary[7] + w3 * triangleUVs.distance_to_boundary[8];
 
+
+  vec2 r1 = hash12(int(triangleUVs.samples[0]));
+  vec2 r2 = hash12(int(triangleUVs.samples[1]));
+  vec2 r3 = hash12(int(triangleUVs.samples[2]));
+
+  vec3 c1;
+  vec3 c2;
+  vec3 c3;
+
+
+  vec2 uv[3];
+  uv[0] = u1 + r1;
+  uv[1] = u2 + r2;
+  uv[2] = u3 + r3;
 
   // tbo_distorsion distorsion;
   // if(u_compense_distorsions && u_distorsions_computed)
@@ -302,13 +370,32 @@ void main() {
   // }
   // else
   // {
-    c1 = texture(u_exemplar_texture, uv1).xyz;
-    c2 = texture(u_exemplar_texture, uv2).xyz;
-    c3 = texture(u_exemplar_texture, uv3).xyz;
+  c1 = texture(u_exemplar_texture, uv[0]).xyz;
+  c2 = texture(u_exemplar_texture, uv[1]).xyz;
+  c3 = texture(u_exemplar_texture, uv[2]).xyz;
   // }
-  vec3 albedo = vec3(w1 * c1 + w2 * c2 + w3 * c3);
+  vec3 albedo = vec3(distance_sample[0] * c1 + distance_sample[1] * c2 + distance_sample[2] * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
   
+  switch(u_visu_option)
+  {
+    // TnB result
+    case 0: 
+      f_color = result * 20;
+      break;
+    // Sample ID visu
+    case 1:
+      f_color = vec4(idColor(triangleUVs.samples[u_visu_sample]), 1);
+      break;
+    // UV from first sample visu
+    case 2:
+      f_color = vec4(uv[u_visu_sample],0,1);
+      break;
+    // Distance from border visu
+    case 3:
+      f_color = vec4(distance_sample[u_visu_sample] * 20, 0,0, 1);
+      break;
+  }
   // if(u_visu_arap_energy && u_distorsions_computed)
   // {
   //   float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
@@ -316,9 +403,6 @@ void main() {
   //   f_color = vec4(smoothstep(u_minmax_energy.x, u_minmax_energy.y, energy), 0., 0.  , 1.);
   // }
   // else
-  
-  
-  f_color = result;
 
   mixmaxdata M;
 
@@ -331,14 +415,14 @@ void main() {
     // }
     // else
     // {
-      M = mixMax(uv1,uv2,uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+      M = mixMax(uv[0],uv[1],uv[2], bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
     // }
 
     // Normal mapping
     vec3 normal = normalize(M.normal * 2. - 1.);
     mat3 TBN = compute_TBN(N,edge_ref);
     vec3 normalWS = normalize(TBN * normal);
-    f_color = vec4(M.color * dot(normalWS, L),1);
+    f_color = vec4(1,1,0,1) + 0.0001 * vec4(M.color * dot(normalWS, L),1);
   }
 
   // f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));

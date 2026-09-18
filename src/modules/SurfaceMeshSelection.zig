@@ -44,7 +44,7 @@ const SelectionData = struct {
         p.sphere_radius = 0.002;
         p.sphere_color = .{ 0.0, 1.0, 0.0, 1.0 };
         var l = LineCylinder.Parameters.init();
-        l.cylinder_radius = 0.001;
+        l.cylinder_radius = 0.0003;
         l.cylinder_color = .{ 0.0, 1.0, 0.0, 1.0 };
         var t = TriFlat.Parameters.init();
         t.vertex_color = .{ 0.0, 1.0, 0.0, 1.0 };
@@ -91,7 +91,7 @@ surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, SelectionData) = .em
 selection_mode: SelectionMode = .single,
 selection_radius: f32 = 0.05,
 selecting: bool = false,
-selecting_cell_type: SurfaceMesh.CellType = .vertex,
+selecting_cell_type: SurfaceMesh.CellType = .edge,
 hovered_cell: ?SurfaceMesh.Cell = null,
 hovered_cell_ibo: IBO,
 

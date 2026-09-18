@@ -27,7 +27,7 @@ const geometry_utils = @import("../geometry/utils.zig");
 const sampling = @import("../models/surface/sampling.zig");
 const distance = @import("../models/surface/distance.zig");
 
-const ParameterizationData = struct {
+pub const ParameterizationData = struct {
     app_ctx: *AppContext,
 
     // the underlying SurfaceMesh on which the parameterization is computed
@@ -64,7 +64,7 @@ const ParameterizationData = struct {
 
     uv_computed: bool = false,
 
-    const TriangleUVs = struct {
+    pub const TriangleUVs = struct {
         samples: [3]u32, // the index of the 3 samples (i.e. patches) that contain the triangle
         uvs: [3][3]Vec2f, // the UV coordinates of the 3 vertices of the triangle in each of the 3 patches
         distance_to_boundary: [3][3]f32, // the distance of the 3 vertices of the triangle to the boundary of the patch in which it is contained (in the UV space of that patch)
@@ -858,6 +858,10 @@ pub fn deinit(smp: *SurfaceMeshParameterization) void {
         }
     }
     smp.surface_meshes_data.deinit(smp.app_ctx.allocator);
+}
+
+pub fn surfaceMeshParameterizationData(smp: *SurfaceMeshParameterization, surface_mesh: *SurfaceMesh) *ParameterizationData {
+    return smp.surface_meshes_data.getPtr(surface_mesh).?;
 }
 
 /// Part of the Module interface.
