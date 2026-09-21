@@ -31,6 +31,7 @@ const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
 const TextureBuffer = @import("../rendering/TextureBuffer.zig");
 const SurfaceMeshParameterization = @import("SurfaceMeshParameterization.zig");
+const ParameterizationData = @import("SurfaceMeshParameterization.zig").ParameterizationData;
 const TriangleUVs = @import("SurfaceMeshParameterization.zig").ParameterizationData.TriangleUVs;
 
 pub const BlendingMode = enum { LINEAR, MIXMAX };
@@ -44,7 +45,7 @@ const tnb_visu_option = [_]struct { name: []const u8, value: u32 }{
 
 const TnBData = struct {
     surface_mesh: *SurfaceMesh,
-    face_triangleUVs: SurfaceMesh.CellData(.face, TriangleUVs),
+    parameterization_data: *ParameterizationData,
     vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
@@ -183,7 +184,7 @@ pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
     smpt.surface_meshes_data.put(smpt.app_ctx.allocator, surface_mesh, .{
         .surface_mesh = surface_mesh,
-        .face_triangleUVs = smpt.surface_mesh_parameterization.surfaceMeshParameterizationData(surface_mesh).triangle_uvs,
+        .parameterization_data = smpt.surface_mesh_parameterization.surfaceMeshParameterizationData(surface_mesh),
     }) catch |err| {
         std.debug.print("Failed to store TnBData for new SurfaceMesh: {}\n", .{err});
         return;
@@ -359,7 +360,7 @@ pub fn rightPanel(m: *Module) void {
     const info = sm_store.surfaceMeshInfo(sm);
     const tnb_data = smpt.surface_meshes_data.getPtr(sm).?;
 
-    const disabled = info.std_datas.vertex_position == null;
+    const disabled = info.std_datas.vertex_position == null or info.std_datas.vertex_normal == null or tnb_data.parameterization_data.triangle_uvs.data.data.items.len == 0;
     if (disabled) {
         c.ImGui_BeginDisabled(true);
     }
@@ -374,11 +375,16 @@ pub fn rightPanel(m: *Module) void {
         smpt.setSurfaceMeshVectorData(sm, .{ .surface_mesh = sm, .data = tnb_data.vertex_ref_edge_vec.?.data });
         tnb_data.procedural_texturing_parameters.vertices_normal_vbo = tnb_data.normal_vbo.?;
 
-        //TODO remove hard coded CellData
-        const triangle_uvs_data = sm.getData(.face, TriangleUVs, "triangle_uvs").?;
+        const triangle_uvs_data = tnb_data.parameterization_data.triangle_uvs;
         tnb_data.procedural_texturing_parameters.face_triangle_uvs = smpt.app_ctx.surface_mesh_store.dataVBO(.face, TriangleUVs, triangle_uvs_data);
     }
     if (disabled) {
+        imgui_utils.tooltip(
+            \\ Following data should be available:
+            \\ - std vertex_position
+            \\ - std face_normal
+            \\ - triangle UVs from Surface Mesh Parametrization module
+        );
         c.ImGui_EndDisabled();
     }
     if (tnb_data.initialized) {
@@ -402,14 +408,6 @@ pub fn rightPanel(m: *Module) void {
             smpt.app_ctx.requestRedraw();
         c.ImGui_PopID();
 
-        // TODO: remove arap energy
-        // c.ImGui_Text("Visualize As-Rigid-As-Possible energy");
-        // c.ImGui_PushID("Visualize As-Rigid-As-Possible energy");
-        // if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.visu_arap_energy)) {
-        //     smpt.app_ctx.requestRedraw();
-        // }
-        // c.ImGui_PopID();
-
         // c.ImGui_Text("Compensate distorsions");
         // c.ImGui_PushID("Compensate distorsions");
         // if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compense_distorsions)) {
@@ -421,7 +419,7 @@ pub fn rightPanel(m: *Module) void {
         c.ImGui_PushID("Exemplar texture path");
         _ = c.ImGui_InputText("", &tnb_data.exemplar_texture_path, @sizeOf([128]u8), 0);
         c.ImGui_PopID();
-        if (c.ImGui_Button("Init texture")) {
+        if (c.ImGui_Button("Initialize texture")) {
             tnb_data.procedural_texturing_parameters.blending_mode = BlendingMode.LINEAR;
             var path_buffer: [128]u8 = undefined;
             const path_str = std.mem.sliceTo(&tnb_data.exemplar_texture_path, 0);
@@ -589,10 +587,6 @@ pub fn rightPanel(m: *Module) void {
             // c.ImGui_PopID();
             c.ImGui_SeparatorText("Field");
 
-            //TODO remove this part
-            // if (c.ImGui_Checkbox("Compute tiles transformations per vertex", &tnb_data.procedural_texturing_parameters.tiles_transform_per_vertex)) {
-            //     smpt.app_ctx.requestRedraw();
-            // }
             c.ImGui_Text("Scalar field:");
             c.ImGui_SameLine();
             c.ImGui_PushID("scaling field");

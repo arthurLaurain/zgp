@@ -345,6 +345,11 @@ void main() {
   distance_sample[1] = w1 * triangleUVs.distance_to_boundary[3] + w2 * triangleUVs.distance_to_boundary[4] + w3 * triangleUVs.distance_to_boundary[5];
   distance_sample[2] = w1 * triangleUVs.distance_to_boundary[6] + w2 * triangleUVs.distance_to_boundary[7] + w3 * triangleUVs.distance_to_boundary[8];
 
+  float sum_distance = distance_sample[0] + distance_sample[1] + distance_sample[2];
+  float w_dist[3];
+  w_dist[0] = distance_sample[0] / sum_distance;
+  w_dist[1] = distance_sample[1] / sum_distance;
+  w_dist[2] = distance_sample[2] / sum_distance;
 
   vec2 r1 = hash12(int(triangleUVs.samples[0]));
   vec2 r2 = hash12(int(triangleUVs.samples[1]));
@@ -353,7 +358,6 @@ void main() {
   vec3 c1;
   vec3 c2;
   vec3 c3;
-
 
   vec2 uv[3];
   uv[0] = u1 + r1;
@@ -374,35 +378,9 @@ void main() {
   c2 = texture(u_exemplar_texture, uv[1]).xyz;
   c3 = texture(u_exemplar_texture, uv[2]).xyz;
   // }
-  vec3 albedo = vec3(distance_sample[0] * c1 + distance_sample[1] * c2 + distance_sample[2] * c3);
+  vec3 albedo = vec3(w_dist[0] * c1 + w_dist[1] * c2 + w_dist[2] * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
-  
-  switch(u_visu_option)
-  {
-    // TnB result
-    case 0: 
-      f_color = result * 20;
-      break;
-    // Sample ID visu
-    case 1:
-      f_color = vec4(idColor(triangleUVs.samples[u_visu_sample]), 1);
-      break;
-    // UV from first sample visu
-    case 2:
-      f_color = vec4(uv[u_visu_sample],0,1);
-      break;
-    // Distance from border visu
-    case 3:
-      f_color = vec4(distance_sample[u_visu_sample] * 20, 0,0, 1);
-      break;
-  }
-  // if(u_visu_arap_energy && u_distorsions_computed)
-  // {
-  //   float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
-    
-  //   f_color = vec4(smoothstep(u_minmax_energy.x, u_minmax_energy.y, energy), 0., 0.  , 1.);
-  // }
-  // else
+
 
   mixmaxdata M;
 
@@ -415,15 +393,44 @@ void main() {
     // }
     // else
     // {
-      M = mixMax(uv[0],uv[1],uv[2], bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+      M = mixMax(uv[0],uv[1],uv[2], vec3(w_dist[0],w_dist[1],w_dist[2]), u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
     // }
 
     // Normal mapping
     vec3 normal = normalize(M.normal * 2. - 1.);
     mat3 TBN = compute_TBN(N,edge_ref);
     vec3 normalWS = normalize(TBN * normal);
-    f_color = vec4(1,1,0,1) + 0.0001 * vec4(M.color * dot(normalWS, L),1);
+    result = vec4(M.color * dot(normalWS, L),1);
   }
+  
+  switch(u_visu_option)
+  {
+    // TnB result
+    case 0: 
+      f_color = result;
+      break;
+    // Sample ID visu
+    case 1:
+      f_color = vec4(idColor(triangleUVs.samples[u_visu_sample]), 1);
+      break;
+    // UV from first sample visu
+    case 2:
+      f_color = vec4(uv[u_visu_sample],0,1);
+      break;
+    // Distance from border visu
+    case 3:
+      f_color = vec4(w_dist[u_visu_sample], 0,0, 1);
+      break;
+  }
+  // if(u_visu_arap_energy && u_distorsions_computed)
+  // {
+  //   float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
+    
+  //   f_color = vec4(smoothstep(u_minmax_energy.x, u_minmax_energy.y, energy), 0., 0.  , 1.);
+  // }
+  // else
+
+
 
   // f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
   
