@@ -9,7 +9,6 @@ uniform float u_scale_distorsion;
 uniform bool u_visu_arap_energy;
 uniform bool u_compense_distorsions;
 uniform vec2 u_minmax_energy;
-uniform bool u_distorsions_computed;
 uniform sampler2D u_exemplar_texture;
 uniform sampler2D u_exemplar_texture_priority;
 uniform sampler2D u_exemplar_texture_normal;
@@ -32,153 +31,137 @@ uniform usamplerBuffer u_info_triangles;
 uniform samplerBuffer u_info_vertices;
 uniform samplerBuffer u_vertices_normal;
 uniform usamplerBuffer u_triangle_uvs;
-// uniform samplerBuffer u_distorsions;
-// uniform samplerBuffer u_neigh_selected_vertices;
-
-
-// TODO fix distorsions and neigh with TBO
-// struct tbo_distorsion
-// {
-//   mat2 S[3];
-//   vec4 arap_energy;
-// };
-
-// layout(std430, binding = 5) readonly buffer tbo_neigh_selected_vertices
-// {
-//   float num_selected_vertices;
-//   float neigh_selected_vertices[];
-// };
+uniform samplerBuffer u_distorsions;
 
 struct gaussian_distribution {
-	float mean;
-	float variance;
+  float mean;
+  float variance;
 };
 
 // Rough but good enough approximation for the CDF of a centered and normalized Gaussian distribution
 float CDF(float x) {
-	return 0.5 + 0.5 * tanh(0.85 * x);
+  return 0.5 + 0.5 * tanh(0.85 * x);
 }
 
 float PDF(float x) {
-	return exp(-(x * x * 0.5)) / sqrt(2.0 * PI);
+  return exp(-(x * x * 0.5)) / sqrt(2.0 * PI);
 }
 
 //See equation (13) in the paper.
 float proba_a_over_b(gaussian_distribution A, gaussian_distribution B) {
-	float w = max(sqrt(A.variance + B.variance), 0.0001);
+  float w = max(sqrt(A.variance + B.variance), 0.0001);
 
-	return 1.0 - CDF((A.mean - B.mean) / w); 
+  return 1.0 - CDF((A.mean - B.mean) / w);
 }
-
 
 //See equation (15) and (16) in the paper.
 gaussian_distribution distribution_max_ab(gaussian_distribution A, gaussian_distribution B) {
-	gaussian_distribution G;
-	
-	float w = max(sqrt(A.variance + B.variance), 0.001);
-	G.mean = A.mean * CDF((A.mean - B.mean) / w)
-	         + B.mean * CDF((B.mean - A.mean) / w)
-	         + w * PDF((A.mean - B.mean) / w);
-	
-	G.variance = (A.variance + A.mean * A.mean) * CDF((A.mean - B.mean) / w)
-	        + (B.variance + B.mean * B.mean) * CDF((B.mean - A.mean) / w)
-	        + (A.mean + B.mean) * w * PDF((A.mean - B.mean) / w)
-	        - (G.mean * G.mean);
-	return G;
+  gaussian_distribution G;
+
+  float w = max(sqrt(A.variance + B.variance), 0.001);
+  G.mean = A.mean * CDF((A.mean - B.mean) / w)
+      + B.mean * CDF((B.mean - A.mean) / w)
+      + w * PDF((A.mean - B.mean) / w);
+
+  G.variance = (A.variance + A.mean * A.mean) * CDF((A.mean - B.mean) / w)
+      + (B.variance + B.mean * B.mean) * CDF((B.mean - A.mean) / w)
+      + (A.mean + B.mean) * w * PDF((A.mean - B.mean) / w)
+      - (G.mean * G.mean);
+  return G;
 }
 
 // Merci Romain <3
 struct mixmaxdata {
-	vec3 color; // Mean value of the texture over the footprint
-	gaussian_distribution priorities; // Gaussian distribution of the priorities over the footprint   
-	vec3 normal;
-	float roughness;
+  vec3 color; // Mean value of the texture over the footprint
+  gaussian_distribution priorities; // Gaussian distribution of the priorities over the footprint
+  vec3 normal;
+  float roughness;
 };
 
 mixmaxdata make_mixmaxdata(vec2 uv, sampler2D color, sampler2D priority, sampler2D normal, sampler2D roughness, float base) {
-	float B = texture(priority, uv).r; //mean of the priorities
-	float M = texture(priority, uv).g; //mean of the priorities squared (see LEAN-mapping)
-	
-	mixmaxdata m;
-	m.color = texture(color, uv).rgb;
-	m.normal = texture(normal, uv).rgb;
-	m.roughness = texture(roughness, uv).r;
-	m.priorities.mean = B;
-	m.priorities.variance = M - B * B + base;
-	return m;
+  float B = texture(priority, uv).r; //mean of the priorities
+  float M = texture(priority, uv).g; //mean of the priorities squared (see LEAN-mapping)
+
+  mixmaxdata m;
+  m.color = texture(color, uv).rgb;
+  m.normal = texture(normal, uv).rgb;
+  m.roughness = texture(roughness, uv).r;
+  m.priorities.mean = B;
+  m.priorities.variance = M - B * B + base;
+  return m;
 }
 
 void bias(inout mixmaxdata M, float v) {
-	M.priorities.mean += v;
+  M.priorities.mean += v;
 }
 
 mixmaxdata compute_mixmax(mixmaxdata A, mixmaxdata B)
 {
   mixmaxdata result;
-	float t = proba_a_over_b(A.priorities, B.priorities);
-	result.color = mix(A.color, B.color, t);
-	result.normal = mix(A.normal, B.normal, t);
-	result.roughness = mix(A.roughness, B.roughness, t);
-	result.priorities = distribution_max_ab(A.priorities, B.priorities);
-	return result;
+  float t = proba_a_over_b(A.priorities, B.priorities);
+  result.color = mix(A.color, B.color, t);
+  result.normal = mix(A.normal, B.normal, t);
+  result.roughness = mix(A.roughness, B.roughness, t);
+  result.priorities = distribution_max_ab(A.priorities, B.priorities);
+  return result;
 }
 
 mixmaxdata mixMax(vec2 uvA, vec2 uvB, vec2 uvC, vec3 bary, sampler2D albedo, sampler2D priority, sampler2D normal, sampler2D roughness, float micro_priority)
 {
   mixmaxdata A = make_mixmaxdata(uvA, albedo, priority, normal, roughness, micro_priority);
-	mixmaxdata B = make_mixmaxdata(uvB, albedo, priority, normal, roughness, micro_priority);
+  mixmaxdata B = make_mixmaxdata(uvB, albedo, priority, normal, roughness, micro_priority);
   mixmaxdata C = make_mixmaxdata(uvC, albedo, priority, normal, roughness, micro_priority);
-	
-	bias(A, bary.x);
-	bias(B, bary.y);
+
+  bias(A, bary.x);
+  bias(B, bary.y);
   bias(C, bary.z);
 
-  return compute_mixmax(compute_mixmax(A,B), C);
+  return compute_mixmax(compute_mixmax(A, B), C);
 }
 
 mat3 compute_TBN(vec3 N, vec3 v)
 {
-    vec3 T = normalize(cross(N, v));
-    vec3 B = cross(N, T);
-    return mat3(T, B, N);
+  vec3 T = normalize(cross(N, v));
+  vec3 B = cross(N, T);
+  return mat3(T, B, N);
 }
 
 vec2 getTexCoordFromVertexPlane(vec3 P, vec3 A, vec3 N, vec3 v)
 {
-    vec3 projPoint = P - dot(P - A, N) * N;
+  vec3 projPoint = P - dot(P - A, N) * N;
 
-    mat3 TBN = compute_TBN(N,v);
+  mat3 TBN = compute_TBN(N, v);
 
-    vec3 AP = projPoint - A;
-    return vec2(dot(AP, TBN[0]), dot(AP, TBN[1]));
+  vec3 AP = projPoint - A;
+  return vec2(dot(AP, TBN[0]), dot(AP, TBN[1]));
 }
 
-vec2 hash12(int n){
-    float x = fract(sin(float(n)*12.9898)*43758.5453);
-    float y = fract(sin(float(n)*78.233 )*43758.5453);
-    return vec2(x,y);
+vec2 hash12(int n) {
+  float x = fract(sin(float(n) * 12.9898) * 43758.5453);
+  float y = fract(sin(float(n) * 78.233) * 43758.5453);
+  return vec2(x, y);
 }
 
 vec3 getBarycentric(vec3 P, vec3 A, vec3 B, vec3 C)
 {
-    vec3 v0 = B - A;
-    vec3 v1 = C - A;
-    vec3 v2 = P - A;
+  vec3 v0 = B - A;
+  vec3 v1 = C - A;
+  vec3 v2 = P - A;
 
-    float  d00 = dot(v0, v0);
-    float  d01 = dot(v0, v1);
-    float  d11 = dot(v1, v1);
-    float  d20 = dot(v2, v0);
-    float  d21 = dot(v2, v1);
+  float d00 = dot(v0, v0);
+  float d01 = dot(v0, v1);
+  float d11 = dot(v1, v1);
+  float d20 = dot(v2, v0);
+  float d21 = dot(v2, v1);
 
-    float denom = d00 * d11 - d01 * d01;
-    denom = max(denom, 1e-16);
+  float denom = d00 * d11 - d01 * d01;
+  denom = max(denom, 1e-16);
 
-    float v = (d11 * d20 - d01 * d21) / denom;
-    float w = (d00 * d21 - d01 * d20) / denom;
-    float u = 1.0 - v - w;
+  float v = (d11 * d20 - d01 * d21) / denom;
+  float w = (d00 * d21 - d01 * d20) / denom;
+  float u = 1.0 - v - w;
 
-    return vec3(u, v, w);
+  return vec3(u, v, w);
 }
 
 mat2 rotate(float theta)
@@ -188,117 +171,90 @@ mat2 rotate(float theta)
 
 float pointInTriangleBary(vec3 P, vec3 A, vec3 B, vec3 C)
 {
-    vec3 bary = vec3(getBarycentric(P, A, B, C));
-    float eps = 1e-6;
+  vec3 bary = vec3(getBarycentric(P, A, B, C));
+  float eps = 1e-6;
 
-    if(bary.x >= -eps && bary.y >= -eps && bary.z >= -eps)
-        return 1.0;
-    return 0.0;
+  if (bary.x >= -eps && bary.y >= -eps && bary.z >= -eps)
+    return 1.0;
+  return 0.0;
 }
 
 vec3 idColor(uint id)
 {
-    return fract(
-        sin(vec3(id, id + 31u, id + 67u)) *
-        43758.5453
-    );
+  return fract(
+    sin(vec3(id, id + 31u, id + 67u)) *
+      43758.5453
+  );
 }
 
-// vec4 addColorForSelectedOneRing(vec4 rgba)
-// {
-//   vec4 color = vec4(1.);
-//   float t = 0.;
-//   if (num_selected_vertices > 0)
-//   {
-//       int offset = 0;
+struct DistorsionsMatrices
+{
+  mat2 m0;
+  mat2 m1;
+  mat2 m2;
+};
 
-//       for (int i = 0; i < num_selected_vertices; i++)
-//       {
-//           int num_neigh = int(neigh_selected_vertices[offset]) - 1;
+DistorsionsMatrices loadDistorsionsMatrices(int id_triangle)
+{
+    vec4 v0 = texelFetch(u_distorsions, id_triangle * 3 + 0);
+    vec4 v1 = texelFetch(u_distorsions, id_triangle * 3 + 1);
+    vec4 v2 = texelFetch(u_distorsions, id_triangle * 3 + 2);
 
-//           vec3 center = vec3(
-//               neigh_selected_vertices[offset + 1],
-//               neigh_selected_vertices[offset + 2],
-//               neigh_selected_vertices[offset + 3]
-//           );
+    DistorsionsMatrices dm;
 
-//           int base = offset + 4;
+    dm.m0 = mat2(v0.xy, v0.zw);
+    dm.m1 = mat2(v1.xy, v1.zw);
+    dm.m2 = mat2(v2.xy, v2.zw);
 
-//           for (int k = 0; k < num_neigh; k++)
-//           {
-//               int k_next = (k + 1) % num_neigh;
-
-//               vec3 p1 = center;
-
-//               vec3 p2 = vec3(
-//                   neigh_selected_vertices[base + k * 3 + 0],
-//                   neigh_selected_vertices[base + k * 3 + 1],
-//                   neigh_selected_vertices[base + k * 3 + 2]
-//               );
-
-//               vec3 p3 = vec3(
-//                   neigh_selected_vertices[base + k_next * 3 + 0],
-//                   neigh_selected_vertices[base + k_next * 3 + 1],
-//                   neigh_selected_vertices[base + k_next * 3 + 2]
-//               );
-
-//               t += 0.25 * pointInTriangleBary(frag_position, p1, p2, p3);
-//           }
-
-//           offset += 4 + num_neigh * 3;
-//       }
-//   }
-//   return mix(color, rgba, t);
-// }
+    return dm;
+}
 
 struct TriangleUVs
 {
-    uint samples[3];
-    vec2 uvs[9];
-    float distance_to_boundary[9];
+  uint samples[3];
+  vec2 uvs[9];
+  float distance_to_boundary[9];
 };
 
 TriangleUVs loadTriangleUVs(int id_triangle)
 {
-    TriangleUVs t;
+  TriangleUVs t;
 
-    int base = id_triangle * 30;
+  int base = id_triangle * 30;
 
-    t.samples[0] = texelFetch(u_triangle_uvs, base + 0).r;
-    t.samples[1] = texelFetch(u_triangle_uvs, base + 1).r;
-    t.samples[2] = texelFetch(u_triangle_uvs, base + 2).r;
+  t.samples[0] = texelFetch(u_triangle_uvs, base + 0).r;
+  t.samples[1] = texelFetch(u_triangle_uvs, base + 1).r;
+  t.samples[2] = texelFetch(u_triangle_uvs, base + 2).r;
 
-    int offset = base + 3;
+  int offset = base + 3;
 
-    for (int i = 0; i < 3; ++i)
+  for (int i = 0; i < 3; ++i)
+  {
+    for (int j = 0; j < 3; ++j)
     {
-        for (int j = 0; j < 3; ++j)
-        {
-            t.uvs[i * 3 + j].x = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
+      t.uvs[i * 3 + j].x = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
 
-            t.uvs[i * 3 + j].y = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
-        }
+      t.uvs[i * 3 + j].y = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
     }
+  }
 
-    for (int i = 0; i < 3; ++i)
+  for (int i = 0; i < 3; ++i)
+  {
+    for (int j = 0; j < 3; ++j)
     {
-        for (int j = 0; j < 3; ++j)
-        {
-            t.distance_to_boundary[i * 3 + j] = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
-        }
+      t.distance_to_boundary[i * 3 + j] = uintBitsToFloat(texelFetch(u_triangle_uvs, offset++).r);
     }
+  }
 
-    return t;
+  return t;
 }
 
 void main() {
-
   vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
   vec3 L = normalize(u_light_position - v_frag_position);
   float lambert_term = dot(N, L);
 
   int id_triangle = gl_PrimitiveID;
-
 
   ivec3 id_vertices = ivec3(texelFetch(u_info_triangles, id_triangle * 3).x, texelFetch(u_info_triangles, id_triangle * 3 + 1).x, texelFetch(u_info_triangles, id_triangle * 3 + 2).x);
   TriangleUVs triangleUVs = loadTriangleUVs(id_triangle);
@@ -315,17 +271,16 @@ void main() {
   vec3 b = normalize(rotation_field);
 
   float angle = 0;
-  if(length(rotation_field) > 0) angle = atan(dot(vertex_normal, cross(a, b)),dot(a, b)); // We don't want to rotate UV if there is no rotation field
+  if (length(rotation_field) > 0) angle = atan(dot(vertex_normal, cross(a, b)), dot(a, b)); // We don't want to rotate UV if there is no rotation field
 
   mat2 rotation_transform = inverse(rotate(angle));
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
-  
+
   vec2 u[3];
   float w[3];
   vec2 r[3];
 
-
-  if(u_override_param)
+  if (u_override_param)
   {
     vec2 uv_sample1 = bary.x * triangleUVs.uvs[0] + bary.y * triangleUVs.uvs[1] + bary.z * triangleUVs.uvs[2];
     u[0] = rotation_transform * uv_sample1 * (u_scale_tex_coords + scaling_field);
@@ -372,72 +327,53 @@ void main() {
   uv[2] = u[2] + r[2];
 
   // tbo_distorsion distorsion;
-  // if(u_compense_distorsions && u_distorsions_computed)
-  // {
-  //   distorsion = distorsions[id_triangle];
-  //   c1 = texture(u_exemplar_texture, distorsion.S[0] * uv1).xyz;
-  //   c2 = texture(u_exemplar_texture, distorsion.S[1] * uv2).xyz;
-  //   c3 = texture(u_exemplar_texture, distorsion.S[2] * uv3).xyz;
-  // }
-  // else
-  // {
-  c1 = texture(u_exemplar_texture, uv[0]).xyz;
-  c2 = texture(u_exemplar_texture, uv[1]).xyz;
-  c3 = texture(u_exemplar_texture, uv[2]).xyz;
-  // }
-  vec3 albedo = vec3(w[0] * c1 + w[1] * c2 + w[2] * c3);
-  vec4 result = vec4(albedo * lambert_term,1.);
+  if (u_compense_distorsions)
+  {
+    DistorsionsMatrices dm = loadDistorsionsMatrices(id_triangle);
+    c1 = texture(u_exemplar_texture, inverse(dm.m0) * uv[0]).xyz;
+    c2 = texture(u_exemplar_texture, inverse(dm.m1) * uv[1]).xyz;
+    c3 = texture(u_exemplar_texture, inverse(dm.m2) * uv[2]).xyz;
+  }
+  else
+  {
+    c1 = texture(u_exemplar_texture, uv[0]).xyz;
+    c2 = texture(u_exemplar_texture, uv[1]).xyz;
+    c3 = texture(u_exemplar_texture, uv[2]).xyz;
+  }
+  // vec3 albedo = vec3(w[0] * c1 + w[1] * c2 + w[2] * c3);
+  vec3 albedo = vec3(c1 * w[0]);
+  vec4 result = vec4(albedo * lambert_term, 1.);
 
   //TODO fix perf with high texture scaling
   mixmaxdata M;
-  if(u_blending_mode == 1)
+  if (u_blending_mode == 1)
   {
-    // if(u_compense_distorsions)
-    // {
-    //   distorsion = distorsions[id_triangle];
-    //   M = mixMax(distorsion.S[0] * uv1, distorsion.S[1] * uv2,distorsion.S[2] * uv3, bary, u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
-    // }
-    // else
-    // {
-      M = mixMax(uv[0],uv[1],uv[2], vec3(w[0],w[1],w[2]), u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
-    // }
+    M = mixMax(uv[0], uv[1], uv[2], vec3(w[0], w[1], w[2]), u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
 
     // Normal mapping
     vec3 normal = normalize(M.normal * 2. - 1.);
-    mat3 TBN = compute_TBN(N,edge_ref);
+    mat3 TBN = compute_TBN(N, edge_ref);
     vec3 normalWS = normalize(TBN * normal);
-    result = vec4(M.color * dot(normalWS, L),1);
+    result = vec4(M.color * dot(normalWS, L), 1);
   }
-  
-  switch(u_visu_option)
+
+  switch (u_visu_option)
   {
     // TnB result
-    case 0: 
-      f_color = result;
-      break;
+    case 0:
+    f_color = result;
+    break;
     // Sample ID visu
     case 1:
-      f_color = vec4(idColor(triangleUVs.samples[u_visu_sample]), 1);
-      break;
+    f_color = vec4(idColor(triangleUVs.samples[u_visu_sample]), 1);
+    break;
     // UV from first sample visu
     case 2:
-      f_color = vec4(uv[u_visu_sample],0,1);
-      break;
+    f_color = vec4(uv[u_visu_sample], 0, 1);
+    break;
     // Distance from border visu
     case 3:
-      f_color = vec4(w[u_visu_sample], 0,0, 1);
-      break;
+    f_color = vec4(w[u_visu_sample], 0, 0, 1);
+    break;
   }
-  // if(u_visu_arap_energy && u_distorsions_computed)
-  // {
-  //   float energy = w1 * distorsion.arap_energy.x + w2 * distorsion.arap_energy.y + w3 * distorsion.arap_energy.z;
-    
-  //   f_color = vec4(smoothstep(u_minmax_energy.x, u_minmax_energy.y, energy), 0., 0.  , 1.);
-  // }
-  // else
-
-
-
-  // f_color = f_color * addColorForSelectedOneRing(vec4(1.,0.,0.,1.));
-  
 }
