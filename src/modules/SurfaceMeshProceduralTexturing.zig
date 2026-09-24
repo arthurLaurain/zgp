@@ -511,6 +511,10 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_SeparatorText("Tiling and blending visualisation");
 
             c.ImGui_Text("Visualization options");
+
+            if (c.ImGui_Checkbox("Override parameterization", &tnb_data.procedural_texturing_parameters.override_param)) {
+                smpt.app_ctx.requestRedraw();
+            }
             c.ImGui_PushID("Visualization");
             if (c.ImGui_BeginCombo("", tnb_visu_option[@intCast(tnb_data.current_visu_option)].name.ptr, 0)) {
                 for (tnb_visu_option) |option| {

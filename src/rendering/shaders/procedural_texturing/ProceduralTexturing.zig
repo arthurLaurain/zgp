@@ -67,6 +67,7 @@ tbo_vertices_normal_uniform: c_int = undefined,
 tbo_uvs_triangles_uniform: c_int = undefined,
 visu_option_uniform: c_int = undefined,
 visu_sample_uniform: c_int = undefined,
+override_param_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 scaling_field_attrib: VAO.VertexAttribInfo = undefined,
@@ -121,6 +122,7 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.tbo_uvs_triangles_uniform = gl.GetUniformLocation(pt.program.index, "u_triangle_uvs");
     pt.visu_option_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_option");
     pt.visu_sample_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_sample");
+    pt.override_param_uniform = gl.GetUniformLocation(pt.program.index, "u_override_param");
 
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
@@ -187,6 +189,7 @@ pub const Parameters = struct {
     blending_mode: BlendingMode = BlendingMode.LINEAR,
     visu_option: u32 = 0,
     visu_sample: u32 = 0,
+    override_param: bool = true,
 
     pub fn init() Parameters {
         return .{
@@ -499,6 +502,7 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.blending_mode_uniform, @intFromEnum(p.blending_mode));
         gl.Uniform1ui(p.shader.visu_option_uniform, p.visu_option);
         gl.Uniform1ui(p.shader.visu_sample_uniform, p.visu_sample);
+        gl.Uniform1i(p.shader.override_param_uniform, @intFromBool(p.override_param));
 
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);

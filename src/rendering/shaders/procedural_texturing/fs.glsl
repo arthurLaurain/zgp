@@ -18,6 +18,7 @@ uniform float u_micro_priority;
 uniform int u_blending_mode;
 uniform uint u_visu_option;
 uniform uint u_visu_sample;
+uniform bool u_override_param;
 
 in vec3 frag_position;
 in vec3 edge_ref;
@@ -310,10 +311,6 @@ void main() {
   vec3 n2 = vec3(texelFetch(u_vertices_normal, id_vertices.y * 3).x, texelFetch(u_vertices_normal, id_vertices.y * 3 + 1).x, texelFetch(u_vertices_normal, id_vertices.y * 3 + 2).x);
   vec3 n3 = vec3(texelFetch(u_vertices_normal, id_vertices.z * 3).x, texelFetch(u_vertices_normal, id_vertices.z * 3 + 1).x, texelFetch(u_vertices_normal, id_vertices.z * 3 + 2).x);
 
-  vec2 u1;
-  vec2 u2;
-  vec2 u3;
-
   vec3 a = normalize(edge_ref);
   vec3 b = normalize(rotation_field);
 
@@ -321,48 +318,58 @@ void main() {
   if(length(rotation_field) > 0) angle = atan(dot(vertex_normal, cross(a, b)),dot(a, b)); // We don't want to rotate UV if there is no rotation field
 
   mat2 rotation_transform = inverse(rotate(angle));
-
-
-
-  // u1 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * (u_scale_tex_coords + scaling_field);
-  // u2 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * (u_scale_tex_coords + scaling_field);
-  // u3 = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * (u_scale_tex_coords + scaling_field);
   vec3 bary = vec3(getBarycentric(vec3(frag_position), p1, p2, p3));
-
-  float w1 = bary.x;
-  float w2 = bary.y;
-  float w3 = bary.z;
-
-  vec2 uv_sample1 = w1 * triangleUVs.uvs[0] + w2 * triangleUVs.uvs[1] + w3 * triangleUVs.uvs[2];
-  u1 = rotation_transform * uv_sample1 * (u_scale_tex_coords + scaling_field);
-  vec2 uv_sample2 = w1 * triangleUVs.uvs[3] + w2 * triangleUVs.uvs[4] + w3 * triangleUVs.uvs[5];
-  u2 = rotation_transform * uv_sample2 * (u_scale_tex_coords + scaling_field);
-  vec2 uv_sample3 = w1 * triangleUVs.uvs[6] + w2 * triangleUVs.uvs[7] + w3 * triangleUVs.uvs[8];
-  u3 = rotation_transform * uv_sample3 * (u_scale_tex_coords + scaling_field);
   
-  float distance_sample[3];
-  distance_sample[0] = w1 * triangleUVs.distance_to_boundary[0] + w2 * triangleUVs.distance_to_boundary[1] + w3 * triangleUVs.distance_to_boundary[2];
-  distance_sample[1] = w1 * triangleUVs.distance_to_boundary[3] + w2 * triangleUVs.distance_to_boundary[4] + w3 * triangleUVs.distance_to_boundary[5];
-  distance_sample[2] = w1 * triangleUVs.distance_to_boundary[6] + w2 * triangleUVs.distance_to_boundary[7] + w3 * triangleUVs.distance_to_boundary[8];
+  vec2 u[3];
+  float w[3];
+  vec2 r[3];
 
-  float sum_distance = distance_sample[0] + distance_sample[1] + distance_sample[2];
-  float w_dist[3];
-  w_dist[0] = distance_sample[0] / sum_distance;
-  w_dist[1] = distance_sample[1] / sum_distance;
-  w_dist[2] = distance_sample[2] / sum_distance;
 
-  vec2 r1 = hash12(int(triangleUVs.samples[0]));
-  vec2 r2 = hash12(int(triangleUVs.samples[1]));
-  vec2 r3 = hash12(int(triangleUVs.samples[2]));
+  if(u_override_param)
+  {
+    vec2 uv_sample1 = bary.x * triangleUVs.uvs[0] + bary.y * triangleUVs.uvs[1] + bary.z * triangleUVs.uvs[2];
+    u[0] = rotation_transform * uv_sample1 * (u_scale_tex_coords + scaling_field);
+    vec2 uv_sample2 = bary.x * triangleUVs.uvs[3] + bary.y * triangleUVs.uvs[4] + bary.z * triangleUVs.uvs[5];
+    u[1] = rotation_transform * uv_sample2 * (u_scale_tex_coords + scaling_field);
+    vec2 uv_sample3 = bary.x * triangleUVs.uvs[6] + bary.y * triangleUVs.uvs[7] + bary.z * triangleUVs.uvs[8];
+    u[2] = rotation_transform * uv_sample3 * (u_scale_tex_coords + scaling_field);
+    float distance_sample[3];
+    distance_sample[0] = bary.x * triangleUVs.distance_to_boundary[0] + bary.y * triangleUVs.distance_to_boundary[1] + bary.z * triangleUVs.distance_to_boundary[2];
+    distance_sample[1] = bary.x * triangleUVs.distance_to_boundary[3] + bary.y * triangleUVs.distance_to_boundary[4] + bary.z * triangleUVs.distance_to_boundary[5];
+    distance_sample[2] = bary.x * triangleUVs.distance_to_boundary[6] + bary.y * triangleUVs.distance_to_boundary[7] + bary.z * triangleUVs.distance_to_boundary[8];
+
+    float sum_distance = distance_sample[0] + distance_sample[1] + distance_sample[2];
+    w[0] = distance_sample[0] / sum_distance;
+    w[1] = distance_sample[1] / sum_distance;
+    w[2] = distance_sample[2] / sum_distance;
+
+    r[0] = hash12(int(triangleUVs.samples[0]));
+    r[1] = hash12(int(triangleUVs.samples[1]));
+    r[2] = hash12(int(triangleUVs.samples[2]));
+  }
+  else
+  {
+    u[0] = rotation_transform * getTexCoordFromVertexPlane(frag_position, p1, normalize(n1), edge_ref) * (u_scale_tex_coords + scaling_field);
+    u[1] = rotation_transform * getTexCoordFromVertexPlane(frag_position, p2, normalize(n2), edge_ref) * (u_scale_tex_coords + scaling_field);
+    u[2] = rotation_transform * getTexCoordFromVertexPlane(frag_position, p3, normalize(n3), edge_ref) * (u_scale_tex_coords + scaling_field);
+
+    w[0] = bary.x;
+    w[1] = bary.y;
+    w[2] = bary.z;
+
+    r[0] = hash12(int(id_vertices.x));
+    r[1] = hash12(int(id_vertices.y));
+    r[2] = hash12(int(id_vertices.z));
+  }
 
   vec3 c1;
   vec3 c2;
   vec3 c3;
 
   vec2 uv[3];
-  uv[0] = u1 + r1;
-  uv[1] = u2 + r2;
-  uv[2] = u3 + r3;
+  uv[0] = u[0] + r[0];
+  uv[1] = u[1] + r[1];
+  uv[2] = u[2] + r[2];
 
   // tbo_distorsion distorsion;
   // if(u_compense_distorsions && u_distorsions_computed)
@@ -378,12 +385,11 @@ void main() {
   c2 = texture(u_exemplar_texture, uv[1]).xyz;
   c3 = texture(u_exemplar_texture, uv[2]).xyz;
   // }
-  vec3 albedo = vec3(w_dist[0] * c1 + w_dist[1] * c2 + w_dist[2] * c3);
+  vec3 albedo = vec3(w[0] * c1 + w[1] * c2 + w[2] * c3);
   vec4 result = vec4(albedo * lambert_term,1.);
 
-
+  //TODO fix perf with high texture scaling
   mixmaxdata M;
-
   if(u_blending_mode == 1)
   {
     // if(u_compense_distorsions)
@@ -393,7 +399,7 @@ void main() {
     // }
     // else
     // {
-      M = mixMax(uv[0],uv[1],uv[2], vec3(w_dist[0],w_dist[1],w_dist[2]), u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
+      M = mixMax(uv[0],uv[1],uv[2], vec3(w[0],w[1],w[2]), u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
     // }
 
     // Normal mapping
@@ -419,7 +425,7 @@ void main() {
       break;
     // Distance from border visu
     case 3:
-      f_color = vec4(w_dist[u_visu_sample], 0,0, 1);
+      f_color = vec4(w[u_visu_sample], 0,0, 1);
       break;
   }
   // if(u_visu_arap_energy && u_distorsions_computed)
