@@ -1,6 +1,7 @@
 const std = @import("std");
 const gl = @import("gl");
 const assert = std.debug.assert;
+const zgp_log = std.log.scoped(.zgp);
 
 const SurfaceMesh = @import("SurfaceMesh.zig");
 const TriangleUVs = @import("../../modules/SurfaceMeshParameterization.zig").ParameterizationData.TriangleUVs;
@@ -80,7 +81,8 @@ fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_positio
     return result;
 }
 
-pub fn fillDistorsionTBO(allocator: std.mem.Allocator, sm: *SurfaceMesh, vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBuffer, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) void {
+pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceMesh, vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBuffer, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) void {
+    const max_distorsion_slots_per_vertex = 8;
 
     // Map vertices position VBO
     gl.BindBuffer(gl.ARRAY_BUFFER, vertices_position_vbo.index);
@@ -95,22 +97,31 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, sm: *SurfaceMesh, vertice
     // Memory allocation for TBO
     const nb_triangle: usize = ibo.nb_indices / 3;
     const nb_vertices: usize = @intCast(@divExact(vertices_position_vbo.size, @sizeOf(Vec3f)));
-    tbo.memoryAllocationForMapping(@intCast(nb_vertices * @sizeOf(Vec4f) * 3));
+    tbo.memoryAllocationForMapping(@intCast(nb_vertices * @sizeOf(Vec4f) * max_distorsion_slots_per_vertex));
 
     //Map TBO
     gl.BindBuffer(gl.TEXTURE_BUFFER, tbo.index);
     const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
-    const array_tbo: [*][3]Vec4f = @ptrCast(@alignCast(ptr_tbo));
+    const array_tbo: [*][max_distorsion_slots_per_vertex]Vec4f = @ptrCast(@alignCast(ptr_tbo));
 
     var id_face: usize = 0;
 
-    const structAccumulationParamVertex = struct { sumAccumulationParam: [3]Vec2f, nb_contrib: [3]u32, id_sample: [3]u32 };
+    const structAccumulationParamVertex = struct {
+        sumAccumulationParam: [max_distorsion_slots_per_vertex]Vec2f,
+        nb_contrib: [max_distorsion_slots_per_vertex]u32,
+        id_sample: [max_distorsion_slots_per_vertex]u32,
+    };
     var arrayAccumulationVertex = allocator.alloc(structAccumulationParamVertex, nb_vertices) catch unreachable;
 
-    //TODO Display distorsion computing duration
-
-    @memset(arrayAccumulationVertex, .{ .sumAccumulationParam = .{ .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } }, .nb_contrib = .{ 0, 0, 0 }, .id_sample = .{ std.math.maxInt(u32), std.math.maxInt(u32), std.math.maxInt(u32) } });
+    @memset(arrayAccumulationVertex, .{
+        .sumAccumulationParam = .{.{ 0, 0 }} ** max_distorsion_slots_per_vertex,
+        .nb_contrib = .{0} ** max_distorsion_slots_per_vertex,
+        .id_sample = .{std.math.maxInt(u32)} ** max_distorsion_slots_per_vertex,
+    });
     defer allocator.free(arrayAccumulationVertex);
+
+    const t = std.Io.Timestamp.now(io, .real);
+
     // Compute distorsions per patch per vertex and store them in TBO
     while (id_face < nb_triangle) : (id_face += 1) {
         const id_vertices_triangle: [3]u32 = .{
@@ -121,10 +132,6 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, sm: *SurfaceMesh, vertice
 
         const S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, array_vbo_position, celldata_triangleuvs);
 
-        // var S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, array_vbo_position, celldata_triangleuvs);
-        // for (0..3) |i| {
-        //     S_d[i] = eigen.computeInverse3d(S_d[i]).?;
-        // }
         var S: [3]Mat2f = undefined;
         for (0..3) |u| {
             S[u][0][0] = @floatCast(S_d[u][0][0]);
@@ -141,20 +148,24 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, sm: *SurfaceMesh, vertice
             const param_current_vertex = &arrayAccumulationVertex[id_current_vertex];
 
             for (0..3) |patch| {
-                var slot: u32 = 3;
                 const id_current_patch = triangleuvs.samples[patch];
-                var free_slot: u32 = 3;
-                for (0..3) |s| {
-                    if (param_current_vertex.id_sample[s] == std.math.maxInt(u32) and free_slot == 3) {
+                if (id_current_patch == std.math.maxInt(u32)) {
+                    continue;
+                }
+
+                var slot: u32 = max_distorsion_slots_per_vertex;
+                var free_slot: u32 = max_distorsion_slots_per_vertex;
+                for (0..max_distorsion_slots_per_vertex) |s| {
+                    if (param_current_vertex.id_sample[s] == std.math.maxInt(u32) and free_slot == max_distorsion_slots_per_vertex) {
                         free_slot = @intCast(s);
                     } else if (param_current_vertex.id_sample[s] == id_current_patch) {
                         slot = @intCast(s);
                         break;
                     }
                 }
-                if (slot == 3) {
+                if (slot == max_distorsion_slots_per_vertex) {
                     slot = free_slot;
-                    if (free_slot == 3) {
+                    if (free_slot == max_distorsion_slots_per_vertex) {
                         problematic_vertices.add(.{ .vertex = id_current_vertex }) catch unreachable;
                         break;
                     } else {
@@ -170,9 +181,9 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, sm: *SurfaceMesh, vertice
         }
     }
     for (arrayAccumulationVertex, 0..) |current_vertex_param, i| {
-        var param_current_vertex: [3]Vec4f = .{ .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 } };
+        var param_current_vertex: [max_distorsion_slots_per_vertex]Vec4f = .{.{ 0, 0, 0, 0 }} ** max_distorsion_slots_per_vertex;
 
-        for (0..3) |slot| {
+        for (0..max_distorsion_slots_per_vertex) |slot| {
             if (current_vertex_param.nb_contrib[slot] == 0) {
                 continue;
             }
@@ -195,4 +206,7 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, sm: *SurfaceMesh, vertice
 
     gl.BindBuffer(gl.TEXTURE_BUFFER, tbo.index);
     _ = gl.UnmapBuffer(gl.TEXTURE_BUFFER);
+
+    const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, io, .real).nanoseconds);
+    zgp_log.info("Texture distorsions computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
 }
