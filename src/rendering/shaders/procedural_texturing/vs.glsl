@@ -16,11 +16,12 @@ out vec3 rotation_field;
 out vec3 edge_ref;
 out vec3 vertex_normal;
 
+
 void main()
 {
 
-    int id_triangle = gl_VertexID;
-    vertex_normal = vec3(texelFetch(u_vertices_normal, id_triangle * 3).x, texelFetch(u_vertices_normal, id_triangle * 3 + 1).x, texelFetch(u_vertices_normal, id_triangle * 3 + 2).x);
+    int id_vertex = gl_VertexID;
+    vertex_normal = vec3(texelFetch(u_vertices_normal, id_vertex * 3).x, texelFetch(u_vertices_normal, id_vertex * 3 + 1).x, texelFetch(u_vertices_normal, id_vertex * 3 + 2).x);
     frag_position = a_position.xyz;
     vec4 view_pos = u_view_matrix *a_position;
     v_frag_position = view_pos.xyz;

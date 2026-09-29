@@ -75,10 +75,12 @@ fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_positio
     result[0] = S0;
     result[1] = S1;
     result[2] = S2;
+
+    // Debug
     return result;
 }
 
-pub fn fillDistorsionTBO(vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBuffer, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) void {
+pub fn fillDistorsionTBO(allocator: std.mem.Allocator, sm: *SurfaceMesh, vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBuffer, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) void {
 
     // Map vertices position VBO
     gl.BindBuffer(gl.ARRAY_BUFFER, vertices_position_vbo.index);
@@ -92,16 +94,24 @@ pub fn fillDistorsionTBO(vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBu
 
     // Memory allocation for TBO
     const nb_triangle: usize = ibo.nb_indices / 3;
-    tbo.memoryAllocationForMapping(@intCast(nb_triangle * @sizeOf(Mat2f) * 3));
+    const nb_vertices: usize = @intCast(@divExact(vertices_position_vbo.size, @sizeOf(Vec3f)));
+    tbo.memoryAllocationForMapping(@intCast(nb_vertices * @sizeOf(Vec4f) * 3));
 
     //Map TBO
     gl.BindBuffer(gl.TEXTURE_BUFFER, tbo.index);
     const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
-    const array_tbo: [*][3]Mat2f = @ptrCast(@alignCast(ptr_tbo));
+    const array_tbo: [*][3]Vec4f = @ptrCast(@alignCast(ptr_tbo));
 
     var id_face: usize = 0;
 
-    // For each triangles, compute distorsions and store them in TBO
+    const structAccumulationParamVertex = struct { sumAccumulationParam: [3]Vec2f, nb_contrib: [3]u32, id_sample: [3]u32 };
+    var arrayAccumulationVertex = allocator.alloc(structAccumulationParamVertex, nb_vertices) catch unreachable;
+
+    //TODO Display distorsion computing duration
+
+    @memset(arrayAccumulationVertex, .{ .sumAccumulationParam = .{ .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } }, .nb_contrib = .{ 0, 0, 0 }, .id_sample = .{ std.math.maxInt(u32), std.math.maxInt(u32), std.math.maxInt(u32) } });
+    defer allocator.free(arrayAccumulationVertex);
+    // Compute distorsions per patch per vertex and store them in TBO
     while (id_face < nb_triangle) : (id_face += 1) {
         const id_vertices_triangle: [3]u32 = .{
             array_ibo[id_face * 3 + 0],
@@ -111,8 +121,11 @@ pub fn fillDistorsionTBO(vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBu
 
         const S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, array_vbo_position, celldata_triangleuvs);
 
+        // var S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, array_vbo_position, celldata_triangleuvs);
+        // for (0..3) |i| {
+        //     S_d[i] = eigen.computeInverse3d(S_d[i]).?;
+        // }
         var S: [3]Mat2f = undefined;
-
         for (0..3) |u| {
             S[u][0][0] = @floatCast(S_d[u][0][0]);
             S[u][0][1] = @floatCast(S_d[u][0][1]);
@@ -120,7 +133,55 @@ pub fn fillDistorsionTBO(vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBu
             S[u][1][1] = @floatCast(S_d[u][1][1]);
         }
 
-        array_tbo[id_face] = S;
+        const triangleuvs = celldata_triangleuvs.valueByIndex(@intCast(id_face));
+        var problematic_vertices = sm.getOrAddCellSet(.vertex, "problematic_vertices") catch unreachable;
+
+        for (0..3) |vertex| {
+            const id_current_vertex = id_vertices_triangle[vertex];
+            const param_current_vertex = &arrayAccumulationVertex[id_current_vertex];
+
+            for (0..3) |patch| {
+                var slot: u32 = 3;
+                const id_current_patch = triangleuvs.samples[patch];
+                var free_slot: u32 = 3;
+                for (0..3) |s| {
+                    if (param_current_vertex.id_sample[s] == std.math.maxInt(u32) and free_slot == 3) {
+                        free_slot = @intCast(s);
+                    } else if (param_current_vertex.id_sample[s] == id_current_patch) {
+                        slot = @intCast(s);
+                        break;
+                    }
+                }
+                if (slot == 3) {
+                    slot = free_slot;
+                    if (free_slot == 3) {
+                        problematic_vertices.add(.{ .vertex = id_current_vertex }) catch unreachable;
+                        break;
+                    } else {
+                        param_current_vertex.id_sample[slot] = id_current_patch;
+                    }
+                }
+
+                param_current_vertex.nb_contrib[slot] = param_current_vertex.nb_contrib[slot] + 1;
+                const param_non_compensed = triangleuvs.uvs[patch][vertex];
+                const param_compensed = mat.mulVec2f(S[patch], param_non_compensed);
+                param_current_vertex.sumAccumulationParam[slot] = vec.add2f(param_current_vertex.sumAccumulationParam[slot], param_compensed);
+            }
+        }
+    }
+    for (arrayAccumulationVertex, 0..) |current_vertex_param, i| {
+        var param_current_vertex: [3]Vec4f = .{ .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 } };
+
+        for (0..3) |slot| {
+            if (current_vertex_param.nb_contrib[slot] == 0) {
+                continue;
+            }
+
+            const uv = vec.divScalar2f(current_vertex_param.sumAccumulationParam[slot], @floatFromInt(current_vertex_param.nb_contrib[slot]));
+            param_current_vertex[slot] = .{ uv[0], uv[1], @floatFromInt(current_vertex_param.id_sample[slot]), 0 };
+        }
+
+        array_tbo[i] = param_current_vertex;
     }
 
     gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RGBA32F, tbo.index);

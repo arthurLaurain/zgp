@@ -25,6 +25,7 @@ in vec3 v_frag_position;
 in float scaling_field;
 in vec3 rotation_field;
 in vec3 vertex_normal;
+
 out vec4 f_color;
 
 uniform usamplerBuffer u_info_triangles;
@@ -194,20 +195,20 @@ struct DistorsionsMatrices
   mat2 m2;
 };
 
-DistorsionsMatrices loadDistorsionsMatrices(int id_triangle)
-{
-    vec4 v0 = texelFetch(u_distorsions, id_triangle * 3 + 0);
-    vec4 v1 = texelFetch(u_distorsions, id_triangle * 3 + 1);
-    vec4 v2 = texelFetch(u_distorsions, id_triangle * 3 + 2);
+// DistorsionsMatrices loadDistorsionsMatrices(int id_triangle)
+// {
+//     vec4 v0 = texelFetch(u_distorsions, id_triangle * 3 + 0);
+//     vec4 v1 = texelFetch(u_distorsions, id_triangle * 3 + 1);
+//     vec4 v2 = texelFetch(u_distorsions, id_triangle * 3 + 2);
 
-    DistorsionsMatrices dm;
+//     DistorsionsMatrices dm;
 
-    dm.m0 = mat2(v0.xy, v0.zw);
-    dm.m1 = mat2(v1.xy, v1.zw);
-    dm.m2 = mat2(v2.xy, v2.zw);
+//     dm.m0 = mat2(v0.xy, v0.zw);
+//     dm.m1 = mat2(v1.xy, v1.zw);
+//     dm.m2 = mat2(v2.xy, v2.zw);
 
-    return dm;
-}
+//     return dm;
+// }
 
 struct TriangleUVs
 {
@@ -249,6 +250,30 @@ TriangleUVs loadTriangleUVs(int id_triangle)
   return t;
 }
 
+vec2 findUV(int id_vertex, uint sample_id)
+{
+  vec3 uv_compensed_and_id_slot[3];
+  uv_compensed_and_id_slot[0] = texelFetch(u_distorsions, id_vertex * 3 + 0).xyz;
+  uv_compensed_and_id_slot[1] = texelFetch(u_distorsions, id_vertex * 3 + 1).xyz;
+  uv_compensed_and_id_slot[2] = texelFetch(u_distorsions, id_vertex * 3 + 2).xyz;
+
+  for(int i = 0; i < 3; i++)
+  {
+    if(uint(uv_compensed_and_id_slot[i].z) == sample_id)
+      return uv_compensed_and_id_slot[i].xy;
+  }
+  return vec2(0);
+}
+
+vec2 loadUVFromTriangleUV(TriangleUVs triangleUVs, int p, ivec3 id_vertices, vec3 bary)
+{
+  uint sample_id = triangleUVs.samples[p];
+  vec2 uv0 = findUV(id_vertices.x, sample_id);
+  vec2 uv1 = findUV(id_vertices.y, sample_id);
+  vec2 uv2 = findUV(id_vertices.z, sample_id);
+  return bary.x * uv0 + bary.y * uv1 + bary.z * uv2;
+}
+
 void main() {
   vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
   vec3 L = normalize(u_light_position - v_frag_position);
@@ -282,12 +307,16 @@ void main() {
 
   if (u_override_param)
   {
-    vec2 uv_sample1 = bary.x * triangleUVs.uvs[0] + bary.y * triangleUVs.uvs[1] + bary.z * triangleUVs.uvs[2];
+    // vec2 uv_sample1 = bary.x * triangleUVs.uvs[0] + bary.y * triangleUVs.uvs[1] + bary.z * triangleUVs.uvs[2];
+    vec2 uv_sample1 = loadUVFromTriangleUV(triangleUVs, 0, id_vertices, bary);
     u[0] = rotation_transform * uv_sample1 * (u_scale_tex_coords + scaling_field);
-    vec2 uv_sample2 = bary.x * triangleUVs.uvs[3] + bary.y * triangleUVs.uvs[4] + bary.z * triangleUVs.uvs[5];
+    // vec2 uv_sample2 = bary.x * triangleUVs.uvs[3] + bary.y * triangleUVs.uvs[4] + bary.z * triangleUVs.uvs[5];
+    vec2 uv_sample2 = loadUVFromTriangleUV(triangleUVs, 1, id_vertices, bary);
     u[1] = rotation_transform * uv_sample2 * (u_scale_tex_coords + scaling_field);
-    vec2 uv_sample3 = bary.x * triangleUVs.uvs[6] + bary.y * triangleUVs.uvs[7] + bary.z * triangleUVs.uvs[8];
+    // vec2 uv_sample3 = bary.x * triangleUVs.uvs[6] + bary.y * triangleUVs.uvs[7] + bary.z * triangleUVs.uvs[8];
+    vec2 uv_sample3 = loadUVFromTriangleUV(triangleUVs, 2, id_vertices, bary);
     u[2] = rotation_transform * uv_sample3 * (u_scale_tex_coords + scaling_field);
+    
     float distance_sample[3];
     distance_sample[0] = bary.x * triangleUVs.distance_to_boundary[0] + bary.y * triangleUVs.distance_to_boundary[1] + bary.z * triangleUVs.distance_to_boundary[2];
     distance_sample[1] = bary.x * triangleUVs.distance_to_boundary[3] + bary.y * triangleUVs.distance_to_boundary[4] + bary.z * triangleUVs.distance_to_boundary[5];
@@ -327,21 +356,21 @@ void main() {
   uv[2] = u[2] + r[2];
 
   // tbo_distorsion distorsion;
-  if (u_compense_distorsions)
-  {
-    DistorsionsMatrices dm = loadDistorsionsMatrices(id_triangle);
-    c1 = texture(u_exemplar_texture, inverse(dm.m0) * uv[0]).xyz;
-    c2 = texture(u_exemplar_texture, inverse(dm.m1) * uv[1]).xyz;
-    c3 = texture(u_exemplar_texture, inverse(dm.m2) * uv[2]).xyz;
-  }
-  else
-  {
+  // if (u_compense_distorsions)
+  // {
+  //   DistorsionsMatrices dm = loadDistorsionsMatrices(id_triangle);
+  //   c1 = texture(u_exemplar_texture, dm.m0 * uv[0]).xyz;
+  //   c2 = texture(u_exemplar_texture, dm.m1 * uv[1]).xyz;
+  //   c3 = texture(u_exemplar_texture, dm.m2 * uv[2]).xyz;
+  // }
+  // else
+  // {
     c1 = texture(u_exemplar_texture, uv[0]).xyz;
     c2 = texture(u_exemplar_texture, uv[1]).xyz;
     c3 = texture(u_exemplar_texture, uv[2]).xyz;
-  }
+  // }
   // vec3 albedo = vec3(w[0] * c1 + w[1] * c2 + w[2] * c3);
-  vec3 albedo = vec3(c1 * w[0]);
+  vec3 albedo = vec3(c1);
   vec4 result = vec4(albedo * lambert_term, 1.);
 
   //TODO fix perf with high texture scaling

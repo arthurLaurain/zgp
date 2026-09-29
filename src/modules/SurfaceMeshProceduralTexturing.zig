@@ -287,7 +287,7 @@ pub fn rightPanel(m: *Module) void {
         if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compense_distorsions)) {
             var vertex_position_vbo = sm_store.dataVBO(.vertex, Vec3f, info.std_datas.vertex_position.?);
             var ibo = info.triangles_ibo;
-            textureDistorsions.fillDistorsionTBO(&vertex_position_vbo, &ibo, &tnb_data.procedural_texturing_parameters.tbo_distorsions, tnb_data.parameterization_data.triangle_uvs);
+            textureDistorsions.fillDistorsionTBO(smpt.app_ctx.allocator, sm, &vertex_position_vbo, &ibo, &tnb_data.procedural_texturing_parameters.tbo_distorsions, tnb_data.parameterization_data.triangle_uvs);
             smpt.app_ctx.requestRedraw();
         }
         c.ImGui_PopID();
