@@ -35,15 +35,20 @@ fn computeF(uv01: Vec2f, uv02: Vec2f, x0: Vec3f, x1: Vec3f, x2: Vec3f) Mat3f {
     return mat.mat3fFromMat3d(XUU_1);
 }
 
-fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_position: [*]Vec3f, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) [3]Mat3d {
-    const x0: Vec3f = vbo_position[id_vertices_triangle[0]];
-    const x1: Vec3f = vbo_position[id_vertices_triangle[1]];
-    const x2: Vec3f = vbo_position[id_vertices_triangle[2]];
+fn computeFFonPatch(uvs: [3]Vec2f, positions: [3]Vec3f, order: [3]usize) Mat3f {
+    return computeF(vec.sub2f(uvs[order[1]], uvs[order[0]]), vec.sub2f(uvs[order[2]], uvs[order[0]]), positions[order[0]], positions[order[1]], positions[order[2]]);
+}
 
+fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_position: [*]Vec3f, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) [3]Mat3d {
+    const positions: [3]Vec3f = .{
+        vbo_position[id_vertices_triangle[0]],
+        vbo_position[id_vertices_triangle[1]],
+        vbo_position[id_vertices_triangle[2]],
+    };
     const uv = celldata_triangleuvs.valueByIndex(id_triangle).uvs;
-    const F0 = computeF(vec.sub2f(uv[0][1], uv[0][0]), vec.sub2f(uv[0][2], uv[0][0]), x0, x1, x2);
-    const F1 = computeF(vec.sub2f(uv[1][1], uv[1][0]), vec.sub2f(uv[1][2], uv[1][0]), x1, x2, x0);
-    const F2 = computeF(vec.sub2f(uv[2][1], uv[2][0]), vec.sub2f(uv[2][2], uv[2][0]), x2, x0, x1);
+    const F0 = computeFFonPatch(uv[0], positions, .{ 0, 1, 2 });
+    const F1 = computeFFonPatch(uv[1], positions, .{ 1, 2, 0 });
+    const F2 = computeFFonPatch(uv[2], positions, .{ 2, 0, 1 });
 
     // F0
     const F0d = mat.mat3dFromMat3f(F0);

@@ -368,7 +368,7 @@ void main() {
   c2 = texture(u_exemplar_texture, uv[1]).xyz;
   c3 = texture(u_exemplar_texture, uv[2]).xyz;
   
-  vec3 albedo = vec3(w[0] * c1 + w[1] * c2 + w[2] * c3);
+  vec3 albedo = vec3(c1 * w[0] + c2 * w[1] + c3 * w[2]);
   
   vec4 result = vec4(albedo * lambert_term, 1.);
 
