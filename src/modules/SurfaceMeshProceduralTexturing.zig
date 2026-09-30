@@ -67,7 +67,7 @@ const TnBData = struct {
         tbd.procedural_texturing_parameters = .init();
         tbd.vertex_position = vertex_position;
 
-        const s = "checker";
+        const s = "mud";
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
@@ -276,18 +276,20 @@ pub fn rightPanel(m: *Module) void {
             smpt.app_ctx.requestRedraw();
         }
 
+        c.ImGui_SeparatorText("Texture options");
+
         c.ImGui_Text("Scale length texture coordinates");
         c.ImGui_PushID("Scale length texture coordinates");
         if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
             smpt.app_ctx.requestRedraw();
         c.ImGui_PopID();
 
-        c.ImGui_Text("Compensate distorsions");
-        c.ImGui_PushID("Compensate distorsions");
-        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compense_distorsions)) {
+        c.ImGui_Text("Compensate texture distorsions");
+        c.ImGui_PushID("Compensate texture distorsions");
+        if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compensate_distorsions)) {
             var vertex_position_vbo = sm_store.dataVBO(.vertex, Vec3f, info.std_datas.vertex_position.?);
             var ibo = info.triangles_ibo;
-            textureDistorsions.fillDistorsionTBO(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, &vertex_position_vbo, &ibo, &tnb_data.procedural_texturing_parameters.tbo_distorsions, tnb_data.parameterization_data.triangle_uvs);
+            textureDistorsions.computeTextureDistorsions(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, &vertex_position_vbo, &ibo, &tnb_data.procedural_texturing_parameters.tbo_distorsions, tnb_data.parameterization_data.triangle_uvs);
             smpt.app_ctx.requestRedraw();
         }
         c.ImGui_PopID();
@@ -385,13 +387,11 @@ pub fn rightPanel(m: *Module) void {
                 }
             }
 
-            c.ImGui_SeparatorText("Tiling and blending visualisation");
-
-            c.ImGui_Text("Visualization options");
-
+            c.ImGui_SeparatorText("Visualization options");
             if (c.ImGui_Checkbox("Override parameterization", &tnb_data.procedural_texturing_parameters.override_param)) {
                 smpt.app_ctx.requestRedraw();
             }
+            c.ImGui_Text("Visualization object");
             c.ImGui_PushID("Visualization");
             if (c.ImGui_BeginCombo("", tnb_visu_option[@intCast(tnb_data.current_visu_option)].name.ptr, 0)) {
                 for (tnb_visu_option) |option| {
@@ -415,8 +415,8 @@ pub fn rightPanel(m: *Module) void {
             var current_label: [16]u8 = [_]u8{0} ** 16;
             const current_label_slice = std.fmt.bufPrint(&current_label, "{}", .{tnb_data.current_focus_sample}) catch unreachable;
 
-            c.ImGui_Text("Focus on sample");
-            c.ImGui_PushID("Focus sample");
+            c.ImGui_Text("Patch focused");
+            c.ImGui_PushID("Patch focused");
             if (c.ImGui_BeginCombo(
                 "",
                 current_label_slice.ptr,
@@ -450,7 +450,14 @@ pub fn rightPanel(m: *Module) void {
             }
             c.ImGui_PopID();
 
-            c.ImGui_SeparatorText("Field");
+            c.ImGui_Text("Draw only albedo for focused sample");
+            c.ImGui_PushID("Draw only albedo");
+            if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.draw_albedo_for_focused_patch)) {
+                smpt.app_ctx.requestRedraw();
+            }
+            c.ImGui_PopID();
+
+            c.ImGui_SeparatorText("Fields");
 
             c.ImGui_Text("Scalar field:");
             c.ImGui_SameLine();

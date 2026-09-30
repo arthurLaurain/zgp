@@ -86,7 +86,13 @@ fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_positio
     return result;
 }
 
-pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceMesh, vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBuffer, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) void {
+// Compute texture Distorsions from SurfaceMeshParameterization Module and fill TBO with new UV
+// Foreach mesh faces, we start by retrieve param info from SurfaceMeshParameterization Module and compute distorsion with Jacobi SVD
+// For each faces, a deformation gradient F is assigned
+// Our goal is to create three new vec2 for each vertices, one per patch
+// We accumulate in each vertices for each patch, F orignal_uv * F and divide by number of contributions
+// We have to be careful about patch ID to avoid blending between two different patch
+pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceMesh, vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBuffer, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) void {
     const max_distorsion_slots_per_vertex = 8;
 
     // Map vertices position VBO
@@ -109,8 +115,6 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceM
     const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
     const array_tbo: [*][max_distorsion_slots_per_vertex]Vec4f = @ptrCast(@alignCast(ptr_tbo));
 
-    var id_face: usize = 0;
-
     const structAccumulationParamVertex = struct {
         sumAccumulationParam: [max_distorsion_slots_per_vertex]Vec2f,
         nb_contrib: [max_distorsion_slots_per_vertex]u32,
@@ -127,6 +131,7 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceM
 
     const t = std.Io.Timestamp.now(io, .real);
 
+    var id_face: usize = 0;
     // Compute distorsions per patch per vertex and store them in TBO
     while (id_face < nb_triangle) : (id_face += 1) {
         const id_vertices_triangle: [3]u32 = .{
@@ -135,8 +140,10 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceM
             array_ibo[id_face * 3 + 2],
         };
 
+        // Ccompute face distorsion
         const S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, array_vbo_position, celldata_triangleuvs);
 
+        // Eigen need [3]f64 but we want to work with [3]f32
         var S: [3]Mat2f = undefined;
         for (0..3) |u| {
             S[u][0][0] = @floatCast(S_d[u][0][0]);
@@ -146,8 +153,9 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceM
         }
 
         const triangleuvs = celldata_triangleuvs.valueByIndex(@intCast(id_face));
-        var problematic_vertices = sm.getOrAddCellSet(.vertex, "problematic_vertices") catch unreachable;
+        var problematic_vertices = sm.getOrAddCellSet(.vertex, "problematic_vertices_texture_distorsion") catch unreachable;
 
+        // We don't want to blend UV between two differents patch so we create for each vertices slots to keep track of patch ID
         for (0..3) |vertex| {
             const id_current_vertex = id_vertices_triangle[vertex];
             const param_current_vertex = &arrayAccumulationVertex[id_current_vertex];
@@ -161,14 +169,14 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceM
                 var slot: u32 = max_distorsion_slots_per_vertex;
                 var free_slot: u32 = max_distorsion_slots_per_vertex;
                 for (0..max_distorsion_slots_per_vertex) |s| {
-                    if (param_current_vertex.id_sample[s] == std.math.maxInt(u32) and free_slot == max_distorsion_slots_per_vertex) {
+                    if (param_current_vertex.id_sample[s] == std.math.maxInt(u32) and free_slot == max_distorsion_slots_per_vertex) { // slot free
                         free_slot = @intCast(s);
-                    } else if (param_current_vertex.id_sample[s] == id_current_patch) {
+                    } else if (param_current_vertex.id_sample[s] == id_current_patch) { // patch already in one slot
                         slot = @intCast(s);
                         break;
                     }
                 }
-                if (slot == max_distorsion_slots_per_vertex) {
+                if (slot == max_distorsion_slots_per_vertex) { // if patch is not already in slot array
                     slot = free_slot;
                     if (free_slot == max_distorsion_slots_per_vertex) {
                         problematic_vertices.add(.{ .vertex = id_current_vertex }) catch unreachable;
@@ -179,12 +187,15 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceM
                 }
 
                 param_current_vertex.nb_contrib[slot] = param_current_vertex.nb_contrib[slot] + 1;
-                const param_non_compensed = triangleuvs.uvs[patch][vertex];
-                const param_compensed = mat.mulVec2f(S[patch], param_non_compensed);
-                param_current_vertex.sumAccumulationParam[slot] = vec.add2f(param_current_vertex.sumAccumulationParam[slot], param_compensed);
+                const param_uncompensated = triangleuvs.uvs[patch][vertex];
+                const param_compensated = mat.mulVec2f(S[patch], param_uncompensated);
+                // UV accumulation in vertices
+                param_current_vertex.sumAccumulationParam[slot] = vec.add2f(param_current_vertex.sumAccumulationParam[slot], param_compensated);
             }
         }
     }
+
+    // We compute new corrected uv and store them in TBO
     for (arrayAccumulationVertex, 0..) |current_vertex_param, i| {
         var param_current_vertex: [max_distorsion_slots_per_vertex]Vec4f = .{.{ 0, 0, 0, 0 }} ** max_distorsion_slots_per_vertex;
 
@@ -194,6 +205,7 @@ pub fn fillDistorsionTBO(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceM
             }
 
             const uv = vec.divScalar2f(current_vertex_param.sumAccumulationParam[slot], @floatFromInt(current_vertex_param.nb_contrib[slot]));
+            // Fragment shader need to know the patch ID of a newly received UV
             param_current_vertex[slot] = .{ uv[0], uv[1], @floatFromInt(current_vertex_param.id_sample[slot]), 0 };
         }
 

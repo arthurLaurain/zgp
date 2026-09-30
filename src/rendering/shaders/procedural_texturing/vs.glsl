@@ -21,12 +21,12 @@ void main()
 {
 
     int id_vertex = gl_VertexID;
-    vertex_normal = vec3(texelFetch(u_vertices_normal, id_vertex * 3).x, texelFetch(u_vertices_normal, id_vertex * 3 + 1).x, texelFetch(u_vertices_normal, id_vertex * 3 + 2).x);
     frag_position = a_position.xyz;
     vec4 view_pos = u_view_matrix *a_position;
     v_frag_position = view_pos.xyz;
     scaling_field = a_scaling_field;
     rotation_field = a_rotation_field;
     edge_ref = normalize(a_edge_ref).xyz;
+    vertex_normal = vec3(texelFetch(u_vertices_normal, id_vertex * 3).x, texelFetch(u_vertices_normal, id_vertex * 3 + 1).x, texelFetch(u_vertices_normal, id_vertex * 3 + 2).x);
     gl_Position = u_projection_matrix * view_pos;
 }

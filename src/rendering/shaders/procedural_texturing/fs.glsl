@@ -1,24 +1,33 @@
 
 #define PI 3.141592653
 
+// Environment
 uniform vec4 u_ambiant_color;
 uniform vec3 u_light_position;
+
+// Camera
 uniform mat4 u_view_matrix;
-uniform float u_scale_tex_coords;
-uniform float u_scale_distorsion;
-uniform bool u_visu_arap_energy;
-uniform bool u_compense_distorsions;
 uniform vec2 u_minmax_energy;
+
+// Texture options
+uniform float u_scale_tex_coords;
+uniform bool u_compensate_distorsions;
+uniform float u_micro_priority;
+uniform int u_blending_mode;
+uniform bool u_override_param;
+
+// Visualization options
+uniform uint u_visu_option;
+uniform uint u_visu_sample;
+uniform bool u_visu_albedo_one_patch;
+
+// Texture exemple
 uniform sampler2D u_exemplar_texture;
 uniform sampler2D u_exemplar_texture_priority;
 uniform sampler2D u_exemplar_texture_normal;
 uniform sampler2D u_exemplar_texture_roughness;
-uniform float u_micro_priority;
-uniform int u_blending_mode;
-uniform uint u_visu_option;
-uniform uint u_visu_sample;
-uniform bool u_override_param;
 
+// input
 in vec3 frag_position;
 in vec3 edge_ref;
 in vec3 v_frag_position;
@@ -26,14 +35,17 @@ in float scaling_field;
 in vec3 rotation_field;
 in vec3 vertex_normal;
 
+// output
 out vec4 f_color;
 
+// Texture Buffer Object
 uniform usamplerBuffer u_info_triangles;
 uniform samplerBuffer u_info_vertices;
 uniform samplerBuffer u_vertices_normal;
 uniform usamplerBuffer u_triangle_uvs;
 uniform samplerBuffer u_distorsions;
 
+// Mix Max (Thank you Romimap <3)
 struct gaussian_distribution {
   float mean;
   float variance;
@@ -71,7 +83,6 @@ gaussian_distribution distribution_max_ab(gaussian_distribution A, gaussian_dist
   return G;
 }
 
-// Merci Romain <3
 struct mixmaxdata {
   vec3 color; // Mean value of the texture over the footprint
   gaussian_distribution priorities; // Gaussian distribution of the priorities over the footprint
@@ -119,6 +130,8 @@ mixmaxdata mixMax(vec2 uvA, vec2 uvB, vec2 uvC, vec3 bary, sampler2D albedo, sam
 
   return compute_mixmax(compute_mixmax(A, B), C);
 }
+
+// Utils functions
 
 mat3 compute_TBN(vec3 N, vec3 v)
 {
@@ -188,29 +201,8 @@ vec3 idColor(uint id)
   );
 }
 
+// Texture coordinated
 const int MAX_DISTORSION_SLOTS_PER_VERTEX = 8;
-
-struct DistorsionsMatrices
-{
-  mat2 m0;
-  mat2 m1;
-  mat2 m2;
-};
-
-// DistorsionsMatrices loadDistorsionsMatrices(int id_triangle)
-// {
-//     vec4 v0 = texelFetch(u_distorsions, id_triangle * 3 + 0);
-//     vec4 v1 = texelFetch(u_distorsions, id_triangle * 3 + 1);
-//     vec4 v2 = texelFetch(u_distorsions, id_triangle * 3 + 2);
-
-//     DistorsionsMatrices dm;
-
-//     dm.m0 = mat2(v0.xy, v0.zw);
-//     dm.m1 = mat2(v1.xy, v1.zw);
-//     dm.m2 = mat2(v2.xy, v2.zw);
-
-//     return dm;
-// }
 
 struct TriangleUVs
 {
@@ -252,12 +244,13 @@ TriangleUVs loadTriangleUVs(int id_triangle)
   return t;
 }
 
+// Texture distorsions
 vec2 findUV(int id_vertex, uint sample_id)
 {
-  for(int i = 0; i < MAX_DISTORSION_SLOTS_PER_VERTEX; ++i)
+  for (int i = 0; i < MAX_DISTORSION_SLOTS_PER_VERTEX; ++i)
   {
     vec4 slot = texelFetch(u_distorsions, id_vertex * MAX_DISTORSION_SLOTS_PER_VERTEX + i);
-    if(uint(slot.z) == sample_id)
+    if (uint(slot.z) == sample_id)
       return slot.xy;
   }
   return vec2(0.0);
@@ -272,15 +265,14 @@ vec2 loadDistordedUV(TriangleUVs triangleUVs, int p, ivec3 id_vertices, vec3 bar
   return bary.x * uv0 + bary.y * uv1 + bary.z * uv2;
 }
 
+// Main
 void main() {
   vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
   vec3 L = normalize(u_light_position - v_frag_position);
   float lambert_term = dot(N, L);
 
   int id_triangle = gl_PrimitiveID;
-
   ivec3 id_vertices = ivec3(texelFetch(u_info_triangles, id_triangle * 3).x, texelFetch(u_info_triangles, id_triangle * 3 + 1).x, texelFetch(u_info_triangles, id_triangle * 3 + 2).x);
-  TriangleUVs triangleUVs = loadTriangleUVs(id_triangle);
 
   vec3 p1 = vec3(texelFetch(u_info_vertices, id_vertices.x * 3).x, texelFetch(u_info_vertices, id_vertices.x * 3 + 1).x, texelFetch(u_info_vertices, id_vertices.x * 3 + 2).x);
   vec3 p2 = vec3(texelFetch(u_info_vertices, id_vertices.y * 3).x, texelFetch(u_info_vertices, id_vertices.y * 3 + 1).x, texelFetch(u_info_vertices, id_vertices.y * 3 + 2).x);
@@ -303,29 +295,29 @@ void main() {
   float w[3];
   vec2 r[3];
 
+  TriangleUVs triangleUVs = loadTriangleUVs(id_triangle);
   if (u_override_param)
   {
     vec2 uv_sample[3];
-    if(u_compense_distorsions)
+    if (u_compensate_distorsions)
     {
-      for(int i = 0; i < 3; i++)
+      for (int i = 0; i < 3; i++)
       {
         uv_sample[i] = loadDistordedUV(triangleUVs, i, id_vertices, bary);
       }
     }
     else
     {
-      for(int i = 0; i < 3; i++)
+      for (int i = 0; i < 3; i++)
       {
         uv_sample[i] = bary.x * triangleUVs.uvs[i * 3 + 0] + bary.y * triangleUVs.uvs[i * 3 + 1] + bary.z * triangleUVs.uvs[i * 3 + 2];
       }
     }
 
-
     u[0] = rotation_transform * uv_sample[0] * (u_scale_tex_coords + scaling_field);
     u[1] = rotation_transform * uv_sample[1] * (u_scale_tex_coords + scaling_field);
     u[2] = rotation_transform * uv_sample[2] * (u_scale_tex_coords + scaling_field);
-    
+
     float distance_sample[3];
     distance_sample[0] = bary.x * triangleUVs.distance_to_boundary[0] + bary.y * triangleUVs.distance_to_boundary[1] + bary.z * triangleUVs.distance_to_boundary[2];
     distance_sample[1] = bary.x * triangleUVs.distance_to_boundary[3] + bary.y * triangleUVs.distance_to_boundary[4] + bary.z * triangleUVs.distance_to_boundary[5];
@@ -355,27 +347,28 @@ void main() {
     r[2] = hash12(int(id_vertices.z));
   }
 
-  vec3 c1;
-  vec3 c2;
-  vec3 c3;
-
   vec2 uv[3];
   uv[0] = u[0] + r[0];
   uv[1] = u[1] + r[1];
   uv[2] = u[2] + r[2];
 
-  c1 = texture(u_exemplar_texture, uv[0]).xyz;
-  c2 = texture(u_exemplar_texture, uv[1]).xyz;
-  c3 = texture(u_exemplar_texture, uv[2]).xyz;
-  
-  vec3 albedo = vec3(c1 * w[0] + c2 * w[1] + c3 * w[2]);
-  
-  vec4 result = vec4(albedo * lambert_term, 1.);
+  vec3 c[3];
+  c[0] = texture(u_exemplar_texture, uv[0]).xyz;
+  c[1] = texture(u_exemplar_texture, uv[1]).xyz;
+  c[2] = texture(u_exemplar_texture, uv[2]).xyz;
+
+  vec3 albedo;
+
+  if (!u_visu_albedo_one_patch)
+    albedo = vec3(c[0] * w[0] + c[1] * w[1] + c[2] * w[2]);
+  else
+    albedo = c[u_visu_sample];
 
   //TODO fix perf with high texture scaling
-  mixmaxdata M;
+  vec4 result;
   if (u_blending_mode == 1)
   {
+    mixmaxdata M;
     M = mixMax(uv[0], uv[1], uv[2], vec3(w[0], w[1], w[2]), u_exemplar_texture, u_exemplar_texture_priority, u_exemplar_texture_normal, u_exemplar_texture_roughness, u_micro_priority);
 
     // Normal mapping
@@ -384,22 +377,26 @@ void main() {
     vec3 normalWS = normalize(TBN * normal);
     result = vec4(M.color * dot(normalWS, L), 1);
   }
+  else
+  {
+    result = vec4(albedo * lambert_term, 1.);
+  }
 
   switch (u_visu_option)
   {
-    // TnB result
+    // TnB
     case 0:
     f_color = result;
     break;
-    // Sample ID visu
+    // Sample ID
     case 1:
     f_color = vec4(idColor(triangleUVs.samples[u_visu_sample]), 1);
     break;
-    // UV from first sample visu
+    // UV
     case 2:
     f_color = vec4(uv[u_visu_sample], 0, 1);
     break;
-    // Distance from border visu
+    // Distance from border
     case 3:
     f_color = vec4(w[u_visu_sample], 0, 0, 1);
     break;

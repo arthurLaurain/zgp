@@ -46,7 +46,7 @@ exemplar_texture_priority_uniform: c_int = undefined,
 exemplar_texture_normal_uniform: c_int = undefined,
 exemplar_texture_roughness_uniform: c_int = undefined,
 scale_tex_coords_uniform: c_int = undefined,
-compense_distorsions_uniform: c_int = undefined,
+compensate_distorsions_uniform: c_int = undefined,
 micro_priority_uniform: c_int = undefined,
 blending_mode_uniform: c_int = undefined,
 tbo_info_triangles_uniform: c_int = undefined,
@@ -57,6 +57,7 @@ tbo_distorsions_uniform: c_int = undefined,
 visu_option_uniform: c_int = undefined,
 visu_sample_uniform: c_int = undefined,
 override_param_uniform: c_int = undefined,
+draw_albedo_focused_patch_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 scaling_field_attrib: VAO.VertexAttribInfo = undefined,
@@ -98,7 +99,7 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.exemplar_texture_normal_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture_normal");
     pt.exemplar_texture_roughness_uniform = gl.GetUniformLocation(pt.program.index, "u_exemplar_texture_roughness");
     pt.scale_tex_coords_uniform = gl.GetUniformLocation(pt.program.index, "u_scale_tex_coords");
-    pt.compense_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_compense_distorsions");
+    pt.compensate_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_compensate_distorsions");
     pt.micro_priority_uniform = gl.GetUniformLocation(pt.program.index, "u_micro_priority");
     pt.blending_mode_uniform = gl.GetUniformLocation(pt.program.index, "u_blending_mode");
     pt.tbo_info_triangles_uniform = gl.GetUniformLocation(pt.program.index, "u_info_triangles");
@@ -109,6 +110,7 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.visu_option_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_option");
     pt.visu_sample_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_sample");
     pt.override_param_uniform = gl.GetUniformLocation(pt.program.index, "u_override_param");
+    pt.draw_albedo_focused_patch_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_albedo_one_patch");
 
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
@@ -155,7 +157,6 @@ pub const Parameters = struct {
     tbo_info_vertices: TextureBuffer,
     // tbo_edge_ref: TextureBuffer,
     tbo_normal_vertices: TextureBuffer,
-    // tbo_distorsion_primitives: TextureBuffer,
     tbo_neigh_selected_vertices: TextureBuffer,
     tbo_triangle_uvs: TextureBuffer,
     tbo_distorsions: TextureBuffer,
@@ -168,12 +169,13 @@ pub const Parameters = struct {
     face_triangle_uvs: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
-    compense_distorsions: bool = false,
+    compensate_distorsions: bool = false,
     mixmax_micro_priority: f32 = 0.001,
     blending_mode: BlendingMode = BlendingMode.LINEAR,
     visu_option: u32 = 0,
     visu_sample: u32 = 0,
     override_param: bool = true,
+    draw_albedo_for_focused_patch: bool = false,
 
     pub fn init() Parameters {
         return .{
@@ -183,7 +185,6 @@ pub const Parameters = struct {
             .tbo_info_vertices = .init(),
             // .tbo_edge_ref = .init(),
             .tbo_normal_vertices = .init(),
-            // .tbo_distorsion_primitives = .init(),
             .tbo_neigh_selected_vertices = .init(),
             .tbo_triangle_uvs = .init(),
             .tbo_distorsions = .init(),
@@ -196,7 +197,6 @@ pub const Parameters = struct {
         p.tbo_info_vertices.deinit();
         // p.tbo_edge_ref.deinit();
         p.tbo_normal_vertices.deinit();
-        // p.tbo_distorsion_primitives.deinit();
         p.tbo_neigh_selected_vertices.deinit();
         // p.tbo_scaling_tile.deinit();
         // p.tbo_rotation_tile.deinit();
@@ -262,35 +262,14 @@ pub const Parameters = struct {
             gl.Uniform1i(p.shader.exemplar_texture_roughness_uniform, 3);
         }
 
-        p.tbo_info_vertices.bindBufferToShader(
-            4,
-            ibo.index,
-            gl.R32UI,
-        );
-        gl.Uniform1i(
-            p.shader.tbo_info_triangles_uniform,
-            4,
-        );
+        p.tbo_info_vertices.bindBufferToShader(4, ibo.index, gl.R32UI);
+        gl.Uniform1i(p.shader.tbo_info_triangles_uniform, 4);
 
-        p.tbo_info_triangles.bindBufferToShader(
-            5,
-            p.vertices_position_vbo.?.index,
-            gl.R32F,
-        );
-        gl.Uniform1i(
-            p.shader.tbo_info_vertices_uniform,
-            5,
-        );
+        p.tbo_info_triangles.bindBufferToShader(5, p.vertices_position_vbo.?.index, gl.R32F);
+        gl.Uniform1i(p.shader.tbo_info_vertices_uniform, 5);
 
-        p.tbo_normal_vertices.bindBufferToShader(
-            6,
-            p.vertices_normal_vbo.?.index,
-            gl.R32F,
-        );
-        gl.Uniform1i(
-            p.shader.tbo_vertices_normal_uniform,
-            6,
-        );
+        p.tbo_normal_vertices.bindBufferToShader(6, p.vertices_normal_vbo.?.index, gl.R32F);
+        gl.Uniform1i(p.shader.tbo_vertices_normal_uniform, 6);
 
         p.tbo_triangle_uvs.bindBufferToShader(7, p.face_triangle_uvs.?.index, gl.R32UI);
         gl.Uniform1i(p.shader.tbo_uvs_triangles_uniform, 7);
@@ -304,12 +283,13 @@ pub const Parameters = struct {
         gl.UniformMatrix4fv(p.shader.view_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.view_matrix));
         gl.UniformMatrix4fv(p.shader.projection_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.projection_matrix));
         gl.Uniform1f(p.shader.scale_tex_coords_uniform, p.scale_tex_coords);
-        gl.Uniform1i(p.shader.compense_distorsions_uniform, @intFromBool(p.compense_distorsions));
+        gl.Uniform1i(p.shader.compensate_distorsions_uniform, @intFromBool(p.compensate_distorsions));
         gl.Uniform1f(p.shader.micro_priority_uniform, p.mixmax_micro_priority);
         gl.Uniform1i(p.shader.blending_mode_uniform, @intFromEnum(p.blending_mode));
         gl.Uniform1ui(p.shader.visu_option_uniform, p.visu_option);
         gl.Uniform1ui(p.shader.visu_sample_uniform, p.visu_sample);
         gl.Uniform1i(p.shader.override_param_uniform, @intFromBool(p.override_param));
+        gl.Uniform1i(p.shader.draw_albedo_focused_patch_uniform, @intFromBool(p.draw_albedo_for_focused_patch));
 
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);
