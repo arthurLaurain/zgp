@@ -17,6 +17,7 @@ const TextureBuffer = @import("../../../rendering/TextureBuffer.zig");
 const Vec2f = vec.Vec2f;
 const Vec3f = vec.Vec3f;
 const Vec4f = vec.Vec4f;
+const SurfaceMesh = @import("../../../models/surface/SurfaceMesh.zig");
 
 const mat = @import("../../../geometry/mat.zig");
 
@@ -156,11 +157,9 @@ pub const Parameters = struct {
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
     face_triangle_uvs: ?VBO = undefined,
+    distorsions_vbo: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
     dir_ref_tile_vbo: VBO = undefined,
-    scaling_tile_vbo: ?VBO = undefined,
-    rotation_tile_vbo: ?VBO = undefined,
-    distorsions_vbo: ?VBO = undefined,
     scale_tex_coords: f32 = 1,
     compensate_distorsions: bool = false,
     mixmax_micro_priority: f32 = 0.001,
@@ -227,6 +226,21 @@ pub const Parameters = struct {
         p.vao.disableVertexAttribArray(attrib_info);
     }
 
+    pub fn initFieldTBOBuffer(p: *Parameters, size: usize) void {
+        p.tbo_scaling_tile.bufferMemoryAllocation(@intCast(size * @sizeOf(f32)), gl.R32F, gl.RED, gl.FLOAT);
+        p.tbo_rotation_tile.bufferMemoryAllocation(@intCast(size * @sizeOf(Vec3f)), gl.RGB32F, gl.RGB, gl.FLOAT);
+    }
+
+    pub fn updateFieldTBO(p: *Parameters, cells: std.ArrayList(SurfaceMesh.Cell), samplesID_per_vertex: SurfaceMesh.CellData(.vertex, i32), field_datatype: type, field: SurfaceMesh.CellData(.vertex, field_datatype)) void {
+        for (cells.items) |cell| {
+
+            // we only care about cells which have a sample snapped to
+            const value_sample_snapped_to_cell = samplesID_per_vertex.value(cell);
+            if (value_sample_snapped_to_cell == -1) continue;
+            p.tbo_scaling_tile.updateTextureBufferObject(@intCast(value_sample_snapped_to_cell), field_datatype, field.value(cell));
+        }
+    }
+
     pub fn draw(p: *Parameters, ibo: IBO) void {
         gl.UseProgram(p.shader.program.index);
         defer gl.UseProgram(0);
@@ -270,14 +284,14 @@ pub const Parameters = struct {
             p.tbo_distorsions.bindBufferToShader(8, distorsions_vbo.index, gl.RGBA32F);
             gl.Uniform1i(p.shader.tbo_distorsions_uniform, 8);
         }
-        if (p.scaling_tile_vbo) |scaling_tile_vbo| {
-            p.tbo_scaling_tile.bindBufferToShader(9, scaling_tile_vbo.index, gl.R32F);
-            gl.Uniform1i(p.shader.tbo_scaling_uniform, 9);
-        }
-        if (p.rotation_tile_vbo) |rotation_tile_vbo| {
-            p.tbo_rotation_tile.bindBufferToShader(10, rotation_tile_vbo.index, gl.RGB32F);
-            gl.Uniform1i(p.shader.tbo_rotation_uniform, 10);
-        }
+
+        gl.ActiveTexture(gl.TEXTURE0 + 9);
+        gl.BindTexture(gl.TEXTURE_BUFFER, p.tbo_scaling_tile.texture_index);
+        gl.Uniform1i(p.shader.tbo_scaling_uniform, 9);
+
+        gl.ActiveTexture(gl.TEXTURE0 + 10);
+        gl.BindTexture(gl.TEXTURE_BUFFER, p.tbo_rotation_tile.texture_index);
+        gl.Uniform1i(p.shader.tbo_rotation_uniform, 10);
 
         p.tbo_dir_ref_tile.bindBufferToShader(11, p.dir_ref_tile_vbo.index, gl.RGB32F);
         gl.Uniform1i(p.shader.tbo_dir_ref_tile_uniform, 11);

@@ -105,9 +105,8 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
     const ptr_ibo = gl.MapBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.READ_ONLY);
     const array_ibo: [*]u32 = @ptrCast(@alignCast(ptr_ibo));
 
-    const distorsion_celldata = sm.addData(.vertex, [max_distorsion_slots_per_vertex]Vec4f, "distorsions") catch |err| {
-        std.debug.print("Error while adding distorsion celldata: {}\n", .{err});
-        unreachable;
+    const distorsion_celldata = sm.getOrAddData(.vertex, [max_distorsion_slots_per_vertex]Vec4f, "distorsions") catch |err| {
+        std.debug.panic("Failed to create distorsion celldata: {}\n", .{err});
     };
 
     const nb_triangle: usize = ibo.nb_indices / 3;
@@ -205,7 +204,7 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
             param_current_vertex[slot] = .{ uv[0], uv[1], @floatFromInt(current_vertex_param.id_sample[slot]), 0 };
         }
 
-        distorsion_celldata.valuePtrByIndex(@intCast(i)).* = param_current_vertex;
+        distorsion_celldata.@"0".valuePtrByIndex(@intCast(i)).* = param_current_vertex;
     }
 
     gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
@@ -214,5 +213,5 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, io, .real).nanoseconds);
     zgp_log.info("Texture distorsions computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
 
-    return distorsion_celldata;
+    return distorsion_celldata.@"0";
 }
