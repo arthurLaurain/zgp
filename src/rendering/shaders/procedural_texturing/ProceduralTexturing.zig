@@ -14,8 +14,9 @@ const c = @import("c");
 const BlendingMode = @import("../../../modules/SurfaceMeshProceduralTexturing.zig").BlendingMode;
 const vec = @import("../../../geometry/vec.zig");
 const TextureBuffer = @import("../../../rendering/TextureBuffer.zig");
-const Vec3f = vec.Vec3f;
 const Vec2f = vec.Vec2f;
+const Vec3f = vec.Vec3f;
+const Vec4f = vec.Vec4f;
 
 const mat = @import("../../../geometry/mat.zig");
 
@@ -157,6 +158,9 @@ pub const Parameters = struct {
     face_triangle_uvs: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
     dir_ref_tile_vbo: VBO = undefined,
+    scaling_tile_vbo: ?VBO = undefined,
+    rotation_tile_vbo: ?VBO = undefined,
+    distorsions_vbo: ?VBO = undefined,
     scale_tex_coords: f32 = 1,
     compensate_distorsions: bool = false,
     mixmax_micro_priority: f32 = 0.001,
@@ -262,17 +266,18 @@ pub const Parameters = struct {
         p.tbo_triangle_uvs.bindBufferToShader(7, p.face_triangle_uvs.?.index, gl.R32UI);
         gl.Uniform1i(p.shader.tbo_uvs_triangles_uniform, 7);
 
-        gl.ActiveTexture(gl.TEXTURE0 + 8);
-        gl.BindBuffer(gl.TEXTURE_BUFFER, p.tbo_distorsions.index);
-        gl.Uniform1i(p.shader.tbo_distorsions_uniform, 8);
-
-        gl.ActiveTexture(gl.TEXTURE0 + 9);
-        gl.BindBuffer(gl.TEXTURE_BUFFER, p.tbo_scaling_tile.index);
-        gl.Uniform1i(p.shader.tbo_scaling_uniform, 9);
-
-        gl.ActiveTexture(gl.TEXTURE0 + 10);
-        gl.BindBuffer(gl.TEXTURE_BUFFER, p.tbo_rotation_tile.index);
-        gl.Uniform1i(p.shader.tbo_rotation_uniform, 10);
+        if (p.distorsions_vbo) |distorsions_vbo| {
+            p.tbo_distorsions.bindBufferToShader(8, distorsions_vbo.index, gl.RGBA32F);
+            gl.Uniform1i(p.shader.tbo_distorsions_uniform, 8);
+        }
+        if (p.scaling_tile_vbo) |scaling_tile_vbo| {
+            p.tbo_scaling_tile.bindBufferToShader(9, scaling_tile_vbo.index, gl.R32F);
+            gl.Uniform1i(p.shader.tbo_scaling_uniform, 9);
+        }
+        if (p.rotation_tile_vbo) |rotation_tile_vbo| {
+            p.tbo_rotation_tile.bindBufferToShader(10, rotation_tile_vbo.index, gl.RGB32F);
+            gl.Uniform1i(p.shader.tbo_rotation_uniform, 10);
+        }
 
         p.tbo_dir_ref_tile.bindBufferToShader(11, p.dir_ref_tile_vbo.index, gl.RGB32F);
         gl.Uniform1i(p.shader.tbo_dir_ref_tile_uniform, 11);

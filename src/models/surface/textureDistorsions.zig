@@ -92,28 +92,26 @@ fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_positio
 // Our goal is to create three new vec2 for each vertices, one per patch
 // We accumulate in each vertices for each patch, F orignal_uv * F and divide by number of contributions
 // We have to be careful about patch ID to avoid blending between two different patch
-pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceMesh, vertices_position_vbo: *VBO, ibo: *IBO, tbo: *TextureBuffer, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) void {
-    const max_distorsion_slots_per_vertex = 8;
+
+//TODO : We should be able to compute distorsion in parallel and investiguate this 8 value
+const max_distorsion_slots_per_vertex = 8;
+pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceMesh, vertices_position_vbo: SurfaceMesh.CellData(.vertex, Vec3f), ibo: *IBO, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) SurfaceMesh.CellData(.vertex, [max_distorsion_slots_per_vertex]vec.Vec4f) {
 
     // Map vertices position VBO
-    gl.BindBuffer(gl.ARRAY_BUFFER, vertices_position_vbo.index);
-    const ptr_vbo_position = gl.MapBuffer(gl.ARRAY_BUFFER, gl.READ_ONLY);
-    const array_vbo_position: [*]Vec3f = @ptrCast(@alignCast(ptr_vbo_position.?));
+    const array_vbo_position = vertices_position_vbo.data.data.items;
 
     // Map IBO
     gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
     const ptr_ibo = gl.MapBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.READ_ONLY);
     const array_ibo: [*]u32 = @ptrCast(@alignCast(ptr_ibo));
 
-    // Memory allocation for TBO
-    const nb_triangle: usize = ibo.nb_indices / 3;
-    const nb_vertices: usize = @intCast(@divExact(vertices_position_vbo.size, @sizeOf(Vec3f)));
-    tbo.memoryAllocationForMapping(@intCast(nb_vertices * @sizeOf(Vec4f) * max_distorsion_slots_per_vertex), gl.RGBA32F, gl.RGBA, gl.FLOAT);
+    const distorsion_celldata = sm.addData(.vertex, [max_distorsion_slots_per_vertex]Vec4f, "distorsions") catch |err| {
+        std.debug.print("Error while adding distorsion celldata: {}\n", .{err});
+        unreachable;
+    };
 
-    //Map TBO
-    gl.BindBuffer(gl.TEXTURE_BUFFER, tbo.index);
-    const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
-    const array_tbo: [*][max_distorsion_slots_per_vertex]Vec4f = @ptrCast(@alignCast(ptr_tbo));
+    const nb_triangle: usize = ibo.nb_indices / 3;
+    const nb_vertices: usize = vertices_position_vbo.data.nbElements();
 
     const structAccumulationParamVertex = struct {
         sumAccumulationParam: [max_distorsion_slots_per_vertex]Vec2f,
@@ -141,7 +139,7 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
         };
 
         // Ccompute face distorsion
-        const S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, array_vbo_position, celldata_triangleuvs);
+        const S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, array_vbo_position.ptr, celldata_triangleuvs);
 
         // Eigen need [3]f64 but we want to work with [3]f32
         var S: [3]Mat2f = undefined;
@@ -153,7 +151,6 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
         }
 
         const triangleuvs = celldata_triangleuvs.valueByIndex(@intCast(id_face));
-        var problematic_vertices = sm.getOrAddCellSet(.vertex, "problematic_vertices_texture_distorsion") catch unreachable;
 
         // We don't want to blend UV between two differents patch so we create for each vertices slots to keep track of patch ID
         for (0..3) |vertex| {
@@ -179,7 +176,6 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
                 if (slot == max_distorsion_slots_per_vertex) { // if patch is not already in slot array
                     slot = free_slot;
                     if (free_slot == max_distorsion_slots_per_vertex) {
-                        problematic_vertices.add(.{ .vertex = id_current_vertex }) catch unreachable;
                         break;
                     } else {
                         param_current_vertex.id_sample[slot] = id_current_patch;
@@ -209,21 +205,14 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
             param_current_vertex[slot] = .{ uv[0], uv[1], @floatFromInt(current_vertex_param.id_sample[slot]), 0 };
         }
 
-        array_tbo[i] = param_current_vertex;
+        distorsion_celldata.valuePtrByIndex(@intCast(i)).* = param_current_vertex;
     }
-
-    gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RGBA32F, tbo.index);
-
-    // Unmap all buffers
-    gl.BindBuffer(gl.ARRAY_BUFFER, vertices_position_vbo.index);
-    _ = gl.UnmapBuffer(gl.ARRAY_BUFFER);
 
     gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
     _ = gl.UnmapBuffer(gl.ELEMENT_ARRAY_BUFFER);
 
-    gl.BindBuffer(gl.TEXTURE_BUFFER, tbo.index);
-    _ = gl.UnmapBuffer(gl.TEXTURE_BUFFER);
-
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, io, .real).nanoseconds);
     zgp_log.info("Texture distorsions computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
+
+    return distorsion_celldata;
 }

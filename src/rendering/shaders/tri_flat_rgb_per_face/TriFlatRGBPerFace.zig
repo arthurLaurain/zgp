@@ -126,7 +126,7 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.dim_backfaces_uniform, @intFromBool(p.dim_backfaces));
 
         gl.ActiveTexture(gl.TEXTURE0 + @as(c_uint, @intCast(p.face_index_buffer_texture_unit)));
-        gl.BindTexture(gl.TEXTURE_BUFFER, p.face_index_buffer_texture.index);
+        gl.BindTexture(gl.TEXTURE_BUFFER, p.face_index_buffer_texture.texture_index);
         gl.TexBuffer(gl.TEXTURE_BUFFER, gl.R32UI, ibo.cell_index_buffer_index);
         gl.Uniform1i(p.shader.face_index_buffer_uniform, p.face_index_buffer_texture_unit);
         defer {
@@ -136,7 +136,7 @@ pub const Parameters = struct {
 
         if (p.face_rgb_buffer) |face_rgb_buffer| {
             gl.ActiveTexture(gl.TEXTURE0 + @as(c_uint, @intCast(p.face_rgb_buffer_texture_unit)));
-            gl.BindTexture(gl.TEXTURE_BUFFER, p.face_rgb_buffer_texture.index);
+            gl.BindTexture(gl.TEXTURE_BUFFER, p.face_rgb_buffer_texture.texture_index);
             gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RGB32F, face_rgb_buffer.index);
             gl.Uniform1i(p.shader.face_rgb_buffer_uniform, p.face_rgb_buffer_texture_unit);
         }

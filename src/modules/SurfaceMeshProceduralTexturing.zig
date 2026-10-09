@@ -55,9 +55,9 @@ const TnBData = struct {
     vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
     vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
-    procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
     scaling_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
     rotation_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
+    procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
     texture_initialized: bool = false,
     position_vbo: ?VBO = null,
     normal_vbo: ?VBO = null,
@@ -122,7 +122,6 @@ module: Module = .{
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
-        .surfaceMeshDataUpdatedWithCells = surfaceMeshDataUpdatedWithCells,
         .rightPanel = rightPanel,
         .draw = draw,
     },
@@ -178,66 +177,6 @@ pub fn surfaceMeshStdDataChanged(
             }
         },
         else => return, // Ignore other standard data changes
-    }
-}
-
-/// we create a TBO to store a scaling value (f32) for each sample
-/// since scaling field is store at vertex and samples ID at faces we have
-/// to get sample ID from vertex by searching similar sampleID in incident faces
-/// For now, we make the assumption that only samples are in arraylist cells
-pub fn surfaceMeshDataUpdatedWithCells(m: *Module, surface_mesh: *SurfaceMesh, cell_type: SurfaceMesh.CellType, data_gen: *const DataGen, cells: std.ArrayList(SurfaceMesh.Cell)) void {
-    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
-    const tnb_data = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
-    if (cell_type != .vertex) return;
-
-    if (tnb_data.scaling_fieldData) |field| {
-        if (field.gen() == data_gen) {
-            for (cells.items) |cell| {
-                // we only care about cells which have a sample snapped to
-                const value_sample_snapped_to_cell = tnb_data.parameterization_data.samplesID_per_vertex.value(cell);
-                if (value_sample_snapped_to_cell == -1) continue;
-
-                // TODO Gain performances by using persistant pointer on Buffer
-                const nb_samples = tnb_data.parameterization_data.samples.?.nbPoints();
-                tnb_data.procedural_texturing_parameters.tbo_scaling_tile.memoryAllocationForMapping(nb_samples * @sizeOf(f32), gl.R32F, gl.RED, gl.FLOAT);
-
-                gl.BindBuffer(gl.TEXTURE_BUFFER, tnb_data.procedural_texturing_parameters.tbo_scaling_tile.index);
-                defer gl.BindBuffer(gl.TEXTURE_BUFFER, 0);
-                const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
-                const array_tbo: [*]f32 = @ptrCast(@alignCast(ptr_tbo));
-
-                array_tbo[@intCast(value_sample_snapped_to_cell)] = tnb_data.scaling_fieldData.?.value(cell);
-
-                // TODO Useless to do more than once
-                gl.TexBuffer(gl.TEXTURE_BUFFER, gl.R32F, tnb_data.procedural_texturing_parameters.tbo_scaling_tile.index);
-                _ = gl.UnmapBuffer(gl.TEXTURE_BUFFER);
-            }
-        }
-    }
-    if (tnb_data.rotation_fieldData) |field| {
-        if (field.gen() == data_gen) {
-            for (cells.items) |cell| {
-                // we only care about cells which have a sample snapped to
-                const value_sample_snapped_to_cell = tnb_data.parameterization_data.samplesID_per_vertex.value(cell);
-                if (value_sample_snapped_to_cell == -1) continue;
-
-                // TODO Gain performances by using persistant pointer on Buffer
-                const nb_samples = tnb_data.parameterization_data.samples.?.nbPoints();
-                tnb_data.procedural_texturing_parameters.tbo_rotation_tile.memoryAllocationForMapping(nb_samples * @sizeOf(vec.Vec4f), gl.RGBA32F, gl.RGBA, gl.FLOAT);
-
-                gl.BindBuffer(gl.TEXTURE_BUFFER, tnb_data.procedural_texturing_parameters.tbo_rotation_tile.index);
-                defer gl.BindBuffer(gl.TEXTURE_BUFFER, 0);
-                const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
-                const array_tbo: [*]vec.Vec4f = @ptrCast(@alignCast(ptr_tbo));
-
-                const rotation_value = tnb_data.rotation_fieldData.?.value(cell);
-                array_tbo[@intCast(value_sample_snapped_to_cell)] = .{ rotation_value[0], rotation_value[1], rotation_value[2], 0 };
-
-                // TODO Useless to do more than once
-                gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RGBA32F, tnb_data.procedural_texturing_parameters.tbo_rotation_tile.index);
-                _ = gl.UnmapBuffer(gl.TEXTURE_BUFFER);
-            }
-        }
     }
 }
 
@@ -353,9 +292,9 @@ pub fn rightPanel(m: *Module) void {
         c.ImGui_Text("Compensate texture distorsions");
         c.ImGui_PushID("Compensate texture distorsions");
         if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compensate_distorsions)) {
-            var vertex_position_vbo = sm_store.dataVBO(.vertex, Vec3f, info.std_datas.vertex_position.?);
             var ibo = info.triangles_ibo;
-            textureDistorsions.computeTextureDistorsions(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, &vertex_position_vbo, &ibo, &tnb_data.procedural_texturing_parameters.tbo_distorsions, tnb_data.parameterization_data.triangle_uvs);
+            const distorsion_celldata = textureDistorsions.computeTextureDistorsions(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, info.std_datas.vertex_position.?, &ibo, tnb_data.parameterization_data.triangle_uvs);
+            tnb_data.procedural_texturing_parameters.distorsions_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, [8]vec.Vec4f, distorsion_celldata);
             smpt.app_ctx.requestRedraw();
         }
         c.ImGui_PopID();
@@ -532,10 +471,12 @@ pub fn rightPanel(m: *Module) void {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.scaling_fieldData = null;
+                    tnb_data.procedural_texturing_parameters.scaling_tile_vbo = null;
                     smpt.app_ctx.requestRedraw();
                 },
                 .changed => |field| {
                     tnb_data.scaling_fieldData = field;
+                    tnb_data.procedural_texturing_parameters.scaling_tile_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, field);
                     smpt.app_ctx.requestRedraw();
                 },
             }
@@ -547,11 +488,13 @@ pub fn rightPanel(m: *Module) void {
             switch (imgui_utils.surfaceMeshCellDataComboBox(sm, .vertex, Vec3f, tnb_data.rotation_fieldData)) {
                 .unchanged => {},
                 .cleared => {
+                    tnb_data.procedural_texturing_parameters.rotation_tile_vbo = null;
                     tnb_data.rotation_fieldData = null;
                     smpt.app_ctx.requestRedraw();
                 },
                 .changed => |field| {
                     tnb_data.rotation_fieldData = field;
+                    tnb_data.procedural_texturing_parameters.rotation_tile_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, field);
                     smpt.app_ctx.requestRedraw();
                 },
             }
