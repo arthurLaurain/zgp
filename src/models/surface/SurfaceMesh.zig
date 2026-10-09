@@ -730,6 +730,9 @@ pub fn dataContainerPtr(sm: anytype, cell_type: CellType) if (@typeInfo(@TypeOf(
 /// Creates a new data array of the type `T` associated with cells of the given CellType.
 /// The `name` must be unique for the given CellType for the creation to succeed.
 pub fn addData(sm: *SurfaceMesh, comptime cell_type: CellType, comptime T: type, name: []const u8) !CellData(cell_type, T) {
+    if (name.len == 0) {
+        return error.NoNameError;
+    }
     return .{
         .surface_mesh = sm,
         .data = try sm.dataContainerPtr(cell_type).addData(T, name),

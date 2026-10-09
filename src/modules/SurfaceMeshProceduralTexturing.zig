@@ -42,6 +42,11 @@ const tnb_visu_option = [_]struct { name: []const u8, value: u32 }{
     .{ .name = "Samples ID", .value = 1 },
     .{ .name = "UVs", .value = 2 },
     .{ .name = "Distance to borders", .value = 3 },
+    .{ .name = "Reference direction", .value = 4 },
+    .{ .name = "Scaling value", .value = 5 },
+    .{ .name = "Rotation angle", .value = 6 },
+    .{ .name = "Fragment scaling value", .value = 7 },
+    .{ .name = "Fragment rotation angle", .value = 8 },
 };
 
 const TnBData = struct {
@@ -53,7 +58,6 @@ const TnBData = struct {
     procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
     scaling_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
     rotation_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
-    rotation_3D_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
     texture_initialized: bool = false,
     position_vbo: ?VBO = null,
     normal_vbo: ?VBO = null,
@@ -118,6 +122,7 @@ module: Module = .{
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
+        .surfaceMeshDataUpdatedWithCells = surfaceMeshDataUpdatedWithCells,
         .rightPanel = rightPanel,
         .draw = draw,
     },
@@ -173,6 +178,66 @@ pub fn surfaceMeshStdDataChanged(
             }
         },
         else => return, // Ignore other standard data changes
+    }
+}
+
+/// we create a TBO to store a scaling value (f32) for each sample
+/// since scaling field is store at vertex and samples ID at faces we have
+/// to get sample ID from vertex by searching similar sampleID in incident faces
+/// For now, we make the assumption that only samples are in arraylist cells
+pub fn surfaceMeshDataUpdatedWithCells(m: *Module, surface_mesh: *SurfaceMesh, cell_type: SurfaceMesh.CellType, data_gen: *const DataGen, cells: std.ArrayList(SurfaceMesh.Cell)) void {
+    const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
+    const tnb_data = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
+    if (cell_type != .vertex) return;
+
+    if (tnb_data.scaling_fieldData) |field| {
+        if (field.gen() == data_gen) {
+            for (cells.items) |cell| {
+                // we only care about cells which have a sample snapped to
+                const value_sample_snapped_to_cell = tnb_data.parameterization_data.samplesID_per_vertex.value(cell);
+                if (value_sample_snapped_to_cell == -1) continue;
+
+                // TODO Gain performances by using persistant pointer on Buffer
+                const nb_samples = tnb_data.parameterization_data.samples.?.nbPoints();
+                tnb_data.procedural_texturing_parameters.tbo_scaling_tile.memoryAllocationForMapping(nb_samples * @sizeOf(f32), gl.R32F, gl.RED, gl.FLOAT);
+
+                gl.BindBuffer(gl.TEXTURE_BUFFER, tnb_data.procedural_texturing_parameters.tbo_scaling_tile.index);
+                defer gl.BindBuffer(gl.TEXTURE_BUFFER, 0);
+                const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
+                const array_tbo: [*]f32 = @ptrCast(@alignCast(ptr_tbo));
+
+                array_tbo[@intCast(value_sample_snapped_to_cell)] = tnb_data.scaling_fieldData.?.value(cell);
+
+                // TODO Useless to do more than once
+                gl.TexBuffer(gl.TEXTURE_BUFFER, gl.R32F, tnb_data.procedural_texturing_parameters.tbo_scaling_tile.index);
+                _ = gl.UnmapBuffer(gl.TEXTURE_BUFFER);
+            }
+        }
+    }
+    if (tnb_data.rotation_fieldData) |field| {
+        if (field.gen() == data_gen) {
+            for (cells.items) |cell| {
+                // we only care about cells which have a sample snapped to
+                const value_sample_snapped_to_cell = tnb_data.parameterization_data.samplesID_per_vertex.value(cell);
+                if (value_sample_snapped_to_cell == -1) continue;
+
+                // TODO Gain performances by using persistant pointer on Buffer
+                const nb_samples = tnb_data.parameterization_data.samples.?.nbPoints();
+                tnb_data.procedural_texturing_parameters.tbo_rotation_tile.memoryAllocationForMapping(nb_samples * @sizeOf(vec.Vec4f), gl.RGBA32F, gl.RGBA, gl.FLOAT);
+
+                gl.BindBuffer(gl.TEXTURE_BUFFER, tnb_data.procedural_texturing_parameters.tbo_rotation_tile.index);
+                defer gl.BindBuffer(gl.TEXTURE_BUFFER, 0);
+                const ptr_tbo = gl.MapBuffer(gl.TEXTURE_BUFFER, gl.READ_WRITE);
+                const array_tbo: [*]vec.Vec4f = @ptrCast(@alignCast(ptr_tbo));
+
+                const rotation_value = tnb_data.rotation_fieldData.?.value(cell);
+                array_tbo[@intCast(value_sample_snapped_to_cell)] = .{ rotation_value[0], rotation_value[1], rotation_value[2], 0 };
+
+                // TODO Useless to do more than once
+                gl.TexBuffer(gl.TEXTURE_BUFFER, gl.RGBA32F, tnb_data.procedural_texturing_parameters.tbo_rotation_tile.index);
+                _ = gl.UnmapBuffer(gl.TEXTURE_BUFFER);
+            }
+        }
     }
 }
 
@@ -251,6 +316,7 @@ pub fn rightPanel(m: *Module) void {
 
         const triangle_uvs_data = tnb_data.parameterization_data.triangle_uvs;
         tnb_data.procedural_texturing_parameters.face_triangle_uvs = smpt.app_ctx.surface_mesh_store.dataVBO(.face, TriangleUVs, triangle_uvs_data);
+        tnb_data.procedural_texturing_parameters.dir_ref_tile_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, tnb_data.parameterization_data.ref_direction_per_sample);
     }
     if (disabled) {
         imgui_utils.tooltip(
@@ -466,18 +532,11 @@ pub fn rightPanel(m: *Module) void {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.scaling_fieldData = null;
-                    tnb_data.procedural_texturing_parameters.vertices_scaling_vbo = null;
-                    tnb_data.procedural_texturing_parameters.unsetVertexAttribArray(.scaling_field);
                     smpt.app_ctx.requestRedraw();
                 },
                 .changed => |field| {
                     tnb_data.scaling_fieldData = field;
-                    if (tnb_data.scaling_fieldData) |scaling_field| {
-                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, f32, scaling_field);
-                        tnb_data.procedural_texturing_parameters.setVertexAttribArray(.scaling_field, field_vbo, 0, 0);
-                        tnb_data.procedural_texturing_parameters.vertices_scaling_vbo = field_vbo;
-                        smpt.app_ctx.requestRedraw();
-                    }
+                    smpt.app_ctx.requestRedraw();
                 },
             }
             c.ImGui_PopID();
@@ -489,19 +548,11 @@ pub fn rightPanel(m: *Module) void {
                 .unchanged => {},
                 .cleared => {
                     tnb_data.rotation_fieldData = null;
-                    tnb_data.rotation_3D_fieldData = null;
-                    tnb_data.procedural_texturing_parameters.vertices_rotation_vbo = null;
-                    tnb_data.procedural_texturing_parameters.unsetVertexAttribArray(.rotation_field);
                     smpt.app_ctx.requestRedraw();
                 },
                 .changed => |field| {
                     tnb_data.rotation_fieldData = field;
-                    if (tnb_data.rotation_fieldData) |rotation_field| {
-                        const field_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, rotation_field);
-                        tnb_data.procedural_texturing_parameters.setVertexAttribArray(.rotation_field, field_vbo, 0, 0);
-                        tnb_data.procedural_texturing_parameters.vertices_rotation_vbo = field_vbo;
-                        smpt.app_ctx.requestRedraw();
-                    }
+                    smpt.app_ctx.requestRedraw();
                 },
             }
             c.ImGui_PopID();

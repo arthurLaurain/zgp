@@ -108,7 +108,7 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
     // Memory allocation for TBO
     const nb_triangle: usize = ibo.nb_indices / 3;
     const nb_vertices: usize = @intCast(@divExact(vertices_position_vbo.size, @sizeOf(Vec3f)));
-    tbo.memoryAllocationForMapping(@intCast(nb_vertices * @sizeOf(Vec4f) * max_distorsion_slots_per_vertex));
+    tbo.memoryAllocationForMapping(@intCast(nb_vertices * @sizeOf(Vec4f) * max_distorsion_slots_per_vertex), gl.RGBA32F, gl.RGBA, gl.FLOAT);
 
     //Map TBO
     gl.BindBuffer(gl.TEXTURE_BUFFER, tbo.index);

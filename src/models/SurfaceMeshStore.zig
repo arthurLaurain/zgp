@@ -247,6 +247,31 @@ pub fn surfaceMeshDataUpdated(
     }
 }
 
+pub fn surfaceMeshDataUpdatedWithCells(
+    sms: *SurfaceMeshStore,
+    sm: *SurfaceMesh,
+    comptime cell_type: SurfaceMesh.CellType,
+    comptime T: type,
+    data: SurfaceMesh.CellData(cell_type, T),
+    cells: std.ArrayList(SurfaceMesh.Cell),
+) void {
+    // if it exists, update the VBO with the data
+    const maybe_vbo = sms.data_vbo.getPtr(data.gen());
+    if (maybe_vbo) |vbo| {
+        vbo.fillFrom(T, data.data);
+    }
+
+    // update the last known data update time
+    sms.data_last_update.put(sms.allocator, data.gen(), std.Io.Timestamp.now(sms.io, .real)) catch |err| {
+        zgp_log.err("Failed to update last update time for SurfaceMesh data: {}", .{err});
+    };
+
+    // dispatch call to listeners
+    for (sms.listeners.items) |module| {
+        module.surfaceMeshDataUpdatedWithCell(sm, cell_type, data.gen(), cells);
+    }
+}
+
 pub fn surfaceMeshConnectivityUpdated(sms: *SurfaceMeshStore, sm: *SurfaceMesh) void {
     if (builtin.mode == .Debug) {
         const ok = sm.checkIntegrity() catch |err| {

@@ -167,50 +167,6 @@ pub fn printArrayList(a: std.ArrayList(std.ArrayList(SurfaceMesh.Cell))) void {
     }
 }
 
-pub fn getNeighTriangleID(
-    sm: *SurfaceMesh,
-    k: u32,
-    source: SurfaceMesh.Cell,
-) !std.ArrayList(std.ArrayList(SurfaceMesh.Cell)) {
-    var rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)) = .empty;
-
-    var marker = try SurfaceMesh.DartMarker.init(sm);
-    defer marker.deinit();
-
-    var first_ring: std.ArrayList(SurfaceMesh.Cell) = .empty;
-    try first_ring.append(sm.allocator, source);
-    try rings.append(sm.allocator, first_ring);
-
-    marker.mark(source.dart());
-
-    var level: u32 = 0;
-    while (level < k) : (level += 1) {
-        const current_ring = rings.items[level];
-
-        var next_ring: std.ArrayList(SurfaceMesh.Cell) = .empty;
-
-        for (current_ring.items) |cell| {
-            var current: u32 = cell.dart();
-            while (true) {
-                if (!marker.isMarked(current)) {
-                    next_ring.append(sm.allocator, .{ .vertex = sm.phi2(current) }) catch unreachable;
-                    marker.mark(current);
-                }
-                current = sm.phi1(sm.phi2(current));
-                if (current == cell.dart()) break;
-            }
-        }
-
-        if (next_ring.items.len == 0)
-            break;
-
-        try rings.append(sm.allocator, next_ring);
-    }
-
-    printArrayList(rings);
-    return rings;
-}
-
 pub fn uniformMean(
     rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)),
     field: SurfaceMesh.CellData(.vertex, f32),
@@ -228,53 +184,6 @@ pub fn uniformMean(
     if (count == 0) return sum;
     return sum / count;
 }
-
-pub fn gaussianMean(
-    rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)),
-    field: SurfaceMesh.CellData(.vertex, f32),
-    sigma: f32,
-) f32 {
-    var sum: f32 = 0;
-    var weight_sum: f32 = 0;
-
-    for (rings.items, 0..) |ring, i| {
-        const fi: f32 = @floatFromInt(i);
-        const w = std.math.exp(-(fi * fi) / (2.0 * sigma * sigma));
-
-        for (ring.items) |cell| {
-            sum += w * field.value(cell);
-            weight_sum += w;
-        }
-    }
-
-    return if (weight_sum == 0) sum else sum / weight_sum;
-}
-
-// pub fn smoothField(field: SurfaceMesh.CellData(.vertex, f32), sm: *SurfaceMesh, k: u32) !void {
-//     var cell_it = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
-//     defer cell_it.deinit();
-//     var field_copy = try sm.allocator.alloc(f32, sm.nbCells(.vertex));
-//     defer sm.allocator.free(field_copy);
-
-//     @memset(field_copy, 0);
-//     var j: usize = 0;
-//     while (cell_it.next()) |cell| {
-//         var rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)) = getNeighTriangleID(sm, k, cell) catch unreachable;
-//         field_copy[j] = uniformMean(rings, field);
-//         for (0..rings.items.len) |i| {
-//             rings.items[i].deinit(sm.allocator);
-//         }
-//         rings.deinit(sm.allocator);
-//         j = j + 1;
-//     }
-
-//     cell_it.reset();
-//     j = 0;
-//     while (cell_it.next()) |cell| {
-//         field.valuePtrByIndex(sm.cellIndex(cell)).* = field_copy[j];
-//         j = j + 1;
-//     }
-// }
 
 pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
     const fg: *FieldsGenerator = @alignCast(@fieldParentPtr("module", m));
@@ -389,12 +298,14 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
 
                 if (fg.field_edited) |celldata| {
                     const modState = c.SDL_GetModState();
-
+                    var list_vertices_changed: std.ArrayList(SurfaceMesh.Cell) = .empty;
+                    defer list_vertices_changed.deinit(fg.app_ctx.allocator);
                     const action: SelectionAction = if (modState & c.SDL_KMOD_SHIFT != 0) .remove else .add;
 
                     var op_param: FieldOperationParam = .{};
                     const info = sm_store.surfaceMeshInfo(sm);
                     for (vertices_in_sphere.items) |cell| {
+                        list_vertices_changed.append(fg.app_ctx.allocator, cell) catch unreachable;
                         switch (fg.op) {
                             exponential_decay => {
                                 const v1 = info.std_datas.vertex_position.?.value(cell);
@@ -414,7 +325,9 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                             },
                         }
                     }
-                    sm_store.surfaceMeshDataUpdated(sm, .vertex, f32, celldata);
+                    if (vertices_in_sphere.items.len > 0) {
+                        sm_store.surfaceMeshDataUpdatedWithCells(sm, .vertex, f32, celldata, list_vertices_changed);
+                    }
                     break :blk true;
                 }
             }

@@ -64,6 +64,12 @@ pub const ParameterizationData = struct {
 
     uv_computed: bool = false,
 
+    // we keep track of sampleID of samples for each underlying surfacemesh vertices to make easier later field computations
+    // we store -1 for vertices which don't have sample on them
+    samplesID_per_vertex: SurfaceMesh.CellData(.vertex, i32) = undefined,
+
+    ref_direction_per_sample: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
+
     pub const TriangleUVs = struct {
         samples: [3]u32, // the index of the 3 samples (i.e. patches) that contain the triangle
         uvs: [3][3]Vec2f, // the UV coordinates of the 3 vertices of the triangle in each of the 3 patches
@@ -133,6 +139,7 @@ pub const ParameterizationData = struct {
             pd.sample_surface_point = try pd.samples.?.addData(SurfacePoint, "surface_point");
             pd.sample_color = try pd.samples.?.addData(Vec3f, "color");
             pd.app_ctx.point_cloud_store.setPointCloudStdData(pd.samples.?, .{ .position = pd.sample_position });
+            pd.samplesID_per_vertex = try pd.surface_mesh.addData(.vertex, i32, "samplesID");
         }
 
         const t = std.Io.Timestamp.now(pd.app_ctx.io, .real);
@@ -148,6 +155,12 @@ pub const ParameterizationData = struct {
             pd.sample_surface_point,
             poisson_radius,
         );
+
+        // init samplesID_per_vertex to -1 for each underlying surfacemesh vertices
+        var underlying_sm_v_it = pd.surface_mesh.dartIterator();
+        while (underlying_sm_v_it.next()) |dart| {
+            pd.samplesID_per_vertex.valuePtr(.{ .vertex = dart }).* = -1;
+        }
 
         // snap samples to vertices
         // map each vertex index to the first sample that is snapped to it so that we can detect & remove samples that are snapped to the same vertex
@@ -213,6 +226,7 @@ pub const ParameterizationData = struct {
                 try vertex_sample.put(pd.app_ctx.allocator, snapped_to_index, sample);
                 sp.*.type = .{ .vertex = snapped_to };
                 pd.sample_position.valuePtr(sample).* = vertex_position.value(snapped_to);
+                pd.samplesID_per_vertex.valuePtr(.{ .vertex = snapped_to.dart() }).* = @intCast(sample);
             }
         }
 
@@ -278,6 +292,7 @@ pub const ParameterizationData = struct {
             pd.ssm_vertex_position = try pd.samples_surface_mesh.?.addData(.vertex, Vec3f, "position");
             pd.ssm_vertex_sample = try pd.samples_surface_mesh.?.addData(.vertex, PointCloud.Point, "sample");
             pd.ssm_edge_path = try pd.samples_surface_mesh.?.addData(.edge, std.ArrayList(SurfaceMesh.Dart), "edge_path");
+            pd.ref_direction_per_sample = try pd.samples_surface_mesh.?.addData(.vertex, Vec3f, "dir_ref_tile");
             pd.app_ctx.surface_mesh_store.setSurfaceMeshStdData(pd.samples_surface_mesh.?, .{ .vertex_position = pd.ssm_vertex_position });
         }
 
@@ -483,6 +498,27 @@ pub const ParameterizationData = struct {
                 edge_marker.mark(.{ .edge = d });
             }
             pd.ssm_edge_path.valuePtr(e).* = path;
+        }
+
+        var sample_it: SurfaceMesh.CellIterator = try .init(pd.samples_surface_mesh.?, .vertex);
+        defer sample_it.deinit();
+
+        const info = pd.app_ctx.surface_mesh_store.surfaceMeshInfo(pd.surface_mesh);
+        while (sample_it.next()) |ssm_vertex| {
+            const sample = pd.ssm_vertex_sample.value(ssm_vertex);
+            const underlying_vertex = pd.sample_surface_point.value(sample).type.vertex;
+
+            const it_vertex = pd.intrinsic_triangulation_data.extrinsic_vertex_intrinsic_vertex.value(underlying_vertex);
+            const sp = pd.intrinsic_triangulation_data.intrinsic_vertex_extrinsic_sp.value(it_vertex);
+            const ref_dart = sp.type.vertex.dart();
+
+            const next_vertex: SurfaceMesh.Cell = .{ .vertex = pd.surface_mesh.phi1(ref_dart) };
+            const edge_direction = vec.sub3f(info.std_datas.vertex_position.?.value(next_vertex), info.std_datas.vertex_position.?.value(underlying_vertex));
+
+            const normal = vec.normalized3f(info.std_datas.vertex_normal.?.value(underlying_vertex));
+            const tangent = vec.sub3f(edge_direction, vec.mulScalar3f(normal, vec.dot3f(edge_direction, normal)));
+            const ref_direction = vec.normalized3f(tangent);
+            pd.ref_direction_per_sample.valuePtr(ssm_vertex).* = ref_direction;
         }
         pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, shortest_paths_set);
         pd.app_ctx.requestRedraw();

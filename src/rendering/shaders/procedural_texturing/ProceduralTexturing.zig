@@ -54,17 +54,18 @@ tbo_info_vertices_uniform: c_int = undefined,
 tbo_vertices_normal_uniform: c_int = undefined,
 tbo_uvs_triangles_uniform: c_int = undefined,
 tbo_distorsions_uniform: c_int = undefined,
+tbo_scaling_uniform: c_int = undefined,
+tbo_rotation_uniform: c_int = undefined,
+tbo_dir_ref_tile_uniform: c_int = undefined,
 visu_option_uniform: c_int = undefined,
 visu_sample_uniform: c_int = undefined,
 override_param_uniform: c_int = undefined,
 draw_albedo_focused_patch_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
-scaling_field_attrib: VAO.VertexAttribInfo = undefined,
-rotation_field_attrib: VAO.VertexAttribInfo = undefined,
 edge_ref_attrib: VAO.VertexAttribInfo = undefined,
 
-const VertexAttrib = enum { position, edge_ref, scaling_field, rotation_field };
+const VertexAttrib = enum { position, edge_ref };
 
 fn init() !ProceduralTexturing {
     var pt: ProceduralTexturing = .{
@@ -107,6 +108,9 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.tbo_vertices_normal_uniform = gl.GetUniformLocation(pt.program.index, "u_vertices_normal");
     pt.tbo_uvs_triangles_uniform = gl.GetUniformLocation(pt.program.index, "u_triangle_uvs");
     pt.tbo_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_distorsions");
+    pt.tbo_scaling_uniform = gl.GetUniformLocation(pt.program.index, "u_scaling_tile");
+    pt.tbo_rotation_uniform = gl.GetUniformLocation(pt.program.index, "u_rotation_tile");
+    pt.tbo_dir_ref_tile_uniform = gl.GetUniformLocation(pt.program.index, "u_dir_ref_tile");
     pt.visu_option_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_option");
     pt.visu_sample_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_sample");
     pt.override_param_uniform = gl.GetUniformLocation(pt.program.index, "u_override_param");
@@ -114,20 +118,6 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
 
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
-        .size = 3,
-        .type = gl.FLOAT,
-        .normalized = false,
-    };
-
-    pt.scaling_field_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_scaling_field")),
-        .size = 1,
-        .type = gl.FLOAT,
-        .normalized = false,
-    };
-
-    pt.rotation_field_attrib = .{
-        .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_rotation_field")),
         .size = 3,
         .type = gl.FLOAT,
         .normalized = false,
@@ -155,19 +145,18 @@ pub const Parameters = struct {
     light_position: [3]f32 = .{ 10, 0, 100 },
     tbo_info_triangles: TextureBuffer,
     tbo_info_vertices: TextureBuffer,
-    // tbo_edge_ref: TextureBuffer,
     tbo_normal_vertices: TextureBuffer,
     tbo_neigh_selected_vertices: TextureBuffer,
     tbo_triangle_uvs: TextureBuffer,
     tbo_distorsions: TextureBuffer,
-    // tbo_scaling_tile: TextureBuffer,
-    // tbo_rotation_tile: TextureBuffer,
+    tbo_scaling_tile: TextureBuffer,
+    tbo_rotation_tile: TextureBuffer,
+    tbo_dir_ref_tile: TextureBuffer,
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
-    vertices_scaling_vbo: ?VBO = undefined,
-    vertices_rotation_vbo: ?VBO = undefined,
     face_triangle_uvs: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
+    dir_ref_tile_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
     compensate_distorsions: bool = false,
     mixmax_micro_priority: f32 = 0.001,
@@ -188,6 +177,9 @@ pub const Parameters = struct {
             .tbo_neigh_selected_vertices = .init(),
             .tbo_triangle_uvs = .init(),
             .tbo_distorsions = .init(),
+            .tbo_scaling_tile = .init(),
+            .tbo_rotation_tile = .init(),
+            .tbo_dir_ref_tile = .init(),
         };
     }
 
@@ -195,12 +187,12 @@ pub const Parameters = struct {
         p.vao.deinit();
         p.tbo_info_triangles.deinit();
         p.tbo_info_vertices.deinit();
-        // p.tbo_edge_ref.deinit();
         p.tbo_normal_vertices.deinit();
         p.tbo_neigh_selected_vertices.deinit();
-        // p.tbo_scaling_tile.deinit();
-        // p.tbo_rotation_tile.deinit();
+        p.tbo_scaling_tile.deinit();
+        p.tbo_rotation_tile.deinit();
         p.tbo_triangle_uvs.deinit();
+        p.tbo_dir_ref_tile.deinit();
         p.textureData.exemplar_texture.deinit();
         p.tbo_distorsions.deinit();
         if (p.textureData.exemplar_texture_normal) |*t| {
@@ -220,8 +212,6 @@ pub const Parameters = struct {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
             .edge_ref => p.shader.edge_ref_attrib,
-            .scaling_field => p.shader.scaling_field_attrib,
-            .rotation_field => p.shader.rotation_field_attrib,
         };
         p.vao.enableVertexAttribArray(attrib_info, vbo, stride, pointer);
     }
@@ -229,8 +219,6 @@ pub const Parameters = struct {
         const attrib_info = switch (attrib) {
             .position => p.shader.position_attrib,
             .edge_ref => p.shader.edge_ref_attrib,
-            .scaling_field => p.shader.scaling_field_attrib,
-            .rotation_field => p.shader.rotation_field_attrib,
         };
         p.vao.disableVertexAttribArray(attrib_info);
     }
@@ -277,6 +265,17 @@ pub const Parameters = struct {
         gl.ActiveTexture(gl.TEXTURE0 + 8);
         gl.BindBuffer(gl.TEXTURE_BUFFER, p.tbo_distorsions.index);
         gl.Uniform1i(p.shader.tbo_distorsions_uniform, 8);
+
+        gl.ActiveTexture(gl.TEXTURE0 + 9);
+        gl.BindBuffer(gl.TEXTURE_BUFFER, p.tbo_scaling_tile.index);
+        gl.Uniform1i(p.shader.tbo_scaling_uniform, 9);
+
+        gl.ActiveTexture(gl.TEXTURE0 + 10);
+        gl.BindBuffer(gl.TEXTURE_BUFFER, p.tbo_rotation_tile.index);
+        gl.Uniform1i(p.shader.tbo_rotation_uniform, 10);
+
+        p.tbo_dir_ref_tile.bindBufferToShader(11, p.dir_ref_tile_vbo.index, gl.RGB32F);
+        gl.Uniform1i(p.shader.tbo_dir_ref_tile_uniform, 11);
 
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));

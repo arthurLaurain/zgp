@@ -9,6 +9,7 @@ const Vec3f = vec.Vec3f;
 const Data = @import("../utils/data.zig").Data;
 
 index: c_uint = 0,
+allocated_size: usize = 0,
 
 pub fn init() TextureBuffer {
     var t: TextureBuffer = .{};
@@ -16,11 +17,19 @@ pub fn init() TextureBuffer {
     return t;
 }
 
-pub fn memoryAllocationForMapping(t: *TextureBuffer, size: isize) void {
+pub fn memoryAllocationForMapping(t: *TextureBuffer, size: isize, internal_format: u32, format: u32, datatype: u32) void {
+    if (t.allocated_size != 0) return; // Memory already allocated
     gl.BindBuffer(gl.TEXTURE_BUFFER, t.index);
     defer gl.BindBuffer(gl.TEXTURE_BUFFER, 0);
-
     gl.BufferData(gl.TEXTURE_BUFFER, size, null, gl.DYNAMIC_DRAW);
+    gl.ClearBufferData(
+        gl.TEXTURE_BUFFER,
+        internal_format,
+        format,
+        datatype,
+        null,
+    );
+    t.allocated_size = @intCast(size);
 }
 
 pub fn bindBufferToShader(t: *TextureBuffer, texture_unit: u32, srcBuffer: u32, internalFormat: u32) void {
