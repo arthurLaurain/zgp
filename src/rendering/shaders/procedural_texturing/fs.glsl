@@ -440,6 +440,7 @@ void main() {
     break;
     // Tile rotation angle
     case 6:
+    // f_color = vec4(rotation_value_a[u_visu_sample] / (2. * PI), 0, 0, 1);
     f_color = vec4(angle_per_sample[u_visu_sample] / (2. * PI), 0, 0, 1);
     break;
     // Fragment scaling value

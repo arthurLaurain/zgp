@@ -72,7 +72,7 @@ const TnBData = struct {
         tbd.procedural_texturing_parameters.initFieldTBOBuffer(tbd.parameterization_data.samplesID_per_vertex.data.nbElements());
         tbd.vertex_position = vertex_position;
 
-        const s = "mud";
+        const s = "rock";
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
@@ -193,12 +193,12 @@ pub fn surfaceMeshDataUpdatedWithCells(m: *Module, surface_mesh: *SurfaceMesh, c
 
     if (tnb_data.scaling_fieldData) |field| {
         if (field.gen() == data_gen) {
-            tnb_data.procedural_texturing_parameters.updateFieldTBO(cells, tnb_data.parameterization_data.samplesID_per_vertex, f32, field);
+            tnb_data.procedural_texturing_parameters.tbo_scaling_tile.updateFieldTBO(cells, tnb_data.parameterization_data.samplesID_per_vertex, f32, field);
         }
     }
     if (tnb_data.rotation_fieldData) |field| {
         if (field.gen() == data_gen) {
-            tnb_data.procedural_texturing_parameters.updateFieldTBO(cells, tnb_data.parameterization_data.samplesID_per_vertex, Vec3f, field);
+            tnb_data.procedural_texturing_parameters.tbo_rotation_tile.updateFieldTBO(cells, tnb_data.parameterization_data.samplesID_per_vertex, Vec3f, field);
         }
     }
 }
@@ -508,7 +508,7 @@ pub fn rightPanel(m: *Module) void {
                     while (cell_iterator.next()) |v| {
                         cell_list.append(smpt.app_ctx.allocator, v) catch unreachable;
                     }
-                    tnb_data.procedural_texturing_parameters.updateFieldTBO(cell_list, tnb_data.parameterization_data.samplesID_per_vertex, f32, field);
+                    tnb_data.procedural_texturing_parameters.tbo_scaling_tile.updateFieldTBO(cell_list, tnb_data.parameterization_data.samplesID_per_vertex, f32, field);
                     smpt.app_ctx.requestRedraw();
                 },
             }
@@ -533,7 +533,7 @@ pub fn rightPanel(m: *Module) void {
                     while (cell_iterator.next()) |v| {
                         cell_list.append(smpt.app_ctx.allocator, v) catch unreachable;
                     }
-                    tnb_data.procedural_texturing_parameters.updateFieldTBO(cell_list, tnb_data.parameterization_data.samplesID_per_vertex, Vec3f, field);
+                    tnb_data.procedural_texturing_parameters.tbo_rotation_tile.updateFieldTBO(cell_list, tnb_data.parameterization_data.samplesID_per_vertex, Vec3f, field);
                     smpt.app_ctx.requestRedraw();
                 },
             }

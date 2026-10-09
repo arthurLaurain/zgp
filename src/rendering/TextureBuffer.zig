@@ -48,6 +48,16 @@ pub fn updateTextureBufferObject(tbo: *TextureBuffer, index: usize, comptime T: 
     gl.BufferSubData(gl.TEXTURE_BUFFER, @intCast(offset), @intCast(size), @ptrCast(&value));
 }
 
+pub fn updateFieldTBO(tbo: *TextureBuffer, cells: std.ArrayList(SurfaceMesh.Cell), samplesID_per_vertex: SurfaceMesh.CellData(.vertex, i32), field_datatype: type, field: SurfaceMesh.CellData(.vertex, field_datatype)) void {
+    for (cells.items) |cell| {
+
+        // we only care about cells which have a sample snapped to
+        const value_sample_snapped_to_cell = samplesID_per_vertex.value(cell);
+        if (value_sample_snapped_to_cell == -1) continue;
+        tbo.updateTextureBufferObject(@intCast(value_sample_snapped_to_cell), field_datatype, field.value(cell));
+    }
+}
+
 pub fn bindBufferToShader(t: *TextureBuffer, texture_unit: u32, srcBuffer: u32, internalFormat: u32) void {
     t.buffer_index = srcBuffer;
     gl.ActiveTexture(gl.TEXTURE0 + texture_unit);

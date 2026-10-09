@@ -175,7 +175,6 @@ pub const Parameters = struct {
             .vao = VAO.init(),
             .tbo_info_triangles = .init(),
             .tbo_info_vertices = .init(),
-            // .tbo_edge_ref = .init(),
             .tbo_normal_vertices = .init(),
             .tbo_neigh_selected_vertices = .init(),
             .tbo_triangle_uvs = .init(),
@@ -231,13 +230,13 @@ pub const Parameters = struct {
         p.tbo_rotation_tile.bufferMemoryAllocation(@intCast(size * @sizeOf(Vec3f)), gl.RGB32F, gl.RGB, gl.FLOAT);
     }
 
-    pub fn updateFieldTBO(p: *Parameters, cells: std.ArrayList(SurfaceMesh.Cell), samplesID_per_vertex: SurfaceMesh.CellData(.vertex, i32), field_datatype: type, field: SurfaceMesh.CellData(.vertex, field_datatype)) void {
+    pub fn updateFieldTBO(tbo: TextureBuffer, cells: std.ArrayList(SurfaceMesh.Cell), samplesID_per_vertex: SurfaceMesh.CellData(.vertex, i32), field_datatype: type, field: SurfaceMesh.CellData(.vertex, field_datatype)) void {
         for (cells.items) |cell| {
 
             // we only care about cells which have a sample snapped to
             const value_sample_snapped_to_cell = samplesID_per_vertex.value(cell);
             if (value_sample_snapped_to_cell == -1) continue;
-            p.tbo_scaling_tile.updateTextureBufferObject(@intCast(value_sample_snapped_to_cell), field_datatype, field.value(cell));
+            tbo.updateTextureBufferObject(@intCast(value_sample_snapped_to_cell), field_datatype, field.value(cell));
         }
     }
 
