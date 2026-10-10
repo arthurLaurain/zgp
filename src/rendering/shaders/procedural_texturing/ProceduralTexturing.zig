@@ -59,9 +59,9 @@ tbo_distorsions_uniform: c_int = undefined,
 tbo_scaling_uniform: c_int = undefined,
 tbo_rotation_uniform: c_int = undefined,
 tbo_dir_ref_tile_uniform: c_int = undefined,
+tbo_normal_samples_uniform: c_int = undefined,
 visu_option_uniform: c_int = undefined,
 visu_sample_uniform: c_int = undefined,
-override_param_uniform: c_int = undefined,
 draw_albedo_focused_patch_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
@@ -115,9 +115,8 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.tbo_dir_ref_tile_uniform = gl.GetUniformLocation(pt.program.index, "u_dir_ref_tile");
     pt.visu_option_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_option");
     pt.visu_sample_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_sample");
-    pt.override_param_uniform = gl.GetUniformLocation(pt.program.index, "u_override_param");
     pt.draw_albedo_focused_patch_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_albedo_one_patch");
-
+    pt.tbo_normal_samples_uniform = gl.GetUniformLocation(pt.program.index, "u_normal_samples");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -154,19 +153,20 @@ pub const Parameters = struct {
     tbo_scaling_tile: TextureBuffer,
     tbo_rotation_tile: TextureBuffer,
     tbo_dir_ref_tile: TextureBuffer,
+    tbo_normal_samples: TextureBuffer,
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
     face_triangle_uvs: ?VBO = undefined,
     distorsions_vbo: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
     dir_ref_tile_vbo: VBO = undefined,
+    normal_samples_vbo: VBO = undefined,
     scale_tex_coords: f32 = 1,
     compensate_distorsions: bool = false,
     mixmax_micro_priority: f32 = 0.001,
     blending_mode: BlendingMode = BlendingMode.LINEAR,
     visu_option: u32 = 0,
     visu_sample: u32 = 0,
-    override_param: bool = true,
     draw_albedo_for_focused_patch: bool = false,
 
     pub fn init() Parameters {
@@ -182,6 +182,7 @@ pub const Parameters = struct {
             .tbo_scaling_tile = .init(),
             .tbo_rotation_tile = .init(),
             .tbo_dir_ref_tile = .init(),
+            .tbo_normal_samples = .init(),
         };
     }
 
@@ -208,6 +209,7 @@ pub const Parameters = struct {
         }
         p.shader.deinit();
         p.edge_ref_vbo.deinit();
+        p.tbo_normal_samples.deinit();
     }
 
     pub fn setVertexAttribArray(p: *Parameters, attrib: VertexAttrib, vbo: VBO, stride: isize, pointer: usize) void {
@@ -295,6 +297,9 @@ pub const Parameters = struct {
         p.tbo_dir_ref_tile.bindBufferToShader(11, p.dir_ref_tile_vbo.index, gl.RGB32F);
         gl.Uniform1i(p.shader.tbo_dir_ref_tile_uniform, 11);
 
+        p.tbo_normal_samples.bindBufferToShader(12, p.normal_samples_vbo.index, gl.RGB32F);
+        gl.Uniform1i(p.shader.tbo_normal_samples_uniform, 12);
+
         gl.Uniform4fv(p.shader.ambiant_color_uniform, 1, @ptrCast(&p.ambiant_color));
         gl.Uniform3fv(p.shader.light_position_uniform, 1, @ptrCast(&p.light_position));
         gl.UniformMatrix4fv(p.shader.view_matrix_uniform, 1, gl.FALSE, @ptrCast(&p.view_matrix));
@@ -305,7 +310,6 @@ pub const Parameters = struct {
         gl.Uniform1i(p.shader.blending_mode_uniform, @intFromEnum(p.blending_mode));
         gl.Uniform1ui(p.shader.visu_option_uniform, p.visu_option);
         gl.Uniform1ui(p.shader.visu_sample_uniform, p.visu_sample);
-        gl.Uniform1i(p.shader.override_param_uniform, @intFromBool(p.override_param));
         gl.Uniform1i(p.shader.draw_albedo_focused_patch_uniform, @intFromBool(p.draw_albedo_for_focused_patch));
 
         gl.BindVertexArray(p.vao.index);

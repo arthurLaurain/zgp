@@ -30,7 +30,7 @@ const FieldGeneratorData = struct {
     pub fn init() FieldGeneratorData {
         var p = PointSphere.Parameters.init();
         p.sphere_radius = 0.002;
-        p.sphere_color = .{ 0.0, 1.0, 0.0, 1.0 };
+        p.sphere_color = .{ 0.0, 0.0, 1.0, 1.0 };
         return .{
             .point_sphere_shader_parameters = p,
         };
@@ -192,16 +192,16 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
     // only draw selection for the currently selected SurfaceMesh & CellSet
     if (fg.app_ctx.selected_model.modelType() != .surface_mesh) return;
     const sm = fg.app_ctx.selected_model.surface_mesh;
-    const sdp = fg.surface_meshes_data.getPtr(sm).?;
+    const fg_data = fg.surface_meshes_data.getPtr(sm).?;
 
     // draw currently hovered cell
     if (fg.hovered_cell) |_| {
         const modState = c.SDL_GetModState();
         const action: SelectionAction = if (modState & c.SDL_KMOD_SHIFT != 0) .remove else .add;
 
-        const sphere_radius_backup = sdp.point_sphere_shader_parameters.sphere_radius;
-        const sphere_color_backup = sdp.point_sphere_shader_parameters.sphere_color;
-        const sphere_color_basis = sdp.point_sphere_shader_parameters.sphere_color;
+        const sphere_radius_backup = fg_data.point_sphere_shader_parameters.sphere_radius;
+        const sphere_color_backup = fg_data.point_sphere_shader_parameters.sphere_color;
+        const sphere_color_basis = fg_data.point_sphere_shader_parameters.sphere_color;
         const sphere_color: Vec4f = switch (action) {
             .add => .{ sphere_color_basis[0], sphere_color_basis[1], sphere_color_basis[2], 0.5 },
             .remove => blk: {
@@ -209,15 +209,15 @@ pub fn draw(m: *Module, view_matrix: Mat4f, projection_matrix: Mat4f) void {
                 break :blk .{ opposite_color[0], opposite_color[1], opposite_color[2], 0.8 };
             },
         };
-        sdp.point_sphere_shader_parameters.sphere_color = sphere_color;
-        sdp.point_sphere_shader_parameters.model_view_matrix = @bitCast(view_matrix);
-        sdp.point_sphere_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+        fg_data.point_sphere_shader_parameters.sphere_color = sphere_color;
+        fg_data.point_sphere_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+        fg_data.point_sphere_shader_parameters.projection_matrix = @bitCast(projection_matrix);
         gl.Enable(gl.BLEND);
         gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        sdp.point_sphere_shader_parameters.draw(fg.hovered_cell_ibo);
+        fg_data.point_sphere_shader_parameters.draw(fg.hovered_cell_ibo);
         gl.Disable(gl.BLEND);
-        sdp.point_sphere_shader_parameters.sphere_radius = sphere_radius_backup;
-        sdp.point_sphere_shader_parameters.sphere_color = sphere_color_backup;
+        fg_data.point_sphere_shader_parameters.sphere_radius = sphere_radius_backup;
+        fg_data.point_sphere_shader_parameters.sphere_color = sphere_color_backup;
     }
 }
 

@@ -34,6 +34,9 @@ const SurfaceMeshParameterization = @import("SurfaceMeshParameterization.zig");
 const ParameterizationData = @import("SurfaceMeshParameterization.zig").ParameterizationData;
 const TriangleUVs = @import("SurfaceMeshParameterization.zig").ParameterizationData.TriangleUVs;
 const textureDistorsions = @import("../models/surface/textureDistorsions.zig");
+const VS_SIZE = 4096;
+const FS_SIZE = 32768;
+const EXEMPLAR_TEXTURE_PATH_SIZE = 128;
 
 pub const BlendingMode = enum { LINEAR, MIXMAX };
 
@@ -45,8 +48,9 @@ const tnb_visu_option = [_]struct { name: []const u8, value: u32 }{
     .{ .name = "Reference direction", .value = 4 },
     .{ .name = "Scaling value", .value = 5 },
     .{ .name = "Rotation angle", .value = 6 },
-    .{ .name = "Fragment scaling value", .value = 7 },
-    .{ .name = "Fragment rotation angle", .value = 8 },
+    .{ .name = "Sample normal", .value = 7 },
+    .{ .name = "Fragment scaling value", .value = 8 },
+    .{ .name = "Fragment rotation angle", .value = 9 },
 };
 
 const TnBData = struct {
@@ -63,7 +67,7 @@ const TnBData = struct {
     normal_vbo: ?VBO = null,
     draw_texture: bool = true,
     initialized: bool = false,
-    exemplar_texture_path: [128]u8 = [_]u8{0} ** 128,
+    exemplar_texture_path: [EXEMPLAR_TEXTURE_PATH_SIZE]u8 = [_]u8{0} ** EXEMPLAR_TEXTURE_PATH_SIZE,
     current_visu_option: u32 = 0,
     current_focus_sample: u32 = 1,
 
@@ -72,7 +76,7 @@ const TnBData = struct {
         tbd.procedural_texturing_parameters.initFieldTBOBuffer(tbd.parameterization_data.samplesID_per_vertex.data.nbElements());
         tbd.vertex_position = vertex_position;
 
-        const s = "rock";
+        const s = "mud";
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
@@ -261,7 +265,7 @@ pub fn rightPanel(m: *Module) void {
     const info = sm_store.surfaceMeshInfo(sm);
     const tnb_data = smpt.surface_meshes_data.getPtr(sm).?;
 
-    const disabled = info.std_datas.vertex_position == null or info.std_datas.vertex_normal == null or tnb_data.parameterization_data.triangle_uvs.data.data.items.len == 0;
+    const disabled = info.std_datas.vertex_position == null or info.std_datas.vertex_normal == null or !tnb_data.parameterization_data.uv_computed;
     if (disabled) {
         c.ImGui_BeginDisabled(true);
     }
@@ -279,6 +283,7 @@ pub fn rightPanel(m: *Module) void {
         const triangle_uvs_data = tnb_data.parameterization_data.triangle_uvs;
         tnb_data.procedural_texturing_parameters.face_triangle_uvs = smpt.app_ctx.surface_mesh_store.dataVBO(.face, TriangleUVs, triangle_uvs_data);
         tnb_data.procedural_texturing_parameters.dir_ref_tile_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, tnb_data.parameterization_data.ref_direction_per_sample);
+        tnb_data.procedural_texturing_parameters.normal_samples_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, tnb_data.parameterization_data.normal_per_sample);
     }
     if (disabled) {
         imgui_utils.tooltip(
@@ -294,8 +299,8 @@ pub fn rightPanel(m: *Module) void {
             smpt.app_ctx.requestRedraw();
 
         if (c.ImGui_ButtonEx("Reload shader", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-            var buf_vs_source: [16384]u8 = undefined;
-            var buf_fs_source: [16384]u8 = undefined;
+            var buf_vs_source: [VS_SIZE]u8 = undefined;
+            var buf_fs_source: [FS_SIZE]u8 = undefined;
             const vs_source = loadShaderSource(smpt.app_ctx.io, "src/rendering/shaders/procedural_texturing/vs.glsl", &buf_vs_source) catch unreachable;
             const fs_source = loadShaderSource(smpt.app_ctx.io, "src/rendering/shaders/procedural_texturing/fs.glsl", &buf_fs_source) catch unreachable;
 
@@ -418,9 +423,6 @@ pub fn rightPanel(m: *Module) void {
             }
 
             c.ImGui_SeparatorText("Visualization options");
-            if (c.ImGui_Checkbox("Override parameterization", &tnb_data.procedural_texturing_parameters.override_param)) {
-                smpt.app_ctx.requestRedraw();
-            }
             c.ImGui_Text("Visualization object");
             c.ImGui_PushID("Visualization");
             if (c.ImGui_BeginCombo("", tnb_visu_option[@intCast(tnb_data.current_visu_option)].name.ptr, 0)) {

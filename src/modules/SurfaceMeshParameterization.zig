@@ -68,7 +68,10 @@ pub const ParameterizationData = struct {
     // we store -1 for vertices which don't have sample on them
     samplesID_per_vertex: SurfaceMesh.CellData(.vertex, i32) = undefined,
 
+    // for each sample, the reference direction in the tangent space of the underlying SurfaceMesh vertex to which it is snapped
     ref_direction_per_sample: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
+    // for each sample, the normal of the underlying SurfaceMesh vertex to which it is snapped
+    normal_per_sample: SurfaceMesh.CellData(.vertex, Vec3f) = undefined,
 
     pub const TriangleUVs = struct {
         samples: [3]u32, // the index of the 3 samples (i.e. patches) that contain the triangle
@@ -503,21 +506,25 @@ pub const ParameterizationData = struct {
         var sample_it: SurfaceMesh.CellIterator = try .init(pd.samples_surface_mesh.?, .vertex);
         defer sample_it.deinit();
 
-        const info = pd.app_ctx.surface_mesh_store.surfaceMeshInfo(pd.surface_mesh);
+        const info_sm = pd.app_ctx.surface_mesh_store.surfaceMeshInfo(pd.surface_mesh);
+        pd.normal_per_sample = try pd.samples_surface_mesh.?.addData(.vertex, Vec3f, "normal");
+
         while (sample_it.next()) |ssm_vertex| {
-            const sample = pd.ssm_vertex_sample.value(ssm_vertex);
-            const underlying_vertex = pd.sample_surface_point.value(sample).type.vertex;
+            const s = pd.ssm_vertex_sample.value(ssm_vertex);
+            const sm_v = pd.sample_surface_point.value(s).type.vertex; // underlying SurfaceMesh vertex corresponding to the sample
 
-            const it_vertex = pd.intrinsic_triangulation_data.extrinsic_vertex_intrinsic_vertex.value(underlying_vertex);
-            const sp = pd.intrinsic_triangulation_data.intrinsic_vertex_extrinsic_sp.value(it_vertex);
-            const ref_dart = sp.type.vertex.dart();
-
-            const next_vertex: SurfaceMesh.Cell = .{ .vertex = pd.surface_mesh.phi1(ref_dart) };
-            const edge_direction = vec.sub3f(info.std_datas.vertex_position.?.value(next_vertex), info.std_datas.vertex_position.?.value(underlying_vertex));
-
-            const normal = vec.normalized3f(info.std_datas.vertex_normal.?.value(underlying_vertex));
-            const tangent = vec.sub3f(edge_direction, vec.mulScalar3f(normal, vec.dot3f(edge_direction, normal)));
-            const ref_direction = vec.normalized3f(tangent);
+            const normal = vec.normalized3f(info_sm.std_datas.vertex_normal.?.value(sm_v));
+            pd.normal_per_sample.valuePtr(ssm_vertex).* = normal;
+            const origin_it_v = pd.intrinsic_triangulation_data.extrinsic_vertex_intrinsic_vertex.value(sm_v);
+            const next_it_v: SurfaceMesh.Cell = .{
+                .vertex = pd.intrinsic_triangulation_data.intrinsic_surface_mesh.phi1(origin_it_v.dart()),
+            };
+            const next_vertex = pd.intrinsic_triangulation_data.intrinsic_vertex_extrinsic_sp.value(next_it_v).type.vertex;
+            const edge_direction = vec.sub3f(
+                info_sm.std_datas.vertex_position.?.value(next_vertex),
+                info_sm.std_datas.vertex_position.?.value(sm_v),
+            );
+            const ref_direction = vec.normalized3f(edge_direction);
             pd.ref_direction_per_sample.valuePtr(ssm_vertex).* = ref_direction;
         }
         pd.app_ctx.surface_mesh_store.surfaceMeshCellSetUpdated(pd.surface_mesh, shortest_paths_set);
