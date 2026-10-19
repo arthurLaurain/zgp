@@ -49,6 +49,45 @@ uniform samplerBuffer u_rotation_tile;
 uniform samplerBuffer u_dir_ref_tile;
 uniform samplerBuffer u_normal_samples;
 
+////////////////////////////////////// PBR Rendering //////////////////////////////////////
+
+float DistributionGGX(vec3 N, vec3 H, float a)
+{
+    float a2     = a*a;
+    float NdotH  = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH*NdotH;
+	
+    float nom    = a2;
+    float denom  = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom        = PI * denom * denom;
+	
+    return nom / denom;
+}
+
+float GeometrySchlickGGX(float NdotV, float k)
+{
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+	
+    return nom / denom;
+}
+  
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float k)
+{
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx1 = GeometrySchlickGGX(NdotV, k);
+    float ggx2 = GeometrySchlickGGX(NdotL, k);
+	
+    return ggx1 * ggx2;
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+////////////////////////////////////// Mix Max /////////////////////////////////////////////
 // Mix Max (Thank you Romimap <3)
 struct gaussian_distribution {
   float mean;
@@ -135,7 +174,7 @@ mixmaxdata mixMax(vec2 uvA, vec2 uvB, vec2 uvC, vec3 bary, sampler2D albedo, sam
   return compute_mixmax(compute_mixmax(A, B), C);
 }
 
-// Utils functions
+/////////////////////////////////////////// Utilities //////////////////////////////////////////////////
 
 mat3 compute_TBN(vec3 N, vec3 v)
 {
@@ -205,7 +244,7 @@ vec3 idColor(uint id)
   );
 }
 
-// Texture coordinated
+///////////////////////////////////////// Data parsing ////////////////////////////////////////
 const int MAX_DISTORSION_SLOTS_PER_VERTEX = 8;
 
 struct TriangleUVs
@@ -269,7 +308,7 @@ vec2 loadDistordedUV(TriangleUVs triangleUVs, int p, ivec3 id_vertices, vec3 bar
   return bary.x * uv0 + bary.y * uv1 + bary.z * uv2;
 }
 
-// Main
+//////////////////////////////////////////////// MAIN //////////////////////////////////////////////////////////////
 void main() {
   vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
   vec3 L = normalize(u_light_position - v_frag_position);
@@ -399,9 +438,48 @@ void main() {
 
     // Normal mapping
     vec3 normal = normalize(M.normal * 2. - 1.);
-    mat3 TBN = compute_TBN(N, edge_ref);
-    vec3 normalWS = normalize(TBN * normal);
-    result = vec4(M.color * dot(normalWS, L), 1);
+    vec3 view_edge_ref = (u_view_matrix * vec4(edge_ref,0.)).rgb;
+    mat3 TBN = compute_TBN(N, view_edge_ref);
+    vec3 mixmax_albedo = M.color;
+    vec3 mixmax_normal = normalize(TBN * normal);
+    float roughness = M.roughness;
+
+    // We work in camera space
+    vec3 lightColor = vec3(1.);
+    vec3 P = v_frag_position;
+    L = normalize(-P);
+    vec3 V = normalize(-P);
+    vec3 H = normalize(V + L);
+    float NdotV = max(dot(mixmax_normal, V), 0.0);
+    float NdotL = max(dot(mixmax_normal, L), 0.0);
+
+    // Micro-facets distribution
+    float a = max(roughness,0.045);
+    a = a * a;
+    float D = DistributionGGX(mixmax_normal, H, a);
+
+    // Self shadowing approximation
+    float k = (roughness + 1.0);
+    k = (k * k) / 8.0;
+
+    float G = GeometrySmith(mixmax_normal, V, L, k);
+    vec3 F = fresnelSchlick(max(dot(H, V), 0.0), vec3(0.04));
+
+    // Specular reflection Cook-Torrance
+    vec3 numerator = D * G * F;
+    float denominator = max(4.0 * NdotV * NdotL,0.001);
+    vec3 specular = numerator / denominator;
+
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+
+    vec3 diffuse = kD * mixmax_albedo / PI;
+
+    vec3 Lo = (diffuse + specular) * lightColor * NdotL * 2.5;
+    // TODO replace by cube map
+    vec3 ambiant = u_ambiant_color.rgb;
+
+    result = vec4(ambiant + Lo,1.);
   }
   else
   {
