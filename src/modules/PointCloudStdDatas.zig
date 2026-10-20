@@ -7,7 +7,7 @@ const zgp_log = std.log.scoped(.zgp);
 
 const c = @import("c");
 
-const AppContext = @import("../main.zig").AppContext;
+const AppContext = @import("../AppContext.zig");
 const Module = @import("Module.zig");
 const PointCloud = @import("../models/point/PointCloud.zig");
 const PointCloudStore = @import("../models/PointCloudStore.zig");
@@ -19,7 +19,7 @@ const types_utils = @import("../utils/types.zig");
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 
-app_ctx: *AppContext,
+app_ctx: *AppContext = undefined,
 module: Module = .{
     .name = "Point Cloud Std Datas",
     .supported_models = .{ .point_cloud = true },
@@ -28,13 +28,15 @@ module: Module = .{
     },
 },
 
-pub fn init(app_ctx: *AppContext) PointCloudStdDatas {
-    return .{
-        .app_ctx = app_ctx,
-    };
+/// Modules are default-constructed in AppContext init function, and then initialized in AppContext wireUp function.
+pub fn init(pcsd: *PointCloudStdDatas, app_ctx: *AppContext) !void {
+    pcsd.app_ctx = app_ctx;
+    try app_ctx.point_cloud_store.addListener(&pcsd.module);
 }
 
-pub fn deinit(_: *PointCloudStdDatas) void {}
+pub fn deinit(pcsd: *PointCloudStdDatas) void {
+    pcsd.app_ctx.point_cloud_store.removeListener(&pcsd.module);
+}
 
 /// Part of the Module interface.
 /// Show a UI panel to control the standard datas of the selected PointCloud.
@@ -54,60 +56,47 @@ pub fn leftPanel(m: *Module) void {
 
     var buf: [64]u8 = undefined; // guess 64 chars is enough for cell name
     const info = pc_store.point_clouds_info.getPtr(pc).?;
-    const cells = std.fmt.bufPrintZ(&buf, "Points", .{}) catch "";
-    c.ImGui_SeparatorText(cells.ptr);
-    inline for (@typeInfo(PointCloudStdData).@"union".fields) |*field| {
-        c.ImGui_Text(field.name);
-        c.ImGui_SameLine();
-        // align 2 buttons to the right of the text
-        c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + c.ImGui_GetContentRegionAvail().x - 2 * button_width - style.*.ItemSpacing.x);
-        const data_selected = @field(info.std_datas, field.name) != null;
-        if (!data_selected) {
-            c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 128, 128, 200));
-            c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 128, 128, 255));
-            c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 128, 128, 128));
-        }
-        c.ImGui_PushID(field.name);
-        defer c.ImGui_PopID();
-        if (c.ImGui_Button("" ++ c.ICON_FA_DATABASE)) {
-            c.ImGui_OpenPopup("select_data_popup", c.ImGuiPopupFlags_NoReopen);
-        }
-        if (!data_selected) {
-            c.ImGui_PopStyleColorEx(3);
-        }
-        if (c.ImGui_BeginPopup("select_data_popup", 0)) {
-            defer c.ImGui_EndPopup();
-            c.ImGui_PushID("select_data_combobox");
-            defer c.ImGui_PopID();
-            switch (imgui_utils.pointCloudDataComboBox(
-                pc,
-                @typeInfo(field.type).optional.child.DataType,
-                @field(info.std_datas, field.name),
-            )) {
-                .unchanged => {},
-                .cleared => {
-                    pc_store.setPointCloudStdData(pc, @unionInit(PointCloudStdData, field.name, null));
-                    pcsd.app_ctx.requestRedraw();
-                },
-                .changed => |data| {
-                    pc_store.setPointCloudStdData(pc, @unionInit(PointCloudStdData, field.name, data));
-                    pcsd.app_ctx.requestRedraw();
-                },
+    const cells = std.fmt.bufPrintSentinel(&buf, "Points", .{}, 0) catch "";
+    {
+        c.ImGui_SeparatorText(cells.ptr);
+        const std_data_info = @typeInfo(PointCloudStdData).@"union";
+        inline for (std_data_info.field_names, std_data_info.field_types) |field_name, field_type| {
+            c.ImGui_Text(field_name);
+            c.ImGui_SameLine();
+            // align 2 buttons to the right of the text
+            c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + c.ImGui_GetContentRegionAvail().x - 2 * button_width - style.*.ItemSpacing.x);
+            const data_selected = @field(info.std_datas, field_name) != null;
+            if (!data_selected) {
+                c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 128, 128, 200));
+                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 128, 128, 255));
+                c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 128, 128, 128));
             }
-        }
-    }
-
-    c.ImGui_Separator();
-
-    if (c.ImGui_ButtonEx(c.ICON_FA_DATABASE ++ " Create missing std datas", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-        inline for (@typeInfo(PointCloudStdData).@"union".fields) |*field| {
-            if (@field(info.std_datas, field.name) == null) {
-                const maybe_data = pc.addData(@typeInfo(field.type).optional.child.DataType, field.name);
-                if (maybe_data) |data| {
-                    pc_store.setPointCloudStdData(pc, @unionInit(PointCloudStdData, field.name, data));
-                    pcsd.app_ctx.requestRedraw();
-                } else |err| {
-                    zgp_log.err("Error adding {s} ({s}) data: {}", .{ field.name, @typeName(@typeInfo(field.type).optional.child.DataType), err });
+            c.ImGui_PushID(field_name);
+            defer c.ImGui_PopID();
+            if (c.ImGui_Button("" ++ c.ICON_FA_DATABASE)) {
+                _ = c.ImGui_OpenPopup("select_data_popup", c.ImGuiPopupFlags_NoReopen);
+            }
+            if (!data_selected) {
+                c.ImGui_PopStyleColorEx(3);
+            }
+            if (c.ImGui_BeginPopup("select_data_popup", 0)) {
+                defer c.ImGui_EndPopup();
+                c.ImGui_PushID("select_data_combobox");
+                defer c.ImGui_PopID();
+                switch (imgui_utils.pointCloudDataComboBox(
+                    pc,
+                    @typeInfo(field_type).optional.child.DataType,
+                    @field(info.std_datas, field_name),
+                )) {
+                    .unchanged => {},
+                    .cleared => {
+                        pc_store.setPointCloudStdData(pc, @unionInit(PointCloudStdData, field_name, null));
+                        pcsd.app_ctx.view.requestRedraw();
+                    },
+                    .changed => |data| {
+                        pc_store.setPointCloudStdData(pc, @unionInit(PointCloudStdData, field_name, data));
+                        pcsd.app_ctx.view.requestRedraw();
+                    },
                 }
             }
         }
@@ -121,10 +110,10 @@ pub fn leftPanel(m: *Module) void {
 /// The function must have the following signature:
 /// fn(
 ///     pc: *PointCloud,
-///     read_data_1: PointCloud.CellData(...),
-///     read_data_2: PointCloud.CellData(...),
+///     read_data_1: PointCloud.PointData(...),
+///     read_data_2: PointCloud.PointData(...),
 ///     ...
-///     computed_data: PointCloud.CellData(...),
+///     computed_data: PointCloud.PointData(...),
 /// ) !void
 const StdDataComputation = struct {
     reads: []const PointCloudStdDataTag,
@@ -164,9 +153,9 @@ const StdDataComputation = struct {
 /// The order of declaration matters: some computations depend on the result of previous ones
 /// and the "Update outdated std datas" button of the PointCloudStore
 /// computes them in the order of declaration.
-pub const std_data_computations: []const StdDataComputation = &.{};
+const std_data_computations: []const StdDataComputation = &.{};
 
-pub fn dataComputableAndUpToDate(
+fn dataComputableAndUpToDate(
     pcs: *PointCloudStore,
     pc: *PointCloud,
     comptime tag: PointCloudStdDataTag,

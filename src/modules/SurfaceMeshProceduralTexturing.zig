@@ -1,4 +1,5 @@
 const SurfaceMeshProceduralTexturing = @This();
+const zgp_log = std.log.scoped(.zgp);
 
 const std = @import("std");
 const gl = @import("gl");
@@ -9,7 +10,7 @@ const imgui_utils = @import("../ui/imgui.zig");
 
 const c = @import("c");
 
-const AppContext = @import("../main.zig").AppContext;
+const AppContext = @import("../AppContext.zig");
 const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMeshStdData;
@@ -56,70 +57,68 @@ const tnb_visu_option = [_]struct { name: []const u8, value: u32 }{
 const TnBData = struct {
     surface_mesh: *SurfaceMesh,
     parameterization_data: *ParameterizationData,
-    vertex_position: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
-    vertex_ref_edge: ?SurfaceMesh.CellData(.vertex, SurfaceMesh.Cell) = null,
-    vertex_ref_edge_vec: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
+    vertex_position: ?SurfaceMesh.VertexData(Vec3f) = null,
+    vertex_ref_dart: ?SurfaceMesh.VertexData(SurfaceMesh.Dart) = null,
+    vertex_ref_edge_vec: ?SurfaceMesh.VertexData(Vec3f) = null,
     procedural_texturing_parameters: ProceduralTexturing.Parameters = undefined,
-    scaling_fieldData: ?SurfaceMesh.CellData(.vertex, f32) = null,
-    rotation_fieldData: ?SurfaceMesh.CellData(.vertex, Vec3f) = null,
+    scaling_fieldData: ?SurfaceMesh.VertexData(f32) = null,
+    rotation_fieldData: ?SurfaceMesh.VertexData(Vec3f) = null,
     texture_initialized: bool = false,
     position_vbo: ?VBO = null,
     normal_vbo: ?VBO = null,
     draw_texture: bool = true,
     initialized: bool = false,
-    exemplar_texture_path: [EXEMPLAR_TEXTURE_PATH_SIZE]u8 = [_]u8{0} ** EXEMPLAR_TEXTURE_PATH_SIZE,
+    exemplar_texture_path: [EXEMPLAR_TEXTURE_PATH_SIZE]u8 = @splat(0),
     current_visu_option: u32 = 0,
     current_focus_sample: u32 = 1,
 
     pub fn init(tbd: *TnBData, vertex_position: SurfaceMesh.CellData(.vertex, Vec3f)) !void {
         tbd.procedural_texturing_parameters = .init();
-        tbd.procedural_texturing_parameters.initFieldTBOBuffer(tbd.parameterization_data.samplesID_per_vertex.data.nbElements());
+        tbd.procedural_texturing_parameters.initFieldTBOBuffer(tbd.parameterization_data.samplesID_per_vertex.data.storage.items.len);
         tbd.vertex_position = vertex_position;
 
-        const s = "mud";
+        const s = "rock";
         @memcpy(tbd.exemplar_texture_path[0..s.len], s);
 
         if (!tbd.initialized) {
-            tbd.vertex_ref_edge, _ = try tbd.surface_mesh.getOrAddData(.vertex, SurfaceMesh.Cell, "vertex_ref_edge");
+            tbd.vertex_ref_dart, _ = try tbd.surface_mesh.getOrAddData(.vertex, SurfaceMesh.Dart, "vertex_ref_edge");
             tbd.vertex_ref_edge_vec, _ = try tbd.surface_mesh.getOrAddData(.vertex, Vec3f, "vertex_ref_edge_vec");
         }
-        try tbd.computeVertexRefEdges();
+        try tbd.computeVertexRefDarts();
         try tbd.computeVertexRefEdgesVec();
         tbd.initialized = true;
     }
 
     pub fn deinit(tbd: *TnBData) void {
         if (tbd.initialized) {
-            tbd.surface_mesh.removeData(.vertex, SurfaceMesh.Cell, tbd.vertex_ref_edge.?);
-            tbd.surface_mesh.removeData(.vertex, Vec3f, tbd.vertex_ref_edge_vec.?);
+            tbd.surface_mesh.removeData(tbd.vertex_ref_dart.?);
+            tbd.surface_mesh.removeData(tbd.vertex_ref_edge_vec.?);
             tbd.initialized = false;
 
             tbd.procedural_texturing_parameters.deinit();
         }
     }
 
-    fn computeVertexRefEdges(tbd: *TnBData) !void {
-        var v_it: SurfaceMesh.CellIterator = try .init(tbd.surface_mesh, .vertex);
-        defer v_it.deinit();
+    fn computeVertexRefDarts(tbd: *TnBData) !void {
+        var v_it = tbd.surface_mesh.vertexIterator();
         while (v_it.next()) |v| {
-            tbd.vertex_ref_edge.?.valuePtr(v).* = .{ .edge = v.dart() };
+            tbd.vertex_ref_dart.?.valuePtr(v).* = tbd.surface_mesh.dart(v);
         }
     }
 
     fn computeVertexRefEdgesVec(tbd: *TnBData) !void {
-        var v_it: SurfaceMesh.CellIterator = try .init(tbd.surface_mesh, .vertex);
-        defer v_it.deinit();
+        var v_it = tbd.surface_mesh.vertexIterator();
         while (v_it.next()) |v| {
-            tbd.vertex_ref_edge_vec.?.valuePtr(v).* = vec.normalized3f(vec.sub3f(
-                tbd.vertex_position.?.value(.{ .vertex = tbd.surface_mesh.phi1(tbd.vertex_ref_edge.?.value(v).dart()) }),
-                tbd.vertex_position.?.value(v),
-            ));
+            const pos_a = tbd.vertex_position.?.value(v);
+            const dart_b = tbd.surface_mesh.phi1(tbd.surface_mesh.dart(v));
+            const pos_b = tbd.vertex_position.?.value(tbd.surface_mesh.vertex(dart_b));
+            tbd.vertex_ref_edge_vec.?.valuePtr(v).* = vec.normalized(vec.sub(pos_b, pos_a));
         }
     }
 };
 
-app_ctx: *AppContext,
-surface_mesh_parameterization: *SurfaceMeshParameterization,
+app_ctx: *AppContext = undefined,
+surface_mesh_parameterization: *SurfaceMeshParameterization = undefined,
 module: Module = .{
     .name = "Surface Mesh Procedural Texturing",
     .supported_models = .{ .surface_mesh = true },
@@ -134,11 +133,11 @@ module: Module = .{
 },
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, TnBData) = .empty,
 
-pub fn init(app_ctx: *AppContext, surface_mesh_parameterization: *SurfaceMeshParameterization) SurfaceMeshProceduralTexturing {
-    return .{
-        .app_ctx = app_ctx,
-        .surface_mesh_parameterization = surface_mesh_parameterization,
-    };
+/// Modules are default-constructed in AppContext init function, and then initialized in AppContext wireUp function.
+pub fn init(smpt: *SurfaceMeshProceduralTexturing, app_ctx: *AppContext, surface_mesh_parameterization: *SurfaceMeshParameterization) !void {
+    smpt.app_ctx = app_ctx;
+    smpt.surface_mesh_parameterization = surface_mesh_parameterization;
+    try app_ctx.surface_mesh_store.addListener(&smpt.module);
 }
 
 pub fn deinit(smpt: *SurfaceMeshProceduralTexturing) void {
@@ -149,6 +148,7 @@ pub fn deinit(smpt: *SurfaceMeshProceduralTexturing) void {
     }
 
     smpt.surface_meshes_data.deinit(smpt.app_ctx.allocator);
+    smpt.app_ctx.surface_mesh_store.removeListener(&smpt.module);
 }
 
 /// Part of the Module interface.
@@ -190,7 +190,7 @@ pub fn surfaceMeshStdDataChanged(
 /// since scaling field is store at vertex and samples ID at faces we have
 /// to get sample ID from vertex by searching similar sampleID in incident faces
 /// For now, we make the assumption that only samples are in arraylist cells
-pub fn surfaceMeshDataUpdatedWithCells(m: *Module, surface_mesh: *SurfaceMesh, cell_type: SurfaceMesh.CellType, data_gen: *const DataGen, cells: std.ArrayList(SurfaceMesh.Cell)) void {
+pub fn surfaceMeshDataUpdatedWithCells(m: *Module, surface_mesh: *SurfaceMesh, cell_type: SurfaceMesh.CellType, data_gen: *const DataGen, cells: std.ArrayList(u32)) void {
     const smpt: *SurfaceMeshProceduralTexturing = @alignCast(@fieldParentPtr("module", m));
     const tnb_data = smpt.surface_meshes_data.getPtr(surface_mesh) orelse return;
     if (cell_type != .vertex) return;
@@ -236,7 +236,7 @@ fn setSurfaceMeshVectorData(smpt: *SurfaceMeshProceduralTexturing, surface_mesh:
         const vector_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, v);
         p.procedural_texturing_parameters.setVertexAttribArray(.edge_ref, vector_vbo, 0, 0);
         p.procedural_texturing_parameters.edge_ref_vbo = vector_vbo;
-        smpt.app_ctx.requestRedraw();
+        smpt.app_ctx.view.requestRedraw();
     }
 }
 
@@ -277,7 +277,7 @@ pub fn rightPanel(m: *Module) void {
         // We assign VBOs stored in module before parameters init
         tnb_data.procedural_texturing_parameters.vertices_position_vbo = tnb_data.position_vbo;
         tnb_data.procedural_texturing_parameters.setVertexAttribArray(.position, tnb_data.position_vbo.?, 0, 0);
-        smpt.setSurfaceMeshVectorData(sm, .{ .surface_mesh = sm, .data = tnb_data.vertex_ref_edge_vec.?.data });
+        smpt.setSurfaceMeshVectorData(sm, .{ .data = tnb_data.vertex_ref_edge_vec.?.data });
         tnb_data.procedural_texturing_parameters.vertices_normal_vbo = tnb_data.normal_vbo.?;
 
         const triangle_uvs_data = tnb_data.parameterization_data.triangle_uvs;
@@ -296,7 +296,7 @@ pub fn rightPanel(m: *Module) void {
     }
     if (tnb_data.initialized) {
         if (c.ImGui_Checkbox("Draw texture", &tnb_data.draw_texture))
-            smpt.app_ctx.requestRedraw();
+            smpt.app_ctx.view.requestRedraw();
 
         if (c.ImGui_ButtonEx("Reload shader", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
             var buf_vs_source: [VS_SIZE]u8 = undefined;
@@ -306,7 +306,7 @@ pub fn rightPanel(m: *Module) void {
 
             tnb_data.procedural_texturing_parameters.shader.reload(vs_source, fs_source) catch unreachable;
 
-            smpt.app_ctx.requestRedraw();
+            smpt.app_ctx.view.requestRedraw();
         }
 
         c.ImGui_SeparatorText("Texture options");
@@ -314,7 +314,7 @@ pub fn rightPanel(m: *Module) void {
         c.ImGui_Text("Scale length texture coordinates");
         c.ImGui_PushID("Scale length texture coordinates");
         if (c.ImGui_SliderFloat("", &tnb_data.procedural_texturing_parameters.scale_tex_coords, 0, 50))
-            smpt.app_ctx.requestRedraw();
+            smpt.app_ctx.view.requestRedraw();
         c.ImGui_PopID();
 
         c.ImGui_Text("Compensate texture distorsions");
@@ -324,7 +324,7 @@ pub fn rightPanel(m: *Module) void {
                 var ibo = info.triangles_ibo;
                 const distorsion_celldata = textureDistorsions.computeTextureDistorsions(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, info.std_datas.vertex_position.?, &ibo, tnb_data.parameterization_data.triangle_uvs);
                 tnb_data.procedural_texturing_parameters.distorsions_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, [8]vec.Vec4f, distorsion_celldata);
-                smpt.app_ctx.requestRedraw();
+                smpt.app_ctx.view.requestRedraw();
             }
         }
         c.ImGui_PopID();
@@ -334,6 +334,7 @@ pub fn rightPanel(m: *Module) void {
         _ = c.ImGui_InputText("", &tnb_data.exemplar_texture_path, @sizeOf([128]u8), 0);
         c.ImGui_PopID();
         if (c.ImGui_Button("Initialize texture")) {
+            const t = std.Io.Timestamp.now(smpt.app_ctx.io, .real);
             tnb_data.procedural_texturing_parameters.blending_mode = BlendingMode.LINEAR;
             var path_buffer: [128]u8 = undefined;
             const path_str = std.mem.sliceTo(&tnb_data.exemplar_texture_path, 0);
@@ -377,24 +378,26 @@ pub fn rightPanel(m: *Module) void {
                     texData.exemplar_texture_roughness = Texture2D.loadFromFile(path, p, smpt.app_ctx.allocator);
                 }
                 tnb_data.procedural_texturing_parameters.textureData = texData;
-                smpt.app_ctx.requestRedraw();
+                smpt.app_ctx.view.requestRedraw();
             } else {
                 std.log.debug("Failed to load exemplar texture\n", .{});
             }
+            const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, smpt.app_ctx.io, .real).nanoseconds);
+            zgp_log.info("Samples SurfaceMesh computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
         }
 
         if (tnb_data.texture_initialized) {
             c.ImGui_Text("Blending mode");
             c.ImGui_PushID("Blending mode");
             if (c.ImGui_BeginCombo("Blending", @tagName(tnb_data.procedural_texturing_parameters.blending_mode), 0)) {
-                inline for (std.meta.fields(BlendingMode)) |f| {
-                    const mode = @field(BlendingMode, f.name);
-                    const is_selected = tnb_data.procedural_texturing_parameters.blending_mode == mode;
+                const enum_info = @typeInfo(BlendingMode).@"enum";
+                inline for (enum_info.field_values) |f| {
+                    const is_selected = tnb_data.procedural_texturing_parameters.blending_mode == @as(BlendingMode, @fromBackingInt(@intCast(f)));
 
-                    if (c.ImGui_SelectableEx(f.name.ptr, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                    if (c.ImGui_SelectableEx(enum_info.field_names[f], is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
                         if (tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_priority != null and tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_normal != null and tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_roughness != null) {
-                            tnb_data.procedural_texturing_parameters.blending_mode = mode;
-                            smpt.app_ctx.requestRedraw();
+                            tnb_data.procedural_texturing_parameters.blending_mode = @as(BlendingMode, @fromBackingInt(@intCast(f)));
+                            smpt.app_ctx.view.requestRedraw();
                         } else {
                             std.log.debug("Mixmax unavailable: Missing textures\n", .{});
                         }
@@ -406,19 +409,19 @@ pub fn rightPanel(m: *Module) void {
 
             c.ImGui_Text("Exemplar texture: ");
             const ratio = @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.textureData.exemplar_texture.width)) / @as(f32, @floatFromInt(tnb_data.procedural_texturing_parameters.textureData.exemplar_texture.height));
-            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+            c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture.index, ._TexData = null }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
             if (tnb_data.procedural_texturing_parameters.blending_mode == BlendingMode.MIXMAX) {
                 c.ImGui_Text("Exemplar priority texture: ");
-                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_priority.?.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_priority.?.index, ._TexData = null }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
                 c.ImGui_Text("Exemplar normal texture: ");
-                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_normal.?.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_normal.?.index, ._TexData = null }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
                 c.ImGui_Text("Exemplar roughness texture: ");
-                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_roughness.?.index }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
+                c.ImGui_Image(.{ ._TexID = tnb_data.procedural_texturing_parameters.textureData.exemplar_texture_roughness.?.index, ._TexData = null }, c.ImVec2{ .x = @as(f32, @floatFromInt(200)) * ratio, .y = @as(f32, @floatFromInt(200)) });
 
                 c.ImGui_Text("Mixmax micro priority");
                 if (c.ImGui_SliderFloat("Mixmax micro priority", &tnb_data.procedural_texturing_parameters.mixmax_micro_priority, 0, 0.5)) {
-                    smpt.app_ctx.requestRedraw();
+                    smpt.app_ctx.view.requestRedraw();
                 }
             }
 
@@ -432,7 +435,7 @@ pub fn rightPanel(m: *Module) void {
                     if (c.ImGui_SelectableEx(option.name.ptr, selected, 0, .{ .x = 0, .y = 0 })) {
                         tnb_data.current_visu_option = option.value;
                         tnb_data.procedural_texturing_parameters.visu_option = option.value;
-                        smpt.app_ctx.requestRedraw();
+                        smpt.app_ctx.view.requestRedraw();
                     }
 
                     if (selected) {
@@ -444,7 +447,7 @@ pub fn rightPanel(m: *Module) void {
             }
             c.ImGui_PopID();
 
-            var current_label: [16]u8 = [_]u8{0} ** 16;
+            var current_label: [16]u8 = @splat(0);
             const current_label_slice = std.fmt.bufPrint(&current_label, "{}", .{tnb_data.current_focus_sample}) catch unreachable;
 
             c.ImGui_Text("Patch focused");
@@ -454,7 +457,7 @@ pub fn rightPanel(m: *Module) void {
                 current_label_slice.ptr,
                 0,
             )) {
-                var label: [16]u8 = [_]u8{0} ** 16;
+                var label: [16]u8 = @splat(0);
 
                 for (1..4) |i| {
                     const v: u32 = @intCast(i);
@@ -470,7 +473,7 @@ pub fn rightPanel(m: *Module) void {
                     )) {
                         tnb_data.current_focus_sample = v;
                         tnb_data.procedural_texturing_parameters.visu_sample = v - 1;
-                        smpt.app_ctx.requestRedraw();
+                        smpt.app_ctx.view.requestRedraw();
                     }
 
                     if (selected) {
@@ -485,7 +488,7 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_Text("Draw only albedo for focused sample");
             c.ImGui_PushID("Draw only albedo");
             if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.draw_albedo_for_focused_patch)) {
-                smpt.app_ctx.requestRedraw();
+                smpt.app_ctx.view.requestRedraw();
             }
             c.ImGui_PopID();
 
@@ -499,19 +502,18 @@ pub fn rightPanel(m: *Module) void {
                 .cleared => {
                     tnb_data.scaling_fieldData = null;
                     tnb_data.procedural_texturing_parameters.tbo_scaling_tile.clearBuffer(gl.R32F, gl.RED, gl.FLOAT);
-                    smpt.app_ctx.requestRedraw();
+                    smpt.app_ctx.view.requestRedraw();
                 },
                 .changed => |field| {
                     tnb_data.scaling_fieldData = field;
-                    var cell_list: std.ArrayList(SurfaceMesh.Cell) = .empty;
+                    var cell_list: std.ArrayList(u32) = .empty;
                     defer cell_list.deinit(smpt.app_ctx.allocator);
-                    var cell_iterator = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
-                    defer cell_iterator.deinit();
+                    var cell_iterator = sm.vertexIterator();
                     while (cell_iterator.next()) |v| {
-                        cell_list.append(smpt.app_ctx.allocator, v) catch unreachable;
+                        cell_list.append(smpt.app_ctx.allocator, v.index) catch unreachable;
                     }
                     tnb_data.procedural_texturing_parameters.tbo_scaling_tile.updateFieldTBO(cell_list, tnb_data.parameterization_data.samplesID_per_vertex, f32, field);
-                    smpt.app_ctx.requestRedraw();
+                    smpt.app_ctx.view.requestRedraw();
                 },
             }
             c.ImGui_PopID();
@@ -524,19 +526,18 @@ pub fn rightPanel(m: *Module) void {
                 .cleared => {
                     tnb_data.rotation_fieldData = null;
                     tnb_data.procedural_texturing_parameters.tbo_rotation_tile.clearBuffer(gl.RGB32F, gl.RGB, gl.FLOAT);
-                    smpt.app_ctx.requestRedraw();
+                    smpt.app_ctx.view.requestRedraw();
                 },
                 .changed => |field| {
                     tnb_data.rotation_fieldData = field;
-                    var cell_list: std.ArrayList(SurfaceMesh.Cell) = .empty;
+                    var cell_list: std.ArrayList(u32) = .empty;
                     defer cell_list.deinit(smpt.app_ctx.allocator);
-                    var cell_iterator = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
-                    defer cell_iterator.deinit();
+                    var cell_iterator = sm.vertexIterator();
                     while (cell_iterator.next()) |v| {
-                        cell_list.append(smpt.app_ctx.allocator, v) catch unreachable;
+                        cell_list.append(smpt.app_ctx.allocator, v.index) catch unreachable;
                     }
                     tnb_data.procedural_texturing_parameters.tbo_rotation_tile.updateFieldTBO(cell_list, tnb_data.parameterization_data.samplesID_per_vertex, Vec3f, field);
-                    smpt.app_ctx.requestRedraw();
+                    smpt.app_ctx.view.requestRedraw();
                 },
             }
             c.ImGui_PopID();

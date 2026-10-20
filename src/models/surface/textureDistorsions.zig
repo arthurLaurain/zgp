@@ -22,21 +22,21 @@ fn computeF(uv01: Vec2f, uv02: Vec2f, x0: Vec3f, x1: Vec3f, x2: Vec3f) Mat3f {
     const uv01_extended: Vec3f = .{ uv01[0], uv01[1], 0 };
     const uv02_extended: Vec3f = .{ uv02[0], uv02[1], 0 };
 
-    const x01: Vec3f = vec.sub3f(x1, x0);
-    const x02: Vec3f = vec.sub3f(x2, x0);
+    const x01: Vec3f = vec.sub(x1, x0);
+    const x02: Vec3f = vec.sub(x2, x0);
 
-    const n: Vec3f = vec.normalized3f(vec.cross3f(x01, x02));
+    const n: Vec3f = vec.normalized(vec.cross(x01, x02));
     const X: Mat3d = .{ vec.vec3fToVec3d(x01), vec.vec3fToVec3d(x02), vec.vec3fToVec3d(n) };
     const U: Mat3d = .{ vec.vec3fToVec3d(uv01_extended), vec.vec3fToVec3d(uv02_extended), .{ 0.0, 0.0, 1.0 } };
     const U_1: Mat3d = eigen.computeInverse3d(U).?;
 
-    const XUU_1: Mat3d = mat.mul3d(X, U_1);
+    const XUU_1: Mat3d = mat.mul(X, U_1);
 
-    return mat.mat3fFromMat3d(XUU_1);
+    return mat.mat3dToMat3f(XUU_1);
 }
 
 fn computeFFonPatch(uvs: [3]Vec2f, positions: [3]Vec3f, order: [3]usize) Mat3f {
-    return computeF(vec.sub2f(uvs[order[1]], uvs[order[0]]), vec.sub2f(uvs[order[2]], uvs[order[0]]), positions[order[0]], positions[order[1]], positions[order[2]]);
+    return computeF(vec.sub(uvs[order[1]], uvs[order[0]]), vec.sub(uvs[order[2]], uvs[order[0]]), positions[order[0]], positions[order[1]], positions[order[2]]);
 }
 
 fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_position: [*]Vec3f, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) [3]Mat3d {
@@ -45,37 +45,37 @@ fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_positio
         vbo_position[id_vertices_triangle[1]],
         vbo_position[id_vertices_triangle[2]],
     };
-    const uv = celldata_triangleuvs.valueByIndex(id_triangle).uvs;
+    const uv = celldata_triangleuvs.value(.{ .index = id_triangle }).uvs;
     const F0 = computeFFonPatch(uv[0], positions, .{ 0, 1, 2 });
     const F1 = computeFFonPatch(uv[1], positions, .{ 1, 2, 0 });
     const F2 = computeFFonPatch(uv[2], positions, .{ 2, 0, 1 });
 
     // F0
-    const F0d = mat.mat3dFromMat3f(F0);
+    const F0d = mat.mat3fToMat3d(F0);
     var res = eigen.computeJacobiSVD3D(F0d);
     var U: Mat3d = res[0];
     var S: Mat3d = res[1];
     var V: Mat3d = res[2];
-    const Vt0 = mat.transpose3d(V);
-    const S0 = mat.mul3d(V, mat.mul3d(S, Vt0));
+    const Vt0 = mat.transpose(V);
+    const S0 = mat.mul(V, mat.mul(S, Vt0));
 
     // F1
-    const F1d = mat.mat3dFromMat3f(F1);
+    const F1d = mat.mat3fToMat3d(F1);
     res = eigen.computeJacobiSVD3D(F1d);
     U = res[0];
     S = res[1];
     V = res[2];
-    const Vt1 = mat.transpose3d(V);
-    const S1 = mat.mul3d(V, mat.mul3d(S, Vt1));
+    const Vt1 = mat.transpose(V);
+    const S1 = mat.mul(V, mat.mul(S, Vt1));
 
     // F2
-    const F2d = mat.mat3dFromMat3f(F2);
+    const F2d = mat.mat3fToMat3d(F2);
     res = eigen.computeJacobiSVD3D(F2d);
     U = res[0];
     S = res[1];
     V = res[2];
-    const Vt2 = mat.transpose3d(V);
-    const S2 = mat.mul3d(V, mat.mul3d(S, Vt2));
+    const Vt2 = mat.transpose(V);
+    const S2 = mat.mul(V, mat.mul(S, Vt2));
 
     var result: [3]Mat3d = undefined;
     result[0] = S0;
@@ -98,19 +98,19 @@ const max_distorsion_slots_per_vertex = 8;
 pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *SurfaceMesh, vertices_position_vbo: SurfaceMesh.CellData(.vertex, Vec3f), ibo: *IBO, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) SurfaceMesh.CellData(.vertex, [max_distorsion_slots_per_vertex]vec.Vec4f) {
 
     // Map vertices position VBO
-    const array_vbo_position = vertices_position_vbo.data.data.items;
+    const array_vbo_position = vertices_position_vbo.data.storage.items;
 
     // Map IBO
     gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);
     const ptr_ibo = gl.MapBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.READ_ONLY);
     const array_ibo: [*]u32 = @ptrCast(@alignCast(ptr_ibo));
 
-    const distorsion_celldata = sm.getOrAddData(.vertex, [max_distorsion_slots_per_vertex]Vec4f, "distorsions") catch |err| {
+    var distorsion_celldata = sm.getOrAddData(.vertex, [max_distorsion_slots_per_vertex]Vec4f, "distorsions") catch |err| {
         std.debug.panic("Failed to create distorsion celldata: {}\n", .{err});
     };
 
     const nb_triangle: usize = ibo.nb_indices / 3;
-    const nb_vertices: usize = vertices_position_vbo.data.nbElements();
+    const nb_vertices: usize = vertices_position_vbo.data.storage.items.len;
 
     const structAccumulationParamVertex = struct {
         sumAccumulationParam: [max_distorsion_slots_per_vertex]Vec2f,
@@ -120,9 +120,9 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
     var arrayAccumulationVertex = allocator.alloc(structAccumulationParamVertex, nb_vertices) catch unreachable;
 
     @memset(arrayAccumulationVertex, .{
-        .sumAccumulationParam = .{.{ 0, 0 }} ** max_distorsion_slots_per_vertex,
-        .nb_contrib = .{0} ** max_distorsion_slots_per_vertex,
-        .id_sample = .{std.math.maxInt(u32)} ** max_distorsion_slots_per_vertex,
+        .sumAccumulationParam = @splat(.{ 0, 0 }),
+        .nb_contrib = @splat(0),
+        .id_sample = @splat(std.math.maxInt(u32)),
     });
     defer allocator.free(arrayAccumulationVertex);
 
@@ -149,7 +149,7 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
             S[u][1][1] = @floatCast(S_d[u][1][1]);
         }
 
-        const triangleuvs = celldata_triangleuvs.valueByIndex(@intCast(id_face));
+        const triangleuvs = celldata_triangleuvs.value(.{ .index = @intCast(id_face) });
 
         // We don't want to blend UV between two differents patch so we create for each vertices slots to keep track of patch ID
         for (0..3) |vertex| {
@@ -183,28 +183,28 @@ pub fn computeTextureDistorsions(allocator: std.mem.Allocator, io: std.Io, sm: *
 
                 param_current_vertex.nb_contrib[slot] = param_current_vertex.nb_contrib[slot] + 1;
                 const param_uncompensated = triangleuvs.uvs[patch][vertex];
-                const param_compensated = mat.mulVec2f(S[patch], param_uncompensated);
+                const param_compensated = mat.mulVec(S[patch], param_uncompensated);
                 // UV accumulation in vertices
-                param_current_vertex.sumAccumulationParam[slot] = vec.add2f(param_current_vertex.sumAccumulationParam[slot], param_compensated);
+                param_current_vertex.sumAccumulationParam[slot] = vec.add(param_current_vertex.sumAccumulationParam[slot], param_compensated);
             }
         }
     }
 
     // We compute new corrected uv and store them in TBO
     for (arrayAccumulationVertex, 0..) |current_vertex_param, i| {
-        var param_current_vertex: [max_distorsion_slots_per_vertex]Vec4f = .{.{ 0, 0, 0, 0 }} ** max_distorsion_slots_per_vertex;
+        var param_current_vertex: [max_distorsion_slots_per_vertex]Vec4f = @splat(.{ 0, 0, 0, 0 });
 
         for (0..max_distorsion_slots_per_vertex) |slot| {
             if (current_vertex_param.nb_contrib[slot] == 0) {
                 continue;
             }
 
-            const uv = vec.divScalar2f(current_vertex_param.sumAccumulationParam[slot], @floatFromInt(current_vertex_param.nb_contrib[slot]));
+            const uv = vec.divScalar(current_vertex_param.sumAccumulationParam[slot], @floatFromInt(current_vertex_param.nb_contrib[slot]));
             // Fragment shader need to know the patch ID of a newly received UV
             param_current_vertex[slot] = .{ uv[0], uv[1], @floatFromInt(current_vertex_param.id_sample[slot]), 0 };
         }
 
-        distorsion_celldata.@"0".valuePtrByIndex(@intCast(i)).* = param_current_vertex;
+        distorsion_celldata.@"0".valuePtr(.{ .index = @intCast(i) }).* = param_current_vertex;
     }
 
     gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo.index);

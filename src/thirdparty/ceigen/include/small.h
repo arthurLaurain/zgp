@@ -19,6 +19,7 @@ extern "C"
     void computeEigenValuesAndEigenVectors3d(const SCALAR (*mat)[9], SCALAR (*eigenvectors)[9], SCALAR (*eigenvalues)[9]);
     void solveSymmetricLinearSystem4d(const SCALAR (*mat)[16], const SCALAR (*b)[4], SCALAR (*x)[4]);
     void eigenSolver3d(const SCALAR (*mat)[9], SCALAR (*eigenvalues)[3], SCALAR (*eigenvectors)[9]);
+    void svd3d(const SCALAR (*mat)[9], SCALAR (*U)[9], SCALAR (*S)[3], SCALAR (*V)[9]);
 
 #ifdef __cplusplus
 }

@@ -3,477 +3,248 @@ const math = std.math;
 const assert = std.debug.assert;
 
 const vec = @import("vec.zig");
-const Vec2d = vec.Vec2d;
-const Vec2f = vec.Vec2f;
-const Vec3f = vec.Vec3f;
-const Vec4f = vec.Vec4f;
-const Vec3d = vec.Vec3d;
-const Vec4d = vec.Vec4d;
 
-/// 4x4 matrix
-/// All operations consider the matrix to be in column-major order.
-pub const Mat2d = [2]Vec2d;
-pub const Mat2f = [2]Vec2f;
-pub const Mat3f = [3]Vec3f;
-pub const Mat4f = [4]Vec4f;
-pub const Mat3d = [3]Vec3d;
-pub const Mat4d = [4]Vec4d;
+/// Mat are n-dimensional square matrices, represented as fixed-size arrays of Vec.
+/// All operations consider matrices to be in column-major order.
+pub fn Mat(comptime N: usize, comptime Scalar: type) type {
+    return [N]vec.Vec(N, Scalar);
+}
 
-pub const identity2d: Mat2d = .{
-    .{ 1.0, 0.0 },
-    .{ 0.0, 1.0 },
-};
+pub const Mat2f = Mat(2, f32);
+pub const Mat3f = Mat(3, f32);
+pub const Mat4f = Mat(4, f32);
 
-pub const identity3f: Mat3f = .{
-    .{ 1.0, 0.0, 0.0 },
-    .{ 0.0, 1.0, 0.0 },
-    .{ 0.0, 0.0, 1.0 },
-};
-pub const identity3d: Mat3d = .{
-    .{ 1.0, 0.0, 0.0 },
-    .{ 0.0, 1.0, 0.0 },
-    .{ 0.0, 0.0, 1.0 },
-};
+pub const Mat2d = Mat(2, f64);
+pub const Mat3d = Mat(3, f64);
+pub const Mat4d = Mat(4, f64);
 
-pub const identity4f: Mat4f = .{
-    .{ 1.0, 0.0, 0.0, 0.0 },
-    .{ 0.0, 1.0, 0.0, 0.0 },
-    .{ 0.0, 0.0, 1.0, 0.0 },
-    .{ 0.0, 0.0, 0.0, 1.0 },
-};
-pub const identity4d: Mat4d = .{
-    .{ 1.0, 0.0, 0.0, 0.0 },
-    .{ 0.0, 1.0, 0.0, 0.0 },
-    .{ 0.0, 0.0, 1.0, 0.0 },
-    .{ 0.0, 0.0, 0.0, 1.0 },
-};
-
-pub const zero3f: Mat3f = .{ vec.zero3f, vec.zero3f, vec.zero3f };
-pub const zero4f: Mat4f = .{ vec.zero4f, vec.zero4f, vec.zero4f, vec.zero4f };
-pub const zero3d: Mat3d = .{ vec.zero3d, vec.zero3d, vec.zero3d };
-pub const zero4d: Mat4d = .{ vec.zero4d, vec.zero4d, vec.zero4d, vec.zero4d };
-
-pub fn squaredFroberniusNorm3d(m: Mat3f) f32 {
-    var n: f32 = 0;
-    for (0..3) |c| {
-        for (0..3) |r| {
-            n += m[c][r] * m[c][r];
-        }
+// Return the dimension of the given Mat type
+// (and check that it is a square matrix)
+pub fn dim(comptime M: type) comptime_int {
+    const mat_info = @typeInfo(M);
+    if (mat_info != .array) {
+        @compileError("dim only supports array types");
     }
-    return n;
-}
-
-pub fn trace3d(m: Mat3f) f32 {
-    return m[0][0] + m[1][1] + m[2][2];
-}
-
-pub fn mat2fFromMat2d(m: Mat2d) Mat2f {
-    return .{ vec.vec2fFromVec2d(m[0]), vec.vec2fFromVec2d(m[1]) };
-}
-
-pub fn mat2dFromMat2f(m: Mat2f) Mat2d {
-    return .{ vec.vec2dFromVec2f(m[0]), vec.vec2dFromVec2f(m[1]) };
-}
-pub fn mat3fFromMat3d(m: Mat3d) Mat3f {
-    return .{
-        vec.vec3fFromVec3d(m[0]),
-        vec.vec3fFromVec3d(m[1]),
-        vec.vec3fFromVec3d(m[2]),
-    };
-}
-pub fn mat3dFromMat3f(m: Mat3f) Mat3d {
-    return .{
-        vec.vec3dFromVec3f(m[0]),
-        vec.vec3dFromVec3f(m[1]),
-        vec.vec3dFromVec3f(m[2]),
-    };
-}
-pub fn mat4fFromMat4d(m: Mat4d) Mat4f {
-    return .{
-        vec.vec4fFromVec4d(m[0]),
-        vec.vec4fFromVec4d(m[1]),
-        vec.vec4fFromVec4d(m[2]),
-        vec.vec4fFromVec4d(m[3]),
-    };
-}
-pub fn mat4dFromMat4f(m: Mat4f) Mat4d {
-    return .{
-        vec.vec4dFromVec4f(m[0]),
-        vec.vec4dFromVec4f(m[1]),
-        vec.vec4dFromVec4f(m[2]),
-        vec.vec4dFromVec4f(m[3]),
-    };
-}
-
-pub fn transpose2f(m: [2][2]f32) [2][2]f32 {
-    var result: [2][2]f32 = undefined;
-
-    var i: usize = 0;
-    while (i < 2) : (i += 1) {
-        var j: usize = 0;
-        while (j < 2) : (j += 1) {
-            result[i][j] = m[j][i];
-        }
+    if (vec.dim(VectorTypeOf(M)) != mat_info.array.len) {
+        @compileError("dim only supports square matrices");
     }
-
-    return result;
+    return mat_info.array.len;
 }
 
-pub fn transpose2d(m: [2][2]f64) [2][2]f64 {
-    var result: [2][2]f64 = undefined;
-
-    var i: usize = 0;
-    while (i < 2) : (i += 1) {
-        var j: usize = 0;
-        while (j < 2) : (j += 1) {
-            result[i][j] = m[j][i];
-        }
+// Return the type of the vectors that compose the given Mat type
+pub fn VectorTypeOf(comptime M: type) type {
+    const mat_info = @typeInfo(M);
+    if (mat_info != .array) {
+        @compileError("VectorTypeOf only supports array types");
     }
-
-    return result;
-}
-
-pub fn transpose3f(m: [3][3]f32) [3][3]f32 {
-    var result: [3][3]f32 = undefined;
-
-    var i: usize = 0;
-    while (i < 3) : (i += 1) {
-        var j: usize = 0;
-        while (j < 3) : (j += 1) {
-            result[i][j] = m[j][i];
-        }
+    const vec_info = @typeInfo(mat_info.array.child);
+    if (vec_info != .array) {
+        @compileError("VectorTypeOf only supports array of array types");
     }
-
-    return result;
-}
-
-pub fn transpose3d(m: [3][3]f64) [3][3]f64 {
-    var result: [3][3]f64 = undefined;
-
-    var i: usize = 0;
-    while (i < 3) : (i += 1) {
-        var j: usize = 0;
-        while (j < 3) : (j += 1) {
-            result[i][j] = m[j][i];
-        }
-    }
-
-    return result;
-}
-
-pub fn printMatrix(m: anytype) void {
-    std.debug.print("-----------------\n", .{});
-
-    for (0..m[0].len) |j| {
-        std.debug.print("( ", .{});
-
-        for (m) |row| {
-            std.debug.print("{:.6} ", .{row[j]});
-        }
-
-        std.debug.print(")\n", .{});
-    }
-
-    std.debug.print("-----------------\n", .{});
-}
-
-pub fn mul3f(a: Mat3f, b: Mat3f) Mat3f {
-    var result: Mat3f = undefined;
-    for (0..3) |i| {
-        for (0..3) |j| {
-            result[i][j] = a[0][j] * b[i][0] + a[1][j] * b[i][1] + a[2][j] * b[i][2];
-        }
-    }
-    return result;
-}
-
-pub fn mul2f(a: Mat2f, b: Mat2f) Mat2f {
-    var result: Mat2f = undefined;
-
-    for (0..2) |i| {
-        for (0..2) |j| {
-            result[i][j] =
-                a[0][j] * b[i][0] +
-                a[1][j] * b[i][1];
-        }
-    }
-
-    return result;
+    return mat_info.array.child;
 }
 
 pub fn mat3dToMat3f(m: Mat3d) Mat3f {
-    var result: Mat3f = undefined;
-
-    for (m, 0..) |row, i| {
-        for (row, 0..) |val, j| {
-            result[i][j] = @floatCast(val);
-        }
-    }
-
-    return result;
+    return .{
+        vec.vec3dToVec3f(m[0]),
+        vec.vec3dToVec3f(m[1]),
+        vec.vec3dToVec3f(m[2]),
+    };
 }
 
-pub fn mul2d(a: Mat2d, b: Mat2d) Mat2d {
-    var result: Mat2d = undefined;
-
-    for (0..2) |i| {
-        for (0..2) |j| {
-            result[i][j] =
-                a[0][j] * b[i][0] +
-                a[1][j] * b[i][1];
-        }
-    }
-
-    return result;
+pub fn mat3fToMat3d(m: Mat3f) Mat3d {
+    return .{
+        vec.vec3fToVec3d(m[0]),
+        vec.vec3fToVec3d(m[1]),
+        vec.vec3fToVec3d(m[2]),
+    };
+}
+// Return the type of the components of the given Mat type
+pub fn ScalarTypeOf(comptime M: type) type {
+    return vec.ScalarTypeOf(VectorTypeOf(M));
 }
 
-pub fn mul3d(a: Mat3d, b: Mat3d) Mat3d {
-    var result: Mat3d = undefined;
-    for (0..3) |i| {
-        for (0..3) |j| {
-            result[i][j] = a[0][j] * b[i][0] + a[1][j] * b[i][1] + a[2][j] * b[i][2];
-        }
-    }
-    return result;
-}
+// // Return the SIMD representation type corresponding to the vectors that compose the given Mat type
+// pub fn SIMDVecTypeOf(comptime M: type) type {
+//     return vec.SIMDVecTypeOf(VectorTypeOf(M));
+// }
 
-pub fn mul4f(a: Mat4f, b: Mat4f) Mat4f {
-    var result: Mat4f = undefined;
-    for (0..4) |i| {
-        for (0..4) |j| {
-            result[i][j] = a[0][j] * b[i][0] + a[1][j] * b[i][1] + a[2][j] * b[i][2] + a[3][j] * b[i][3];
-        }
+// // Return the SIMD representation type corresponding to the given Mat type
+// pub fn SIMDMatTypeOf(comptime M: type) type {
+//     return [dim(M)]SIMDVecTypeOf(M);
+// }
+
+// Return a matrix with each coeff set to the corresponding coeff of the given matrix, casted to the given Scalar type
+pub fn cast(comptime S: type, m: anytype) Mat(dim(@TypeOf(m)), S) {
+    const M = @TypeOf(m);
+    if (ScalarTypeOf(M) == S) {
+        return m;
     }
-    return result;
-}
-pub fn mul4d(a: Mat4d, b: Mat4d) Mat4d {
-    var result: Mat4d = undefined;
-    for (0..4) |i| {
-        for (0..4) |j| {
-            result[i][j] = a[0][j] * b[i][0] + a[1][j] * b[i][1] + a[2][j] * b[i][2] + a[3][j] * b[i][3];
-        }
+    var result: Mat(dim(M), S) = undefined;
+    for (0..dim(M)) |i| {
+        result[i] = vec.cast(S, m[i]);
     }
     return result;
 }
 
-pub fn mulVec2f(m: Mat2f, v: Vec2f) Vec2f {
-    return .{ m[0][0] * v[0] + m[0][1] * v[1], m[1][0] * v[0] + m[1][1] * v[1] };
+// Return an identity matrix of the given type
+pub fn identity(comptime M: type) M {
+    const V = VectorTypeOf(M);
+    var result: M = undefined;
+    for (0..dim(M)) |i| {
+        result[i] = vec.zero(V);
+        result[i][i] = 1.0;
+    }
+    return result;
 }
 
-pub fn mulVec3f(m: Mat3f, v: Vec3f) Vec3f {
-    return .{
-        m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2],
-        m[0][1] * v[0] + m[1][1] * v[1] + m[2][1] * v[2],
-        m[0][2] * v[0] + m[1][2] * v[1] + m[2][2] * v[2],
-    };
-}
-pub fn mulVec3d(m: Mat3d, v: Vec3d) Vec3d {
-    return .{
-        m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2],
-        m[0][1] * v[0] + m[1][1] * v[1] + m[2][1] * v[2],
-        m[0][2] * v[0] + m[1][2] * v[1] + m[2][2] * v[2],
-    };
+// Return a zero matrix of the given type
+pub fn zero(comptime M: type) M {
+    const V = VectorTypeOf(M);
+    var result: M = undefined;
+    for (0..dim(M)) |i| {
+        result[i] = vec.zero(V);
+    }
+    return result;
 }
 
-pub fn mulVec4f(m: Mat4f, v: Vec4f) Vec4f {
-    return .{
-        m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2] + m[3][0] * v[3],
-        m[0][1] * v[0] + m[1][1] * v[1] + m[2][1] * v[2] + m[3][1] * v[3],
-        m[0][2] * v[0] + m[1][2] * v[1] + m[2][2] * v[2] + m[3][2] * v[3],
-        m[0][3] * v[0] + m[1][3] * v[1] + m[2][3] * v[2] + m[3][3] * v[3],
-    };
-}
-pub fn mulVec4d(m: Mat4d, v: Vec4d) Vec4d {
-    return .{
-        m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2] + m[3][0] * v[3],
-        m[0][1] * v[0] + m[1][1] * v[1] + m[2][1] * v[2] + m[3][1] * v[3],
-        m[0][2] * v[0] + m[1][2] * v[1] + m[2][2] * v[2] + m[3][2] * v[3],
-        m[0][3] * v[0] + m[1][3] * v[1] + m[2][3] * v[2] + m[3][3] * v[3],
-    };
+// Return the result of the multiplication of two given matrices
+pub fn mul(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    const M = @TypeOf(a);
+    const d = dim(M);
+    var result: M = undefined;
+    for (0..d) |i| {
+        result[i] = vec.zero(VectorTypeOf(M));
+        for (0..d) |j| {
+            result[i] = vec.add(result[i], vec.mulScalar(a[j], b[i][j]));
+        }
+    }
+    return result;
 }
 
-pub fn preMulVec3f(v: Vec3f, m: Mat3f) Vec3f {
-    return .{
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
-    };
-}
-pub fn preMulVec3d(v: Vec3d, m: Mat3d) Vec3d {
-    return .{
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
-    };
+// Return the result of the multiplication of the given matrix and vector (M * v)
+pub fn mulVec(a: anytype, v: VectorTypeOf(@TypeOf(a))) VectorTypeOf(@TypeOf(a)) {
+    const M = @TypeOf(a);
+    const d = dim(M);
+    var result = vec.zero(VectorTypeOf(M));
+    for (0..d) |i| {
+        for (0..d) |j| {
+            result[i] += a[j][i] * v[j];
+        }
+    }
+    return result;
 }
 
-pub fn preMulVec4f(v: Vec4f, m: Mat4f) Vec4f {
-    return .{
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2] + m[0][3] * v[3],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2] + m[1][3] * v[3],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2] + m[2][3] * v[3],
-        m[3][0] * v[0] + m[3][1] * v[1] + m[3][2] * v[2] + m[3][3] * v[3],
-    };
-}
-pub fn preMulVec4d(v: Vec4d, m: Mat4d) Vec4d {
-    return .{
-        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2] + m[0][3] * v[3],
-        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2] + m[1][3] * v[3],
-        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2] + m[2][3] * v[3],
-        m[3][0] * v[0] + m[3][1] * v[1] + m[3][2] * v[2] + m[3][3] * v[3],
-    };
+// Return the result of the multiplication of the given transposed vector and matrix (v^T * M)
+pub fn preMulVec(a: anytype, v: VectorTypeOf(@TypeOf(a))) VectorTypeOf(@TypeOf(a)) {
+    const M = @TypeOf(a);
+    const d = dim(M);
+    var result = vec.zero(VectorTypeOf(M));
+    for (0..d) |i| {
+        for (0..d) |j| {
+            result[i] += a[i][j] * v[j];
+        }
+    }
+    return result;
 }
 
-pub fn mulScalar3f(m: Mat3f, s: f32) Mat3f {
-    return .{
-        vec.mulScalar3f(m[0], s),
-        vec.mulScalar3f(m[1], s),
-        vec.mulScalar3f(m[2], s),
-    };
-}
-pub fn mulScalar3d(m: Mat3d, s: f64) Mat3d {
-    return .{
-        vec.mulScalar3d(m[0], s),
-        vec.mulScalar3d(m[1], s),
-        vec.mulScalar3d(m[2], s),
-    };
+// Return the result of the multiplication of the given matrix by the given scalar
+pub fn mulScalar(m: anytype, s: ScalarTypeOf(@TypeOf(m))) @TypeOf(m) {
+    const M = @TypeOf(m);
+    var result: M = undefined;
+    for (0..dim(M)) |i| {
+        result[i] = vec.mulScalar(m[i], s);
+    }
+    return result;
 }
 
-pub fn mulScalar4f(m: Mat4f, s: f32) Mat4f {
-    return .{
-        vec.mulScalar4f(m[0], s),
-        vec.mulScalar4f(m[1], s),
-        vec.mulScalar4f(m[2], s),
-        vec.mulScalar4f(m[3], s),
-    };
-}
-pub fn mulScalar4d(m: Mat4d, s: f64) Mat4d {
-    return .{
-        vec.mulScalar4d(m[0], s),
-        vec.mulScalar4d(m[1], s),
-        vec.mulScalar4d(m[2], s),
-        vec.mulScalar4d(m[3], s),
-    };
+// Return the result of the outer product of the given two vectors (v1 * v2^T)
+pub fn outerProduct(v1: anytype, v2: @TypeOf(v1)) Mat(vec.dim(@TypeOf(v1)), vec.ScalarTypeOf(@TypeOf(v1))) {
+    const V = @TypeOf(v1);
+    var result: Mat(vec.dim(V), vec.ScalarTypeOf(V)) = undefined;
+    for (0..vec.dim(V)) |i| {
+        result[i] = vec.mulScalar(v1, v2[i]);
+    }
+    return result;
 }
 
-pub fn outerProduct3f(v1: Vec3f, v2: Vec3f) Mat3f {
-    return .{
-        .{ v1[0] * v2[0], v1[1] * v2[0], v1[2] * v2[0] },
-        .{ v1[0] * v2[1], v1[1] * v2[1], v1[2] * v2[1] },
-        .{ v1[0] * v2[2], v1[1] * v2[2], v1[2] * v2[2] },
-    };
-}
-pub fn outerProduct3d(v1: Vec3d, v2: Vec3d) Mat3d {
-    return .{
-        .{ v1[0] * v2[0], v1[1] * v2[0], v1[2] * v2[0] },
-        .{ v1[0] * v2[1], v1[1] * v2[1], v1[2] * v2[1] },
-        .{ v1[0] * v2[2], v1[1] * v2[2], v1[2] * v2[2] },
-    };
+// Return the result of the addition of two given matrices
+pub fn add(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    const M = @TypeOf(a);
+    var result: M = undefined;
+    for (0..dim(M)) |i| {
+        result[i] = vec.add(a[i], b[i]);
+    }
+    return result;
 }
 
-pub fn outerProduct4f(v1: Vec4f, v2: Vec4f) Mat4f {
-    return .{
-        .{ v1[0] * v2[0], v1[1] * v2[0], v1[2] * v2[0], v1[3] * v2[0] },
-        .{ v1[0] * v2[1], v1[1] * v2[1], v1[2] * v2[1], v1[3] * v2[1] },
-        .{ v1[0] * v2[2], v1[1] * v2[2], v1[2] * v2[2], v1[3] * v2[2] },
-        .{ v1[0] * v2[3], v1[1] * v2[3], v1[2] * v2[3], v1[3] * v2[3] },
-    };
-}
-pub fn outerProduct4d(v1: Vec4d, v2: Vec4d) Mat4d {
-    return .{
-        .{ v1[0] * v2[0], v1[1] * v2[0], v1[2] * v2[0], v1[3] * v2[0] },
-        .{ v1[0] * v2[1], v1[1] * v2[1], v1[2] * v2[1], v1[3] * v2[1] },
-        .{ v1[0] * v2[2], v1[1] * v2[2], v1[2] * v2[2], v1[3] * v2[2] },
-        .{ v1[0] * v2[3], v1[1] * v2[3], v1[2] * v2[3], v1[3] * v2[3] },
-    };
+// Return the result of the subtraction of two given matrices
+pub fn sub(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    const M = @TypeOf(a);
+    var result: M = undefined;
+    for (0..dim(M)) |i| {
+        result[i] = vec.sub(a[i], b[i]);
+    }
+    return result;
 }
 
-pub fn add3f(a: Mat3f, b: Mat3f) Mat3f {
-    return .{
-        .{ a[0][0] + b[0][0], a[0][1] + b[0][1], a[0][2] + b[0][2] },
-        .{ a[1][0] + b[1][0], a[1][1] + b[1][1], a[1][2] + b[1][2] },
-        .{ a[2][0] + b[2][0], a[2][1] + b[2][1], a[2][2] + b[2][2] },
-    };
-}
-pub fn add3d(a: Mat3d, b: Mat3d) Mat3d {
-    return .{
-        .{ a[0][0] + b[0][0], a[0][1] + b[0][1], a[0][2] + b[0][2] },
-        .{ a[1][0] + b[1][0], a[1][1] + b[1][1], a[1][2] + b[1][2] },
-        .{ a[2][0] + b[2][0], a[2][1] + b[2][1], a[2][2] + b[2][2] },
-    };
+// Return the result of the transposition of the given matrix
+pub fn transpose(m: anytype) @TypeOf(m) {
+    const M = @TypeOf(m);
+    var result: M = undefined;
+    for (0..dim(M)) |i| {
+        for (0..dim(M)) |j| {
+            result[i][j] = m[j][i];
+        }
+    }
+    return result;
 }
 
-pub fn add4f(a: Mat4f, b: Mat4f) Mat4f {
-    return .{
-        .{ a[0][0] + b[0][0], a[0][1] + b[0][1], a[0][2] + b[0][2], a[0][3] + b[0][3] },
-        .{ a[1][0] + b[1][0], a[1][1] + b[1][1], a[1][2] + b[1][2], a[1][3] + b[1][3] },
-        .{ a[2][0] + b[2][0], a[2][1] + b[2][1], a[2][2] + b[2][2], a[2][3] + b[2][3] },
-        .{ a[3][0] + b[3][0], a[3][1] + b[3][1], a[3][2] + b[3][2], a[3][3] + b[3][3] },
-    };
-}
-pub fn add4d(a: Mat4d, b: Mat4d) Mat4d {
-    return .{
-        .{ a[0][0] + b[0][0], a[0][1] + b[0][1], a[0][2] + b[0][2], a[0][3] + b[0][3] },
-        .{ a[1][0] + b[1][0], a[1][1] + b[1][1], a[1][2] + b[1][2], a[1][3] + b[1][3] },
-        .{ a[2][0] + b[2][0], a[2][1] + b[2][1], a[2][2] + b[2][2], a[2][3] + b[2][3] },
-        .{ a[3][0] + b[3][0], a[3][1] + b[3][1], a[3][2] + b[3][2], a[3][3] + b[3][3] },
-    };
-}
+pub fn lookAt(
+    eyepos: anytype,
+    eyedir: @TypeOf(eyepos),
+    updir: @TypeOf(eyepos),
+) Mat(4, vec.ScalarTypeOf(@TypeOf(eyepos))) {
+    const V = @TypeOf(eyepos);
+    if (vec.dim(V) != 3) {
+        @compileError("lookAt only supports 3D vectors");
+    }
+    const S = vec.ScalarTypeOf(V);
+    if (@typeInfo(S) != .float) {
+        @compileError("lookAt only supports float types");
+    }
 
-pub fn sub3f(a: Mat3f, b: Mat3f) Mat3f {
-    return .{
-        .{ a[0][0] - b[0][0], a[0][1] - b[0][1], a[0][2] - b[0][2] },
-        .{ a[1][0] - b[1][0], a[1][1] - b[1][1], a[1][2] - b[1][2] },
-        .{ a[2][0] - b[2][0], a[2][1] - b[2][1], a[2][2] - b[2][2] },
-    };
-}
-pub fn sub3d(a: Mat3d, b: Mat3d) Mat3d {
-    return .{
-        .{ a[0][0] - b[0][0], a[0][1] - b[0][1], a[0][2] - b[0][2] },
-        .{ a[1][0] - b[1][0], a[1][1] - b[1][1], a[1][2] - b[1][2] },
-        .{ a[2][0] - b[2][0], a[2][1] - b[2][1], a[2][2] - b[2][2] },
-    };
-}
-
-pub fn sub4f(a: Mat4f, b: Mat4f) Mat4f {
-    return .{
-        .{ a[0][0] - b[0][0], a[0][1] - b[0][1], a[0][2] - b[0][2], a[0][3] - b[0][3] },
-        .{ a[1][0] - b[1][0], a[1][1] - b[1][1], a[1][2] - b[1][2], a[1][3] - b[1][3] },
-        .{ a[2][0] - b[2][0], a[2][1] - b[2][1], a[2][2] - b[2][2], a[2][3] - b[2][3] },
-        .{ a[3][0] - b[3][0], a[3][1] - b[3][1], a[3][2] - b[3][2], a[3][3] - b[3][3] },
-    };
-}
-pub fn sub4d(a: Mat4d, b: Mat4d) Mat4d {
-    return .{
-        .{ a[0][0] - b[0][0], a[0][1] - b[0][1], a[0][2] - b[0][2], a[0][3] - b[0][3] },
-        .{ a[1][0] - b[1][0], a[1][1] - b[1][1], a[1][2] - b[1][2], a[1][3] - b[1][3] },
-        .{ a[2][0] - b[2][0], a[2][1] - b[2][1], a[2][2] - b[2][2], a[2][3] - b[2][3] },
-        .{ a[3][0] - b[3][0], a[3][1] - b[3][1], a[3][2] - b[3][2], a[3][3] - b[3][3] },
-    };
-}
-
-pub fn lookAt(eyepos: Vec3f, eyedir: Vec3f, updir: Vec3f) Mat4f {
-    // const eyedir = vec.sub3f(eyepos, focuspos);
-    const dir = vec.mulScalar3f(eyedir, -1.0);
-    const az = vec.normalized3f(dir);
-    const ax = vec.normalized3f(vec.cross3f(updir, az));
-    const ay = vec.normalized3f(vec.cross3f(az, ax));
+    // const eyedir = vec.sub(eyepos, focuspos);
+    const dir = vec.mulScalar(eyedir, -1.0);
+    const az = vec.normalized(dir);
+    const ax = vec.normalized(vec.cross(updir, az));
+    const ay = vec.normalized(vec.cross(az, ax));
     return .{
         .{ ax[0], ay[0], az[0], 0 },
         .{ ax[1], ay[1], az[1], 0 },
         .{ ax[2], ay[2], az[2], 0 },
-        .{ -vec.dot3f(ax, eyepos), -vec.dot3f(ay, eyepos), -vec.dot3f(az, eyepos), 1.0 },
+        .{ -vec.dot(ax, eyepos), -vec.dot(ay, eyepos), -vec.dot(az, eyepos), 1.0 },
     };
 }
 
-pub fn perspective(fov: f32, aspect: f32, near: f32, far: f32) Mat4f {
+pub fn perspective(
+    fov: anytype,
+    aspect: @TypeOf(fov),
+    near: @TypeOf(fov),
+    far: @TypeOf(fov),
+) Mat(4, @TypeOf(fov)) {
+    const S = @TypeOf(fov);
+    if (@typeInfo(S) != .float) {
+        @compileError("perspective only supports float types");
+    }
+
     const c = @cos(fov / 2);
     const s = @sin(fov / 2);
 
     assert(near > 0.0 and far > 0.0);
-    assert(!math.approxEqAbs(f32, s, 0.0, 0.001));
-    assert(!math.approxEqAbs(f32, far, near, 0.001));
-    assert(!math.approxEqAbs(f32, aspect, 0.0, 0.01));
+    assert(!math.approxEqAbs(S, s, 0.0, 0.001));
+    assert(!math.approxEqAbs(S, far, near, 0.001));
+    assert(!math.approxEqAbs(S, aspect, 0.0, 0.01));
 
     const h = c / s;
     const w = h / aspect;
@@ -487,10 +258,21 @@ pub fn perspective(fov: f32, aspect: f32, near: f32, far: f32) Mat4f {
     };
 }
 
-pub fn orthographic(w: f32, h: f32, near: f32, far: f32) Mat4f {
-    assert(!math.approxEqAbs(f32, w, 0.0, 0.001));
-    assert(!math.approxEqAbs(f32, h, 0.0, 0.001));
-    assert(!math.approxEqAbs(f32, far, near, 0.001));
+pub fn orthographic(
+    w: anytype,
+    h: @TypeOf(w),
+    near: @TypeOf(w),
+    far: @TypeOf(w),
+) Mat(4, @TypeOf(w)) {
+    const S = @TypeOf(w);
+    if (@typeInfo(S) != .float) {
+        @compileError("orthographic only supports float types");
+    }
+
+    assert(!math.approxEqAbs(S, w, 0.0, 0.001));
+    assert(!math.approxEqAbs(S, h, 0.0, 0.001));
+    assert(!math.approxEqAbs(S, far, near, 0.001));
+    assert(near > 0.0 and far > 0.0 and far > near);
 
     return .{
         .{ 2 / w, 0.0, 0.0, 0.0 },
@@ -500,7 +282,19 @@ pub fn orthographic(w: f32, h: f32, near: f32, far: f32) Mat4f {
     };
 }
 
-pub fn rotMat3FromNormalizedAxisAndAngle(axis: Vec3f, angle: f32) Mat3f {
+pub fn rotMat3FromNormalizedAxisAndAngle(
+    axis: anytype,
+    angle: vec.ScalarTypeOf(@TypeOf(axis)),
+) Mat(3, vec.ScalarTypeOf(@TypeOf(axis))) {
+    const V = @TypeOf(axis);
+    if (vec.dim(V) != 3) {
+        @compileError("rotMat3FromNormalizedAxisAndAngle only supports 3D vectors");
+    }
+    const S = vec.ScalarTypeOf(V);
+    if (@typeInfo(S) != .float) {
+        @compileError("rotMat3FromNormalizedAxisAndAngle only supports float types");
+    }
+
     const c = @cos(angle);
     const s = @sin(angle);
     const t = 1 - c;
@@ -512,23 +306,12 @@ pub fn rotMat3FromNormalizedAxisAndAngle(axis: Vec3f, angle: f32) Mat3f {
     };
 }
 
-pub fn rotMat3FromAxisAndAngle(axis: Vec3f, angle: f32) Mat3f {
-    return rotMat3FromNormalizedAxisAndAngle(vec.normalized3f(axis), angle);
-}
-
-pub fn rotMat4FromNormalizedAxisAndAngle(axis: Vec3f, angle: f32) Mat4f {
-    const c = @cos(angle);
-    const s = @sin(angle);
-    const t = 1 - c;
-
-    return .{
-        .{ t * axis[0] * axis[0] + c, t * axis[0] * axis[1] + s * axis[2], t * axis[0] * axis[2] - s * axis[1], 0 },
-        .{ t * axis[0] * axis[1] - s * axis[2], t * axis[1] * axis[1] + c, t * axis[1] * axis[2] + s * axis[0], 0 },
-        .{ t * axis[0] * axis[2] + s * axis[1], t * axis[1] * axis[2] - s * axis[0], t * axis[2] * axis[2] + c, 0 },
-        .{ 0, 0, 0, 1 },
-    };
-}
-
-pub fn rotMat4FromAxisAndAngle(axis: Vec3f, angle: f32) Mat4f {
-    return rotMat4FromNormalizedAxisAndAngle(vec.normalized3f(axis), angle);
+pub fn rotMat3FromAxisAndAngle(
+    axis: anytype,
+    angle: vec.ScalarTypeOf(@TypeOf(axis)),
+) Mat(3, vec.ScalarTypeOf(@TypeOf(axis))) {
+    return rotMat3FromNormalizedAxisAndAngle(
+        vec.normalized(axis),
+        angle,
+    );
 }

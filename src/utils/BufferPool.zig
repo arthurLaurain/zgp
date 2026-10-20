@@ -5,6 +5,9 @@ pub fn BufferPool(comptime T: type) type {
     return struct {
         const Self = @This();
 
+        // TODO: consider simplifying this by not storing the pool pointer in the Buffer struct,
+        // and instead passing the pool to release() as an argument; the buffer struct could then be a simple slice
+
         /// A handle to a buffer borrowed from the pool.
         /// `release()` must be called on this handle to return the buffer to the pool.
         pub const Buffer = struct {
@@ -13,8 +16,8 @@ pub fn BufferPool(comptime T: type) type {
 
             /// Returns this buffer to the pool.
             /// The data slice is invalidated after this call.
-            pub fn release(self: *Buffer) void {
-                self.pool.release(self.data);
+            pub fn release(self: *Buffer) !void {
+                try self.pool.release(self.data);
                 self.data = &.{};
             }
         };
@@ -42,7 +45,7 @@ pub fn BufferPool(comptime T: type) type {
                 const buf = try allocator.alloc(T, buffer_size);
                 free_list.appendAssumeCapacity(buf);
             }
-            return Self{
+            return .{
                 .io = io,
                 .allocator = allocator,
                 .mutex = .init,
@@ -55,7 +58,7 @@ pub fn BufferPool(comptime T: type) type {
         /// Deinitialize the pool and free all pooled buffers.
         /// Note: This does not free buffers currently acquired by users of the pool.
         pub fn deinit(self: *Self) void {
-            self.mutex.lock(self.io) catch {};
+            self.mutex.lockUncancelable(self.io);
             defer self.mutex.unlock(self.io);
             for (self.free_list.items) |buf| {
                 self.allocator.free(buf);
@@ -71,26 +74,24 @@ pub fn BufferPool(comptime T: type) type {
             if (self.free_list.pop()) |buf| {
                 self.mutex.unlock(self.io);
                 // Reset memory if needed? Usually generic buffers are assumed "dirty"
-                return Buffer{ .data = buf, .pool = self };
+                return .{ .data = buf, .pool = self };
             }
             self.mutex.unlock(self.io);
             // Allocate new buffer if none available (outside lock to reduce contention)
             const buf = try self.allocator.alloc(T, self.buffer_size);
-            return Buffer{ .data = buf, .pool = self };
+            return .{ .data = buf, .pool = self };
         }
 
         /// Internal function to return a buffer to the free list.
-        pub fn release(self: *Self, buf: []T) void {
-            self.mutex.lock(self.io) catch {};
+        pub fn release(self: *Self, buf: []T) !void {
+            try self.mutex.lock(self.io);
             defer self.mutex.unlock(self.io);
             // If we have hit the max capacity of the pool, discard the buffer
             if (self.free_list.items.len >= self.max_pool_size) {
                 self.allocator.free(buf);
             } else {
                 // Return to stack for reuse
-                self.free_list.append(self.allocator, buf) catch {
-                    self.allocator.free(buf);
-                };
+                try self.free_list.append(self.allocator, buf);
             }
         }
     };

@@ -9,7 +9,7 @@ const zgp_log = std.log.scoped(.zgp);
 
 const c = @import("c");
 
-const AppContext = @import("../main.zig").AppContext;
+const AppContext = @import("../AppContext.zig");
 const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfacePoint = @import("../models/surface/SurfacePoint.zig");
@@ -29,18 +29,17 @@ const SamplingData = struct {
     surface_mesh: *SurfaceMesh,
 
     samples: *PointCloud = undefined,
-    sample_position: PointCloud.CellData(Vec3f) = undefined,
-    sample_surface_point: PointCloud.CellData(SurfacePoint) = undefined,
+    sample_position: PointCloud.PointData(Vec3f) = undefined,
+    sample_surface_point: PointCloud.PointData(SurfacePoint) = undefined,
     initialized: bool = false,
 
     fn init(sd: *SamplingData, pointcloud_name: []const u8) !void {
         if (!sd.initialized) {
             // create samples PointCloud & data
             sd.samples = try sd.app_ctx.point_cloud_store.createPointCloud(pointcloud_name);
-            sd.sample_position = try sd.samples.addData(Vec3f, "position");
+            const info = sd.app_ctx.point_cloud_store.pointCloudInfo(sd.samples);
+            sd.sample_position = info.std_datas.position.?;
             sd.sample_surface_point = try sd.samples.addData(SurfacePoint, "surface_point");
-            sd.app_ctx.point_cloud_store.setPointCloudStdData(sd.samples, .{ .position = sd.sample_position });
-
             sd.initialized = true;
         } else {
             sd.samples.clearRetainingCapacity();
@@ -70,9 +69,9 @@ const SamplingData = struct {
         const Task = struct {
             const Task = @This();
 
-            surface_point: PointCloud.CellData(SurfacePoint),
+            surface_point: PointCloud.PointData(SurfacePoint),
             src_data: SurfaceMesh.CellData(cell_type, T),
-            dst_data: PointCloud.CellData(T),
+            dst_data: PointCloud.PointData(T),
 
             pub fn run(t: *const Task, point: PointCloud.Point) void {
                 t.dst_data.valuePtr(point).* = t.surface_point.value(point).readData(T, cell_type, t.src_data);
@@ -83,18 +82,18 @@ const SamplingData = struct {
 
         var pctr: PointCloud.ParallelPointTaskRunner = try .init(sd.samples);
         defer pctr.deinit();
-        try pctr.run(sd.app_ctx, Task{
+        try pctr.run(sd.app_ctx.io, Task{
             .surface_point = sd.sample_surface_point,
             .src_data = src_data,
             .dst_data = dst_data,
         });
 
         sd.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, T, dst_data);
-        sd.app_ctx.requestRedraw();
+        sd.app_ctx.view.requestRedraw();
     }
 };
 
-app_ctx: *AppContext,
+app_ctx: *AppContext = undefined,
 module: Module = .{
     .name = "Surface Mesh Sampling",
     .supported_models = .{ .surface_mesh = true },
@@ -107,14 +106,17 @@ module: Module = .{
 },
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, SamplingData) = .empty,
 
-pub fn init(app_ctx: *AppContext) SurfaceMeshSampling {
-    return .{
-        .app_ctx = app_ctx,
-    };
+/// Modules are default-constructed in AppContext init function, and then initialized in AppContext wireUp function.
+pub fn init(sms: *SurfaceMeshSampling, app_ctx: *AppContext) !void {
+    sms.app_ctx = app_ctx;
+    try app_ctx.point_cloud_store.addListener(&sms.module);
+    try app_ctx.surface_mesh_store.addListener(&sms.module);
 }
 
 pub fn deinit(sms: *SurfaceMeshSampling) void {
     sms.surface_meshes_data.deinit(sms.app_ctx.allocator);
+    sms.app_ctx.point_cloud_store.removeListener(&sms.module);
+    sms.app_ctx.surface_mesh_store.removeListener(&sms.module);
 }
 
 /// Part of the Module interface.
@@ -139,7 +141,7 @@ pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
     if (sd.initialized) {
         // the SurfacePoint data of the samples PointCloud is no longer valid after the SurfaceMesh is destroyed
         // (but there is no reason to destroy the PointCloud itself)
-        sd.samples.removeData(SurfacePoint, sd.sample_surface_point);
+        sd.samples.removeData(sd.sample_surface_point);
     }
     _ = sms.surface_meshes_data.remove(surface_mesh);
 }
@@ -148,10 +150,10 @@ pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
 /// Deinit the SamplingData associated to the destroyed PointCloud.
 pub fn pointCloudDestroyed(m: *Module, point_cloud: *PointCloud) void {
     const sms: *SurfaceMeshSampling = @alignCast(@fieldParentPtr("module", m));
-    var it = sms.surface_meshes_data.iterator();
-    while (it.next()) |entry| {
-        if (entry.value_ptr.samples == point_cloud) {
-            entry.value_ptr.deinit();
+    var it = sms.surface_meshes_data.valueIterator();
+    while (it.next()) |sd| {
+        if (sd.samples == point_cloud) {
+            sd.deinit();
             break;
         }
     }
@@ -160,8 +162,8 @@ pub fn pointCloudDestroyed(m: *Module, point_cloud: *PointCloud) void {
 fn uniformSampling(
     sms: *SurfaceMeshSampling,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    face_area: SurfaceMesh.CellData(.face, f32),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    face_area: SurfaceMesh.FaceData(f32),
     nb_points: usize,
     pointcloud_name: []const u8,
 ) !void {
@@ -170,13 +172,13 @@ fn uniformSampling(
 
     const t = std.Io.Timestamp.now(sms.app_ctx.io, .real);
     try sampling.uniformlySamplePointsOnSurface(
-        sms.app_ctx,
+        sms.app_ctx.rng.random(),
         sm,
         vertex_position,
         face_area,
         sd.samples,
-        sd.sample_position,
-        sd.sample_surface_point,
+        &sd.sample_position,
+        &sd.sample_surface_point,
         nb_points,
     );
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, sms.app_ctx.io, .real).nanoseconds);
@@ -185,15 +187,15 @@ fn uniformSampling(
     sms.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(sd.samples);
     sms.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.sample_position);
 
-    sms.app_ctx.requestRedraw();
+    sms.app_ctx.view.requestRedraw();
 }
 
 fn poissonDiskSampling(
     sms: *SurfaceMeshSampling,
     sm: *SurfaceMesh,
     sm_bvh: *bvh.TrianglesBVH,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    face_normal: SurfaceMesh.CellData(.face, Vec3f),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    face_normal: SurfaceMesh.FaceData(Vec3f),
     poisson_radius: f32,
     pointcloud_name: []const u8,
 ) !void {
@@ -202,14 +204,15 @@ fn poissonDiskSampling(
 
     const t = std.Io.Timestamp.now(sms.app_ctx.io, .real);
     try sampling.poissonDiskSamplePointsOnSurface(
-        sms.app_ctx,
+        sms.app_ctx.allocator,
+        sms.app_ctx.rng.random(),
         sm,
         sm_bvh,
         vertex_position,
         face_normal,
         sd.samples,
-        sd.sample_position,
-        sd.sample_surface_point,
+        &sd.sample_position,
+        &sd.sample_surface_point,
         poisson_radius,
     );
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, sms.app_ctx.io, .real).nanoseconds);
@@ -218,7 +221,7 @@ fn poissonDiskSampling(
     sms.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(sd.samples);
     sms.app_ctx.point_cloud_store.pointCloudDataUpdated(sd.samples, Vec3f, sd.sample_position);
 
-    sms.app_ctx.requestRedraw();
+    sms.app_ctx.view.requestRedraw();
 }
 
 /// Part of the Module interface.
@@ -232,6 +235,7 @@ pub fn rightPanel(m: *Module) void {
 
     const DataTypes = union(enum) { u32: u32, f32: f32, Vec3f: Vec3f };
     const DataTypesTag = std.meta.Tag(DataTypes);
+    const data_types_info = @typeInfo(DataTypesTag).@"enum";
     const UiData = struct {
         var nb_points: usize = 1000;
         var poisson_radius: f32 = 0.02;
@@ -362,11 +366,11 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_PushID("data type");
             if (c.ImGui_BeginCombo("", @tagName(UiData.selected_data_type), 0)) {
                 defer c.ImGui_EndCombo();
-                inline for (@typeInfo(DataTypesTag).@"enum".fields) |data_type| {
-                    const is_selected = @intFromEnum(UiData.selected_data_type) == data_type.value;
-                    if (c.ImGui_SelectableEx(data_type.name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
+                inline for (data_types_info.field_names, data_types_info.field_values) |field_name, field_value| {
+                    const is_selected = @backingInt(UiData.selected_data_type) == field_value;
+                    if (c.ImGui_SelectableEx(field_name, is_selected, 0, c.ImVec2{ .x = 0, .y = 0 })) {
                         if (!is_selected) {
-                            UiData.selected_data_type = @enumFromInt(data_type.value);
+                            UiData.selected_data_type = @fromBackingInt(field_value);
                             UiData.selected_data_gen = null;
                         }
                     }
@@ -379,17 +383,14 @@ pub fn rightPanel(m: *Module) void {
             c.ImGui_Text("Source data:");
             inline for ([_]SurfaceMesh.CellType{ .vertex, .edge, .face }) |cell_type| {
                 if (UiData.selected_surface_mesh_cell_type == cell_type) {
-                    inline for (@typeInfo(DataTypesTag).@"enum".fields) |data_type| {
-                        if (UiData.selected_data_type == @as(DataTypesTag, @enumFromInt(data_type.value))) {
-                            const T = @FieldType(DataTypes, data_type.name);
+                    inline for (data_types_info.field_names, data_types_info.field_values) |field_name, field_value| {
+                        if (UiData.selected_data_type == @as(DataTypesTag, @fromBackingInt(field_value))) {
+                            const T = @FieldType(DataTypes, field_name);
                             const selected_cell_data: ?SurfaceMesh.CellData(cell_type, T) = if (UiData.selected_data_gen) |data_gen| blk: {
                                 const selected_data: *Data(T) = @fieldParentPtr("data_gen", data_gen);
-                                break :blk .{
-                                    .surface_mesh = sm,
-                                    .data = selected_data,
-                                };
+                                break :blk .{ .data = selected_data };
                             } else null;
-                            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, cell_type, @FieldType(DataTypes, data_type.name), selected_cell_data)) {
+                            switch (imgui_utils.surfaceMeshCellDataComboBox(sm, cell_type, @FieldType(DataTypes, field_name), selected_cell_data)) {
                                 .unchanged => {},
                                 .cleared => UiData.selected_data_gen = null,
                                 .changed => |data| UiData.selected_data_gen = &data.data.data_gen,

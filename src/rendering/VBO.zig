@@ -3,11 +3,7 @@ const VBO = @This();
 const std = @import("std");
 const gl = @import("gl");
 
-const Data = @import("../utils/data.zig").Data;
-const TriangleUVs = @import("../modules/SurfaceMeshParameterization.zig").ParameterizationData.TriangleUVs;
-
 index: c_uint = 0,
-size: isize = 0,
 
 pub fn init() VBO {
     var v: VBO = .{};
@@ -22,14 +18,13 @@ pub fn deinit(v: *VBO) void {
     }
 }
 
-pub fn fillFrom(v: *VBO, comptime T: type, data: *const Data(T)) void {
+pub fn fillFrom(v: *VBO, comptime T: type, data: []T) void {
     gl.BindBuffer(gl.ARRAY_BUFFER, v.index);
     defer gl.BindBuffer(gl.ARRAY_BUFFER, 0);
-    v.size = @intCast(data.rawSize());
     gl.BufferData(
         gl.ARRAY_BUFFER,
-        v.size,
-        data.data.items.ptr,
+        @intCast(data.len * @sizeOf(T)),
+        data.ptr,
         gl.STATIC_DRAW,
     );
 }

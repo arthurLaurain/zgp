@@ -4,7 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const c = @import("c");
 const imgui_utils = @import("../ui/imgui.zig");
-const AppContext = @import("../main.zig").AppContext;
+const AppContext = @import("../AppContext.zig");
 const Allocator = std.mem.Allocator;
 const Module = @import("Module.zig");
 const zgp_log = std.log.scoped(.zgp);
@@ -46,7 +46,7 @@ const SelectionAction = enum {
     remove,
 };
 
-app_ctx: *AppContext,
+app_ctx: *AppContext = undefined,
 module: Module = .{
     .name = "Fields generator",
     .supported_models = .{ .surface_mesh = true },
@@ -62,11 +62,12 @@ module: Module = .{
 
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, FieldGeneratorData) = .empty,
 value_increment: f32 = 1,
-field_edited: ?SurfaceMesh.CellData(.vertex, f32) = null,
+field_edited: ?SurfaceMesh.VertexData(f32) = null,
 pending_field_name: [32]u8 = @splat(0),
-hovered_cell: ?SurfaceMesh.Cell = null,
-hovered_cell_ibo: IBO,
+hovered_cell: ?SurfaceMesh.Vertex = null,
+hovered_cell_ibo: IBO = undefined,
 selecting: bool = false,
+selection_radius: f32 = 0.05,
 selected_op_index: i32 = 0,
 op: *const fn (f32, FieldOperationParam) f32 = constant,
 exponential_slope: f32 = 1,
@@ -87,11 +88,10 @@ const FieldOperationParam = struct {
     slope_expo: f32 = 0,
 };
 
-pub fn init(app_ctx: *AppContext) FieldsGenerator {
-    return .{
-        .app_ctx = app_ctx,
-        .hovered_cell_ibo = .init(),
-    };
+pub fn init(fg: *FieldsGenerator, app_ctx: *AppContext) !void {
+    fg.app_ctx = app_ctx;
+    fg.hovered_cell_ibo = .init();
+    try app_ctx.surface_mesh_store.addListener(&fg.module);
 }
 
 pub fn deinit(fg: *FieldsGenerator) void {
@@ -238,15 +238,15 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                 if (info_motion.bvh.initialized) {
                     const ray = view.viewToWorldRay(event.motion.x, event.motion.y);
                     fg.hovered_cell = info_motion.bvh.intersectedVertex(ray); // within sphere selection is always centered on a vertex
-                    if (fg.hovered_cell) |cell| {
-                        fg.hovered_cell_ibo.fillFromSurfaceMeshCellSlice(sm, &[_]SurfaceMesh.Cell{cell}, fg.app_ctx.allocator) catch |err| {
+                    if (fg.hovered_cell) |cell_index| {
+                        fg.hovered_cell_ibo.fillFromSurfaceMeshCellSlice(sm, &[_]SurfaceMesh.Vertex{.{ .index = cell_index.index }}, fg.app_ctx.allocator) catch |err| {
                             std.debug.print("Failed to fill selecting cell IBO: {}\n", .{err});
                             break :blk false;
                         };
                     } else {
                         fg.hovered_cell_ibo.fillFromIndexSlice(&.{}, &.{});
                     }
-                    fg.app_ctx.requestRedraw();
+                    fg.app_ctx.view.requestRedraw();
                     break :blk true;
                 }
             }
@@ -257,7 +257,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
             switch (event.key.key) {
                 c.SDLK_F => {
                     fg.selecting = true;
-                    fg.app_ctx.requestRedraw();
+                    fg.app_ctx.view.requestRedraw();
                     break :blk true;
                 },
                 else => {},
@@ -268,7 +268,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
             switch (event.key.key) {
                 c.SDLK_F => {
                     fg.selecting = false;
-                    fg.app_ctx.requestRedraw();
+                    fg.app_ctx.view.requestRedraw();
                     break :blk true;
                 },
                 else => {},
@@ -278,39 +278,35 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
 
         c.SDL_EVENT_MOUSE_BUTTON_DOWN => blk: {
             if (!fg.selecting) break :blk false;
-            const info_button = sm_store.surfaceMeshInfo(sm);
-            if (info_button.std_datas.vertex_position) |vertex_position| {
+            const info = sm_store.surfaceMeshInfo(sm);
+            if (info.std_datas.vertex_position) |vertex_position| {
+                var sel_ctx: selection.WithinSphereSelectionContext = .{};
+                sel_ctx.init(sm, vertex_position, fg.selection_radius) catch |err| {
+                    std.debug.print("Failed to initialize selection context: {}\n", .{err});
+                    break :blk false;
+                };
+                defer sel_ctx.deinit();
+                const modState = c.SDL_GetModState();
+                const action: SelectionAction = if (modState & c.SDL_KMOD_SHIFT != 0) .remove else .add;
 
-                // TODO remove unused edges and faces sampling
-                var vertices_in_sphere: std.ArrayList(SurfaceMesh.Cell) = .empty;
-                defer vertices_in_sphere.deinit(fg.app_ctx.allocator);
-                var edges_in_sphere: std.ArrayList(SurfaceMesh.Cell) = .empty;
-                defer edges_in_sphere.deinit(fg.app_ctx.allocator);
-                var faces_in_sphere: std.ArrayList(SurfaceMesh.Cell) = .empty;
-                defer faces_in_sphere.deinit(fg.app_ctx.allocator);
                 if (fg.hovered_cell) |cell| {
-                    selection.cellsWithinSphereAroundVertex(sm, cell, fgd.point_sphere_shader_parameters.sphere_radius, vertex_position, &vertices_in_sphere, &edges_in_sphere, &faces_in_sphere) catch |err|
+                    sel_ctx.cellsWithinSphereAroundVertex(.{ .index = cell.index }) catch |err|
                         {
                             std.debug.print("Failed to select cells within sphere: {}\\n", .{err});
                             break :blk false;
                         };
                 }
-
-                if (fg.field_edited) |celldata| {
-                    const modState = c.SDL_GetModState();
-                    var list_vertices_changed: std.ArrayList(SurfaceMesh.Cell) = .empty;
+                if (fg.field_edited) |*celldata| {
+                    var list_vertices_changed: std.ArrayList(u32) = .empty;
                     defer list_vertices_changed.deinit(fg.app_ctx.allocator);
-                    const action: SelectionAction = if (modState & c.SDL_KMOD_SHIFT != 0) .remove else .add;
-
                     var op_param: FieldOperationParam = .{};
-                    const info = sm_store.surfaceMeshInfo(sm);
-                    for (vertices_in_sphere.items) |cell| {
-                        list_vertices_changed.append(fg.app_ctx.allocator, cell) catch unreachable;
+                    for (sel_ctx.vertex_buffer.items) |cell| {
+                        list_vertices_changed.append(fg.app_ctx.allocator, cell.index) catch unreachable;
                         switch (fg.op) {
                             exponential_decay => {
-                                const v1 = info.std_datas.vertex_position.?.value(cell);
-                                const v2 = info.std_datas.vertex_position.?.value(fg.hovered_cell.?);
-                                op_param.distance = vec.norm3f(vec.sub3f(v1, v2));
+                                const v1 = vertex_position.value(cell);
+                                const v2 = vertex_position.value(fg.hovered_cell.?);
+                                op_param.distance = vec.norm(vec.sub(v1, v2));
                                 op_param.radius_expo = fgd.point_sphere_shader_parameters.sphere_radius;
                                 op_param.slope_expo = fg.exponential_slope;
                             },
@@ -325,8 +321,8 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                             },
                         }
                     }
-                    if (vertices_in_sphere.items.len > 0) {
-                        sm_store.surfaceMeshDataUpdatedWithCells(sm, .vertex, f32, celldata, list_vertices_changed);
+                    if (sel_ctx.vertex_buffer.items.len > 0) {
+                        sm_store.surfaceMeshDataUpdatedWithCells(sm, .vertex, f32, celldata.*, list_vertices_changed);
                     }
                     break :blk true;
                 }
@@ -337,7 +333,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
             if (!fg.selecting) break :blk false;
             if (fg.field_edited) |_| {
                 fgd.point_sphere_shader_parameters.sphere_radius += event.wheel.y * 0.001;
-                fg.app_ctx.requestRedraw();
+                fg.app_ctx.view.requestRedraw();
                 break :blk true;
             }
             break :blk false;
@@ -357,7 +353,7 @@ pub fn rightPanel(m: *Module) void {
     const sm = fg.app_ctx.selected_model.surface_mesh;
 
     if (c.ImGui_ButtonEx("Generate new field", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-        c.ImGui_OpenPopup("Generate new field", c.ImGuiPopupFlags_NoReopen);
+        _ = c.ImGui_OpenPopup("Generate new field", c.ImGuiPopupFlags_NoReopen);
     }
     if (c.ImGui_BeginPopupModal("Generate new field", 0, c.ImGuiWindowFlags_AlwaysAutoResize)) {
         defer c.ImGui_EndPopup();
@@ -427,76 +423,79 @@ pub fn rightPanel(m: *Module) void {
             // if (c.ImGui_Button("Smooth Field")) {
             //     smoothField(field, sm, @intCast(fg.k_neighborhood)) catch unreachable;
             //     fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, field);
-            //     fg.app_ctx.requestRedraw();
+            //     fg.app_ctx.view.requestRedraw();
             // }
         }
     }
 
     c.ImGui_SeparatorText("Vector field preset");
     if (c.ImGui_Button("Create vector field from from distance gradient")) {
-        var cell_it = SurfaceMesh.CellIterator.init(sm, .face) catch unreachable;
+        var cell_it = sm.faceIterator();
         const info = fg.app_ctx.surface_mesh_store.surfaceMeshInfo(sm);
 
         if (sm.getData(.vertex, f32, "distance")) |distance_data| {
-            const data = sm.addData(.face, Vec3f, "gradient_distance_field") catch
+            const t = std.Io.Timestamp.now(fg.app_ctx.io, .real);
+
+            var gradient_distance_field_face_data = sm.addData(.face, Vec3f, "gradient_distance_field") catch
                 {
                     std.log.debug("Error creating gradient distance field data\n", .{});
                     unreachable;
                 };
+            defer sm.removeData(gradient_distance_field_face_data);
             while (cell_it.next()) |cell| {
-                const p0 = info.std_datas.vertex_position.?.value(.{ .vertex = cell.dart() });
-                const p1 = info.std_datas.vertex_position.?.value(.{ .vertex = sm.phi1(cell.dart()) });
-                const p2 = info.std_datas.vertex_position.?.value(.{ .vertex = sm.phi1(sm.phi1(cell.dart())) });
+                const p0 = info.std_datas.vertex_position.?.value(sm.vertex(sm.dart(cell)));
+                const p1 = info.std_datas.vertex_position.?.value(sm.vertex(sm.phi1(sm.dart(cell))));
+                const p2 = info.std_datas.vertex_position.?.value(sm.vertex(sm.phi1(sm.phi1(sm.dart(cell)))));
 
-                const f0 = distance_data.value(.{ .vertex = cell.dart() });
-                const f1 = distance_data.value(.{ .vertex = sm.phi1(cell.dart()) });
-                const f2 = distance_data.value(.{ .vertex = sm.phi1(sm.phi1(cell.dart())) });
+                const f0 = distance_data.value(sm.vertex(sm.dart(cell)));
+                const f1 = distance_data.value(sm.vertex(sm.phi1(sm.dart(cell))));
+                const f2 = distance_data.value(sm.vertex(sm.phi1(sm.phi1(sm.dart(cell)))));
 
-                const e1 = vec.sub3f(p1, p0);
-                const e2 = vec.sub3f(p2, p0);
+                const e1 = vec.sub(p1, p0);
+                const e2 = vec.sub(p2, p0);
 
-                const cross = vec.cross3f(e1, e2);
-                const two_area = vec.norm3f(cross);
+                const cross = vec.cross(e1, e2);
+                const two_area = vec.norm(cross);
 
-                const n = vec.divScalar3f(cross, two_area);
+                const n = vec.divScalar(cross, two_area);
 
-                const u = vec.sub3f(p0, p2);
-                const v = vec.sub3f(p1, p0);
+                const u = vec.sub(p0, p2);
+                const v = vec.sub(p1, p0);
 
-                const u_perp = vec.cross3f(n, u);
-                const v_perp = vec.cross3f(n, v);
+                const u_perp = vec.cross(n, u);
+                const v_perp = vec.cross(n, v);
 
-                const grad = vec.add3f(vec.mulScalar3f(vec.divScalar3f(u_perp, two_area), f1 - f0), vec.mulScalar3f(vec.divScalar3f(v_perp, two_area), f2 - f0));
-                const grad_normalized = vec.normalized3f(grad);
-                data.valuePtr(cell).* = grad_normalized;
+                const grad = vec.add(vec.mulScalar(vec.divScalar(u_perp, two_area), f1 - f0), vec.mulScalar(vec.divScalar(v_perp, two_area), f2 - f0));
+                const grad_normalized = vec.normalized(grad);
+                gradient_distance_field_face_data.valuePtr(cell).* = grad_normalized;
             }
 
-            // DEBUG - Visualize orientation field
-            var cell_it2 = SurfaceMesh.CellIterator.init(sm, .vertex) catch unreachable;
-            const data2 = sm.addData(.vertex, Vec3f, "vertex_gradient_distance_field") catch
+            var cell_it2 = sm.vertexIterator();
+            var gradient_distance_field_vertex = sm.addData(.vertex, Vec3f, "vertex_gradient_distance_field") catch
                 {
                     std.log.debug("Error creating gradient distance field data\n", .{});
                     unreachable;
                 };
             while (cell_it2.next()) |cell| {
-                const d_start = cell.dart();
+                const d_start = sm.dart(cell);
                 var d_next = d_start;
                 var n: f32 = 0;
                 var sum: Vec3f = .{ 0, 0, 0 };
                 while (true) {
                     d_next = sm.phi2(d_next);
-                    const grad = data.value(.{ .face = d_next });
-                    sum = vec.add3f(sum, grad);
+                    const grad = gradient_distance_field_face_data.value(sm.face(d_next));
+                    sum = vec.add(sum, grad);
                     d_next = sm.phi1(d_next);
                     n = n + 1;
                     if (d_next == d_start) break;
                 }
-                const mean_vectors = vec.divScalar3f(sum, n);
-                data2.valuePtr(cell).* = mean_vectors;
+                const mean_vectors = vec.divScalar(sum, n);
+                gradient_distance_field_vertex.valuePtr(cell).* = mean_vectors;
             }
-            fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, data2);
+            fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, gradient_distance_field_vertex);
 
-            fg.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, Vec3f, data);
+            const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, fg.app_ctx.io, .real).nanoseconds);
+            zgp_log.info("Gradient distance field computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
         } else {
             std.log.debug("No distance field computed\n", .{});
         }

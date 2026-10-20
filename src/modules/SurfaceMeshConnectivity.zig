@@ -8,7 +8,7 @@ const zgp_log = std.log.scoped(.zgp);
 
 const c = @import("c");
 
-const AppContext = @import("../main.zig").AppContext;
+const AppContext = @import("../AppContext.zig");
 const Module = @import("Module.zig");
 const PointCloud = @import("../models/point/PointCloud.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
@@ -28,7 +28,7 @@ const decimation = @import("../models/surface/decimation.zig");
 const curvature = @import("../models/surface/curvature.zig");
 const convex_hull = @import("../models/point/convex_hull.zig");
 
-app_ctx: *AppContext,
+app_ctx: *AppContext = undefined,
 module: Module = .{
     .name = "Surface Mesh Connectivity",
     .supported_models = .{ .surface_mesh = true },
@@ -36,36 +36,35 @@ module: Module = .{
         .rightClickMenu = rightClickMenu,
     },
 },
-// explicit dependency on curvature module to access curvature datas
-surface_mesh_curvature: *SurfaceMeshCurvature,
 
-pub fn init(app_ctx: *AppContext, surface_mesh_curvature: *SurfaceMeshCurvature) SurfaceMeshConnectivity {
-    return .{
-        .app_ctx = app_ctx,
-        .surface_mesh_curvature = surface_mesh_curvature,
-    };
+/// Modules are default-constructed in AppContext init function, and then initialized in AppContext wireUp function.
+pub fn init(smc: *SurfaceMeshConnectivity, app_ctx: *AppContext) !void {
+    smc.app_ctx = app_ctx;
+    try app_ctx.surface_mesh_store.addListener(&smc.module);
 }
 
-pub fn deinit(_: *SurfaceMeshConnectivity) void {}
+pub fn deinit(smc: *SurfaceMeshConnectivity) void {
+    smc.app_ctx.surface_mesh_store.removeListener(&smc.module);
+}
 
 fn cutAllEdges(
     smc: *SurfaceMeshConnectivity,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
+    vertex_position: *SurfaceMesh.VertexData(Vec3f),
 ) !void {
-    try subdivision.cutAllEdges(smc.app_ctx, sm, vertex_position);
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_position);
+    try subdivision.cutAllEdges(smc.app_ctx.allocator, sm, vertex_position);
+    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_position.*);
     smc.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sm);
-    smc.app_ctx.requestRedraw();
+    smc.app_ctx.view.requestRedraw();
 }
 
 fn triangulateFaces(
     smc: *SurfaceMeshConnectivity,
     sm: *SurfaceMesh,
 ) !void {
-    try subdivision.triangulateFaces(smc.app_ctx, sm);
+    try subdivision.triangulateFaces(smc.app_ctx.allocator, sm);
     smc.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sm);
-    smc.app_ctx.requestRedraw();
+    smc.app_ctx.view.requestRedraw();
 }
 
 fn remesh(
@@ -75,20 +74,21 @@ fn remesh(
     edge_length_factor: f32,
     preserve_features: bool,
     adaptive: bool,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    corner_angle: SurfaceMesh.CellData(.corner, f32),
-    face_area: SurfaceMesh.CellData(.face, f32),
-    face_normal: SurfaceMesh.CellData(.face, Vec3f),
-    edge_length: SurfaceMesh.CellData(.edge, f32),
-    edge_dihedral_angle: SurfaceMesh.CellData(.edge, f32),
-    vertex_area: SurfaceMesh.CellData(.vertex, f32),
-    vertex_normal: SurfaceMesh.CellData(.vertex, Vec3f),
-    vertex_curvature: curvature.SurfaceMeshCurvatureDatas,
+    vertex_position: *SurfaceMesh.VertexData(Vec3f),
+    corner_angle: *SurfaceMesh.CornerData(f32),
+    face_area: *SurfaceMesh.FaceData(f32),
+    face_normal: *SurfaceMesh.FaceData(Vec3f),
+    edge_length: *SurfaceMesh.EdgeData(f32),
+    edge_dihedral_angle: *SurfaceMesh.EdgeData(f32),
+    vertex_area: *SurfaceMesh.VertexData(f32),
+    vertex_normal: *SurfaceMesh.VertexData(Vec3f),
+    vertex_curvature: *curvature.SurfaceMeshCurvatureDatas,
 ) !void {
     const t = std.Io.Timestamp.now(smc.app_ctx.io, .real);
 
     try remeshing.isotropicRemeshing(
-        smc.app_ctx,
+        smc.app_ctx.allocator,
+        smc.app_ctx.io,
         sm,
         sm_bvh,
         edge_length_factor,
@@ -104,9 +104,9 @@ fn remesh(
         vertex_normal,
         vertex_curvature,
     );
-    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_position);
+    smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_position.*);
     smc.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sm);
-    smc.app_ctx.requestRedraw();
+    smc.app_ctx.view.requestRedraw();
 
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, smc.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Remeshing computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
@@ -115,37 +115,28 @@ fn remesh(
 fn decimate(
     smc: *SurfaceMeshConnectivity,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    vertex_area: SurfaceMesh.CellData(.vertex, f32),
-    vertex_tangent_basis: SurfaceMesh.CellData(.vertex, [2]Vec3f),
-    face_area: SurfaceMesh.CellData(.face, f32),
-    face_normal: SurfaceMesh.CellData(.face, Vec3f),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    vertex_area: SurfaceMesh.VertexData(f32),
+    vertex_tangent_basis: SurfaceMesh.VertexData([2]Vec3f),
+    face_area: SurfaceMesh.FaceData(f32),
+    face_normal: SurfaceMesh.FaceData(Vec3f),
     nb_vertices_to_remove: u32,
 ) !void {
     const t = std.Io.Timestamp.now(smc.app_ctx.io, .real);
 
-    const vertex_qem = try sm.addData(.vertex, Mat4f, "__vertex_qem");
-    defer sm.removeData(.vertex, Mat4f, vertex_qem);
-    try qem.computeVertexQEMs(
-        smc.app_ctx,
+    try decimation.decimateQEM(
+        smc.app_ctx.allocator,
         sm,
         vertex_position,
         vertex_area,
         vertex_tangent_basis,
         face_area,
         face_normal,
-        vertex_qem,
-    );
-    try decimation.decimateQEM(
-        smc.app_ctx,
-        sm,
-        vertex_position,
-        vertex_qem,
         nb_vertices_to_remove,
     );
     smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_position);
     smc.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(sm);
-    smc.app_ctx.requestRedraw();
+    smc.app_ctx.view.requestRedraw();
 
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, smc.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Decimation computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
@@ -154,34 +145,39 @@ fn decimate(
 fn generateConvexHull(
     smc: *SurfaceMeshConnectivity,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
     convex_hull_name: []const u8,
 ) !void {
     const t = std.Io.Timestamp.now(smc.app_ctx.io, .real);
 
     var pc: PointCloud = undefined;
-    try pc.init(smc.app_ctx.allocator, &smc.app_ctx.point_cloud_store.point_buffer_pool);
+    try pc.init(smc.app_ctx.allocator, smc.app_ctx.io, &smc.app_ctx.point_cloud_store.point_buffer_pool);
     defer pc.deinit();
     const point_position = try pc.addData(Vec3f, "position");
-    var vertex_it: SurfaceMesh.CellIterator = try .init(sm, .vertex);
-    defer vertex_it.deinit();
+    var vertex_it = sm.vertexIterator();
     while (vertex_it.next()) |vertex| {
         const p = try pc.addPoint();
         point_position.valuePtr(p).* = vertex_position.valuePtr(vertex).*;
     }
 
     const ch = try smc.app_ctx.surface_mesh_store.createSurfaceMesh(convex_hull_name);
-    const ch_vertex_position = try ch.addData(.vertex, Vec3f, "position");
+    var ch_vertex_position = try ch.addData(.vertex, Vec3f, "position");
     smc.app_ctx.surface_mesh_store.setSurfaceMeshStdData(ch, .{ .vertex_position = ch_vertex_position });
 
-    try convex_hull.generateConvexHull(smc.app_ctx, &pc, point_position, ch, ch_vertex_position);
+    try convex_hull.generateConvexHull(
+        smc.app_ctx.allocator,
+        &pc,
+        point_position,
+        ch,
+        &ch_vertex_position,
+    );
     smc.app_ctx.surface_mesh_store.surfaceMeshDataUpdated(ch, .vertex, Vec3f, ch_vertex_position);
     smc.app_ctx.surface_mesh_store.surfaceMeshConnectivityUpdated(ch);
 
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, smc.app_ctx.io, .real).nanoseconds);
     zgp_log.info("Convex hull generated in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
 
-    smc.app_ctx.requestRedraw();
+    smc.app_ctx.view.requestRedraw();
 }
 
 /// Part of the Module interface.
@@ -218,7 +214,7 @@ pub fn rightClickMenu(m: *Module) void {
                 c.ImGui_BeginDisabled(true);
             }
             if (c.ImGui_ButtonEx("Cut all edges", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-                smc.cutAllEdges(sm, info.std_datas.vertex_position.?) catch |err| {
+                smc.cutAllEdges(sm, &info.std_datas.vertex_position.?) catch |err| {
                     std.debug.print("Error cutting all edges: {}\n", .{err});
                 };
             }
@@ -301,7 +297,7 @@ pub fn rightClickMenu(m: *Module) void {
                 info.std_datas.edge_dihedral_angle == null or
                 info.std_datas.vertex_area == null or
                 info.std_datas.vertex_normal == null;
-            const curvature_datas = smc.surface_mesh_curvature.surfaceMeshCurvatureDatas(sm);
+            var curvature_datas = smc.app_ctx.surface_mesh_curvature.surfaceMeshCurvatureDatas(sm);
             if (UiData.adaptive_remeshing) {
                 if (curvature_datas.vertex_kmin == null or curvature_datas.vertex_Kmin == null or curvature_datas.vertex_kmax == null or curvature_datas.vertex_Kmax == null) {
                     disabled = true;
@@ -317,15 +313,15 @@ pub fn rightClickMenu(m: *Module) void {
                     UiData.edge_length_factor,
                     UiData.preserve_features,
                     UiData.adaptive_remeshing,
-                    info.std_datas.vertex_position.?,
-                    info.std_datas.corner_angle.?,
-                    info.std_datas.face_area.?,
-                    info.std_datas.face_normal.?,
-                    info.std_datas.edge_length.?,
-                    info.std_datas.edge_dihedral_angle.?,
-                    info.std_datas.vertex_area.?,
-                    info.std_datas.vertex_normal.?,
-                    curvature_datas,
+                    &info.std_datas.vertex_position.?,
+                    &info.std_datas.corner_angle.?,
+                    &info.std_datas.face_area.?,
+                    &info.std_datas.face_normal.?,
+                    &info.std_datas.edge_length.?,
+                    &info.std_datas.edge_dihedral_angle.?,
+                    &info.std_datas.vertex_area.?,
+                    &info.std_datas.vertex_normal.?,
+                    &curvature_datas,
                 ) catch |err| {
                     std.debug.print("Error remeshing: {}\n", .{err});
                 };

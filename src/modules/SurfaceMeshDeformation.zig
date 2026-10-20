@@ -7,22 +7,87 @@ const imgui_utils = @import("../ui/imgui.zig");
 
 const c = @import("c");
 
-const AppContext = @import("../main.zig").AppContext;
+const AppContext = @import("../AppContext.zig");
 const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
-const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMeshStdData;
 
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 const Vec4f = vec.Vec4f;
 const mat = @import("../geometry/mat.zig");
-const Mat4f = mat.Mat4f;
 
-const DeformationData = struct {
-    selected_vertex_set: ?*SurfaceMesh.CellSet = null,
+const arap = @import("../models/surface/arap.zig");
+const intrinsic_triangulation = @import("../models/surface/intrinsic_triangulation.zig");
+
+const DeformationMode = enum {
+    DirectManipulation,
+    ARAP,
 };
 
-app_ctx: *AppContext,
+const DeformationData = struct {
+    app_ctx: *AppContext,
+    surface_mesh: *SurfaceMesh,
+
+    fixed_vertex_set: ?*SurfaceMesh.VertexSet = null, // anchored vertices
+    handle_vertex_set: ?*SurfaceMesh.VertexSet = null, // handle vertices (moved by user)
+
+    arap_ctx: ?arap.ARAPContext = null, // optional ARAP context
+    // maybe there will be other deformation contexts in the future, e.g. for other deformation methods
+
+    it_ctx: ?intrinsic_triangulation.ITContext = null, // optional intrinsic triangulation context
+
+    fn initARAPContext(
+        dd: *DeformationData,
+        vertex_position: SurfaceMesh.VertexData(Vec3f),
+        halfedge_cotan_weight: SurfaceMesh.HalfedgeData(f32),
+        use_intrinsic_delaunay: bool,
+        edge_length: ?SurfaceMesh.EdgeData(f32),
+        corner_angle: ?SurfaceMesh.CornerData(f32),
+    ) !void {
+        assert(dd.arap_ctx == null);
+        assert(dd.it_ctx == null);
+        assert(dd.fixed_vertex_set != null and dd.fixed_vertex_set.?.cells.items.len > 0 and dd.fixed_vertex_set.?.cell_set_gen.surface_mesh == dd.surface_mesh);
+        assert(dd.handle_vertex_set != null and dd.handle_vertex_set.?.cells.items.len > 0 and dd.handle_vertex_set.?.cell_set_gen.surface_mesh == dd.surface_mesh);
+
+        if (use_intrinsic_delaunay and edge_length != null and corner_angle != null) {
+            dd.it_ctx = intrinsic_triangulation.ITContext.init(
+                dd.app_ctx.allocator,
+                dd.app_ctx.io,
+                dd.app_ctx.rng.random(),
+                dd.surface_mesh,
+                edge_length.?,
+                corner_angle.?,
+            ) catch null;
+            if (dd.it_ctx) |*it_ctx| {
+                try it_ctx.flipToDelaunay();
+            }
+        }
+
+        dd.arap_ctx = try .init(
+            dd.app_ctx.allocator,
+            dd.app_ctx.io,
+            dd.surface_mesh,
+            vertex_position,
+            halfedge_cotan_weight,
+            dd.fixed_vertex_set.?,
+            dd.handle_vertex_set.?,
+            dd.it_ctx,
+        );
+    }
+
+    fn deinit(dd: *DeformationData) void {
+        if (dd.arap_ctx) |*arap_ctx| {
+            arap_ctx.deinit();
+            dd.arap_ctx = null;
+        }
+        if (dd.it_ctx) |*it_ctx| {
+            it_ctx.deinit();
+            dd.it_ctx = null;
+        }
+    }
+};
+
+app_ctx: *AppContext = undefined,
 module: Module = .{
     .name = "Surface Mesh Deformation",
     .supported_models = .{ .surface_mesh = true },
@@ -34,24 +99,36 @@ module: Module = .{
     },
 },
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, DeformationData) = .empty,
+deformation_mode: DeformationMode = .DirectManipulation,
+use_intrinsic_delaunay: bool = false,
 dragging: bool = false,
 drag_z: f32 = 0,
+rotating: bool = false,
+rotate_pivot: Vec3f = vec.zero(Vec3f),
 
-pub fn init(app_ctx: *AppContext) SurfaceMeshDeformation {
-    return .{
-        .app_ctx = app_ctx,
-    };
+/// Modules are default-constructed in AppContext init function, and then initialized in AppContext wireUp function.
+pub fn init(smd: *SurfaceMeshDeformation, app_ctx: *AppContext) !void {
+    smd.app_ctx = app_ctx;
+    try app_ctx.surface_mesh_store.addListener(&smd.module);
 }
 
 pub fn deinit(smd: *SurfaceMeshDeformation) void {
+    var it = smd.surface_meshes_data.valueIterator();
+    while (it.next()) |dd| {
+        dd.deinit();
+    }
     smd.surface_meshes_data.deinit(smd.app_ctx.allocator);
+    smd.app_ctx.surface_mesh_store.removeListener(&smd.module);
 }
 
 /// Part of the Module interface.
 /// Create and store a DeformationData for the created SurfaceMesh.
 pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
     const smd: *SurfaceMeshDeformation = @alignCast(@fieldParentPtr("module", m));
-    smd.surface_meshes_data.put(smd.app_ctx.allocator, surface_mesh, .{}) catch |err| {
+    smd.surface_meshes_data.put(smd.app_ctx.allocator, surface_mesh, .{
+        .app_ctx = smd.app_ctx,
+        .surface_mesh = surface_mesh,
+    }) catch |err| {
         std.debug.print("Failed to store DeformationData for new SurfaceMesh: {}\n", .{err});
         return;
     };
@@ -61,6 +138,9 @@ pub fn surfaceMeshCreated(m: *Module, surface_mesh: *SurfaceMesh) void {
 /// Remove the DeformationData associated to the destroyed SurfaceMesh.
 pub fn surfaceMeshDestroyed(m: *Module, surface_mesh: *SurfaceMesh) void {
     const smd: *SurfaceMeshDeformation = @alignCast(@fieldParentPtr("module", m));
+    if (smd.surface_meshes_data.getPtr(surface_mesh)) |dd| {
+        dd.deinit();
+    }
     _ = smd.surface_meshes_data.remove(surface_mesh);
 }
 
@@ -74,26 +154,43 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
     assert(smd.app_ctx.selected_model.modelType() == .surface_mesh);
     const sm = smd.app_ctx.selected_model.surface_mesh;
     const dd = smd.surface_meshes_data.getPtr(sm).?;
-    if (dd.selected_vertex_set == null) return false;
+    const info = sm_store.surfaceMeshInfo(sm);
+
+    const can_drag = info.std_datas.vertex_position != null and
+        info.std_datas.halfedge_cotan_weight != null and
+        dd.handle_vertex_set != null and
+        dd.handle_vertex_set.?.cells.items.len > 0 and
+        (smd.deformation_mode == .DirectManipulation or (smd.deformation_mode == .ARAP and dd.arap_ctx != null));
+
+    if (!can_drag) {
+        return false;
+    }
 
     return switch (event.type) {
         c.SDL_EVENT_KEY_DOWN => blk: {
             switch (event.key.key) {
                 c.SDLK_D => {
-                    const info = sm_store.surfaceMeshInfo(sm);
-                    // compute and store the average depth of the selected vertices
-                    // used to compute the world-space translation corresponding to mouse movement in the view when dragging
-                    if (info.std_datas.vertex_position != null and dd.selected_vertex_set.?.indices.items.len > 0) {
-                        smd.drag_z = 0;
-                        for (dd.selected_vertex_set.?.indices.items) |vertex_id| {
-                            const p = view.worldToView(info.std_datas.vertex_position.?.valueByIndex(vertex_id));
-                            if (p) |p_view| {
-                                smd.drag_z += p_view[2];
-                            }
+                    // compute and store the average depth of the handle vertices
+                    smd.drag_z = 0;
+                    for (dd.handle_vertex_set.?.cells.items) |v| {
+                        const p = view.worldToView(info.std_datas.vertex_position.?.value(v));
+                        if (p) |p_view| {
+                            smd.drag_z += p_view[2];
                         }
-                        smd.drag_z /= @floatFromInt(dd.selected_vertex_set.?.indices.items.len);
-                        smd.dragging = true;
                     }
+                    smd.drag_z /= @floatFromInt(dd.handle_vertex_set.?.cells.items.len);
+                    smd.dragging = true;
+                },
+                c.SDLK_R => {
+                    smd.rotate_pivot = vec.zero(Vec3f);
+                    for (dd.handle_vertex_set.?.cells.items) |v| {
+                        smd.rotate_pivot = vec.add(smd.rotate_pivot, info.std_datas.vertex_position.?.value(v));
+                    }
+                    smd.rotate_pivot = vec.mulScalar(
+                        smd.rotate_pivot,
+                        1.0 / @as(f32, @floatFromInt(dd.handle_vertex_set.?.cells.items.len)),
+                    );
+                    smd.rotating = true;
                 },
                 else => {},
             }
@@ -102,25 +199,56 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
         c.SDL_EVENT_KEY_UP => blk: {
             switch (event.key.key) {
                 c.SDLK_D => smd.dragging = false,
+                c.SDLK_R => smd.rotating = false,
                 else => {},
             }
             break :blk false;
         },
         c.SDL_EVENT_MOUSE_MOTION => blk: {
             if (smd.dragging) {
-                const info = sm_store.surfaceMeshInfo(sm);
                 const p_now = view.viewToWorldZ(event.motion.x, event.motion.y, smd.drag_z);
                 const p_prev = view.viewToWorldZ(event.motion.x - event.motion.xrel, event.motion.y - event.motion.yrel, smd.drag_z);
                 if (p_now != null and p_prev != null) {
-                    const tr = vec.sub3f(p_now.?, p_prev.?);
-                    for (dd.selected_vertex_set.?.indices.items) |vertex_id| {
-                        const pos = info.std_datas.vertex_position.?.valuePtrByIndex(vertex_id);
-                        pos.* = vec.add3f(pos.*, tr);
+                    const tr = vec.sub(p_now.?, p_prev.?);
+                    // Translate handle vertices
+                    for (dd.handle_vertex_set.?.cells.items) |v| {
+                        const pos = info.std_datas.vertex_position.?.valuePtr(v);
+                        pos.* = vec.add(pos.*, tr);
+                    }
+                    if (smd.deformation_mode == .ARAP) {
+                        dd.arap_ctx.?.solve() catch |err| {
+                            std.debug.print("Failed to solve ARAP: {}\n", .{err});
+                            break :blk false;
+                        };
                     }
                     sm_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, info.std_datas.vertex_position.?);
-                    smd.app_ctx.requestRedraw();
+                    smd.app_ctx.view.requestRedraw();
                     break :blk true;
                 }
+            } else if (smd.rotating) {
+                const screen_axis4: Vec4f = .{ -event.motion.yrel, -event.motion.xrel, 0.0, 0.0 };
+                const angle = vec.norm(screen_axis4) * 0.01; // TODO: normalize with window dimensions
+                const world_axis4 = mat.preMulVec(smd.app_ctx.view.camera.view_matrix, screen_axis4);
+                const world_axis3: Vec3f = vec.normalized(Vec3f{ world_axis4[0], world_axis4[1], world_axis4[2] });
+                const rot = mat.rotMat3FromNormalizedAxisAndAngle(world_axis3, angle);
+                for (dd.handle_vertex_set.?.cells.items) |v| {
+                    const pos = info.std_datas.vertex_position.?.valuePtr(v);
+                    pos.* = vec.add(
+                        smd.rotate_pivot,
+                        mat.preMulVec(
+                            rot,
+                            vec.sub(pos.*, smd.rotate_pivot),
+                        ),
+                    );
+                }
+                if (smd.deformation_mode == .ARAP) {
+                    dd.arap_ctx.?.solve() catch |err| {
+                        std.debug.print("Failed to solve ARAP: {}\n", .{err});
+                        break :blk false;
+                    };
+                }
+                sm_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, info.std_datas.vertex_position.?);
+                smd.app_ctx.view.requestRedraw();
             }
             break :blk false;
         },
@@ -132,17 +260,105 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
 /// Show a UI panel to control the deformation of the selected SurfaceMesh.
 pub fn rightPanel(m: *Module) void {
     const smd: *SurfaceMeshDeformation = @alignCast(@fieldParentPtr("module", m));
+    const sm_store = &smd.app_ctx.surface_mesh_store;
 
     assert(smd.app_ctx.selected_model.modelType() == .surface_mesh);
     const sm = smd.app_ctx.selected_model.surface_mesh;
     const dd = smd.surface_meshes_data.getPtr(sm).?;
+    const info = sm_store.surfaceMeshInfo(sm);
 
-    c.ImGui_Text("Vertex set:");
-    c.ImGui_PushID("vertex set");
-    switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, dd.selected_vertex_set)) {
+    c.ImGui_SeparatorText("Deformation mode");
+    if (c.ImGui_RadioButton("Direct manipulation", smd.deformation_mode == .DirectManipulation)) {
+        smd.deformation_mode = .DirectManipulation;
+    }
+    c.ImGui_SameLine();
+    if (c.ImGui_RadioButton("ARAP", smd.deformation_mode == .ARAP)) {
+        smd.deformation_mode = .ARAP;
+    }
+
+    c.ImGui_Text("Handle vertices:");
+    c.ImGui_PushID("handle vertex set");
+    switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, dd.handle_vertex_set)) {
         .unchanged => {},
-        .cleared => dd.selected_vertex_set = null,
-        .changed => |cell_set| dd.selected_vertex_set = cell_set,
+        .cleared => dd.handle_vertex_set = null,
+        .changed => |cell_set| dd.handle_vertex_set = cell_set,
     }
     c.ImGui_PopID();
+
+    if (smd.deformation_mode == .ARAP) {
+        c.ImGui_Text("Fixed vertices:");
+        c.ImGui_PushID("fixed vertex set");
+        switch (imgui_utils.surfaceMeshCellSetComboBox(sm, .vertex, dd.fixed_vertex_set)) {
+            .unchanged => {},
+            .cleared => dd.fixed_vertex_set = null,
+            .changed => |cell_set| dd.fixed_vertex_set = cell_set,
+        }
+        c.ImGui_PopID();
+
+        c.ImGui_Separator();
+
+        // Initialize ARAP button
+        {
+            const disabled = dd.fixed_vertex_set == null or
+                dd.fixed_vertex_set.?.cells.items.len == 0 or
+                dd.handle_vertex_set == null or
+                dd.handle_vertex_set.?.cells.items.len == 0 or
+                info.std_datas.vertex_position == null or
+                info.std_datas.halfedge_cotan_weight == null or
+                (smd.use_intrinsic_delaunay and info.std_datas.edge_length == null) or
+                (smd.use_intrinsic_delaunay and info.std_datas.corner_angle == null) or
+                dd.arap_ctx != null;
+            if (disabled) {
+                c.ImGui_BeginDisabled(true);
+            }
+            _ = c.ImGui_Checkbox("Use intrinsic Delaunay triangulation", &smd.use_intrinsic_delaunay);
+            if (c.ImGui_ButtonEx(
+                if (dd.arap_ctx != null) "ARAP initialized" else "Initialize ARAP",
+                c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 },
+            )) {
+                dd.initARAPContext(
+                    info.std_datas.vertex_position.?,
+                    info.std_datas.halfedge_cotan_weight.?,
+                    smd.use_intrinsic_delaunay,
+                    info.std_datas.edge_length,
+                    info.std_datas.corner_angle,
+                ) catch |err| {
+                    std.debug.print("Failed to initialize ARAP: {}\n", .{err});
+                };
+            }
+            if (disabled) {
+                if (dd.arap_ctx != null) {
+                    imgui_utils.tooltip("ARAP is already initialized. Reset first.");
+                } else {
+                    imgui_utils.tooltip(
+                        \\ Requires:
+                        \\ - at least 1 vertex in the fixed vertex set
+                        \\ - at least 1 vertex in the handle vertex set
+                        \\ Following data should be available:
+                        \\ - std vertex_position
+                    );
+                }
+                c.ImGui_EndDisabled();
+            }
+        }
+
+        if (dd.arap_ctx) |*arap_ctx| {
+            c.ImGui_Text("ARAP iterations:");
+            _ = c.ImGui_SliderIntEx("", &arap_ctx.nb_iterations, 1, 20, "%d", c.ImGuiSliderFlags_AlwaysClamp);
+        }
+
+        // Deinitialize ARAP button
+        {
+            const disabled = dd.arap_ctx == null;
+            if (disabled) {
+                c.ImGui_BeginDisabled(true);
+            }
+            if (c.ImGui_ButtonEx("Deinitialize ARAP", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
+                dd.deinit();
+            }
+            if (disabled) {
+                c.ImGui_EndDisabled();
+            }
+        }
+    }
 }

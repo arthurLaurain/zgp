@@ -48,13 +48,13 @@ pub fn updateTextureBufferObject(tbo: *TextureBuffer, index: usize, comptime T: 
     gl.BufferSubData(gl.TEXTURE_BUFFER, @intCast(offset), @intCast(size), @ptrCast(&value));
 }
 
-pub fn updateFieldTBO(tbo: *TextureBuffer, cells: std.ArrayList(SurfaceMesh.Cell), samplesID_per_vertex: SurfaceMesh.CellData(.vertex, i32), field_datatype: type, field: SurfaceMesh.CellData(.vertex, field_datatype)) void {
-    for (cells.items) |cell| {
+pub fn updateFieldTBO(tbo: *TextureBuffer, cells: std.ArrayList(u32), samplesID_per_vertex: SurfaceMesh.VertexData(i32), field_datatype: type, field: SurfaceMesh.VertexData(field_datatype)) void {
+    for (cells.items) |cell_index| {
 
         // we only care about cells which have a sample snapped to
-        const value_sample_snapped_to_cell = samplesID_per_vertex.value(cell);
+        const value_sample_snapped_to_cell = samplesID_per_vertex.value(.{ .index = cell_index });
         if (value_sample_snapped_to_cell == -1) continue;
-        tbo.updateTextureBufferObject(@intCast(value_sample_snapped_to_cell), field_datatype, field.value(cell));
+        tbo.updateTextureBufferObject(@intCast(value_sample_snapped_to_cell), field_datatype, field.value(.{ .index = cell_index }));
     }
 }
 

@@ -7,7 +7,7 @@ const zgp_log = std.log.scoped(.zgp);
 
 const c = @import("c");
 
-const AppContext = @import("../main.zig").AppContext;
+const AppContext = @import("../AppContext.zig");
 const Module = @import("Module.zig");
 const SurfaceMesh = @import("../models/surface/SurfaceMesh.zig");
 const SurfaceMeshStore = @import("../models/SurfaceMeshStore.zig");
@@ -15,7 +15,6 @@ const SurfaceMeshStdData = SurfaceMeshStore.SurfaceMeshStdData;
 const SurfaceMeshStdDataTag = SurfaceMeshStore.SurfaceMeshStdDataTag;
 
 const imgui_utils = @import("../ui/imgui.zig");
-const types_utils = @import("../utils/types.zig");
 const vec = @import("../geometry/vec.zig");
 const Vec3f = vec.Vec3f;
 
@@ -25,9 +24,9 @@ const curvature = @import("../models/surface/curvature.zig");
 const laplacian = @import("../models/surface/laplacian.zig");
 const length = @import("../models/surface/length.zig");
 const normal = @import("../models/surface/normal.zig");
-const tangentBasis = @import("../models/surface/tangentBasis.zig");
+const tangent_basis = @import("../models/surface/tangent_basis.zig");
 
-app_ctx: *AppContext,
+app_ctx: *AppContext = undefined,
 module: Module = .{
     .name = "Surface Mesh Std Datas",
     .supported_models = .{ .surface_mesh = true },
@@ -36,13 +35,25 @@ module: Module = .{
     },
 },
 
-pub fn init(app_ctx: *AppContext) SurfaceMeshStdDatas {
-    return .{
-        .app_ctx = app_ctx,
-    };
+/// Modules are default-constructed in AppContext init function, and then initialized in AppContext wireUp function.
+pub fn init(smsd: *SurfaceMeshStdDatas, app_ctx: *AppContext) !void {
+    smsd.app_ctx = app_ctx;
+    try app_ctx.surface_mesh_store.addListener(&smsd.module);
 }
 
-pub fn deinit(_: *SurfaceMeshStdDatas) void {}
+pub fn deinit(smsd: *SurfaceMeshStdDatas) void {
+    smsd.app_ctx.surface_mesh_store.removeListener(&smsd.module);
+}
+
+pub fn updateComputableStdDatas(smsd: *SurfaceMeshStdDatas, sm: *SurfaceMesh) void {
+    const sm_store = &smsd.app_ctx.surface_mesh_store;
+    inline for (std_data_computations) |comp| {
+        const computable, const upToDate = dataComputableAndUpToDate(sm_store, sm, comp.computes);
+        if (computable and !upToDate) {
+            comp.compute(smsd.app_ctx, sm);
+        }
+    }
+}
 
 /// Part of the Module interface.
 /// Show a UI panel to control the standard datas of the selected SurfaceMesh.
@@ -64,24 +75,25 @@ pub fn leftPanel(m: *Module) void {
     const info = sm_store.surfaceMeshInfo(sm);
 
     inline for ([_]SurfaceMesh.CellType{ .halfedge, .corner, .vertex, .edge, .face }) |cell_type| {
-        const cells = std.fmt.bufPrintZ(&buf, @tagName(cell_type), .{}) catch "";
+        const cells = std.fmt.bufPrintSentinel(&buf, @tagName(cell_type), .{}, 0) catch "";
         c.ImGui_SeparatorText(cells.ptr);
-        inline for (@typeInfo(SurfaceMeshStdData).@"union".fields) |field| {
-            if (@typeInfo(field.type).optional.child.CellType != cell_type) continue;
-            c.ImGui_Text(field.name);
+        const std_data_info = @typeInfo(SurfaceMeshStdData).@"union";
+        inline for (std_data_info.field_names, std_data_info.field_types) |field_name, field_type| {
+            if (@typeInfo(field_type).optional.child.CellType != cell_type) continue;
+            c.ImGui_Text(field_name);
             c.ImGui_SameLine();
             // align 2 buttons to the right of the text
             c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + c.ImGui_GetContentRegionAvail().x - 2 * (button_width + style.*.ItemSpacing.x));
-            const data_selected = @field(info.std_datas, field.name) != null;
+            const data_selected = @field(info.std_datas, field_name) != null;
             if (!data_selected) {
                 c.ImGui_PushStyleColor(c.ImGuiCol_Button, c.IM_COL32(128, 128, 128, 200));
                 c.ImGui_PushStyleColor(c.ImGuiCol_ButtonHovered, c.IM_COL32(128, 128, 128, 255));
                 c.ImGui_PushStyleColor(c.ImGuiCol_ButtonActive, c.IM_COL32(128, 128, 128, 128));
             }
-            c.ImGui_PushID(field.name);
+            c.ImGui_PushID(field_name);
             defer c.ImGui_PopID();
             if (c.ImGui_Button("" ++ c.ICON_FA_DATABASE)) {
-                c.ImGui_OpenPopup("select_data_popup", c.ImGuiPopupFlags_NoReopen);
+                _ = c.ImGui_OpenPopup("select_data_popup", c.ImGuiPopupFlags_NoReopen);
             }
             if (!data_selected) {
                 c.ImGui_PopStyleColorEx(3);
@@ -92,22 +104,22 @@ pub fn leftPanel(m: *Module) void {
                 defer c.ImGui_PopID();
                 switch (imgui_utils.surfaceMeshCellDataComboBox(
                     sm,
-                    @typeInfo(field.type).optional.child.CellType,
-                    @typeInfo(field.type).optional.child.DataType,
-                    @field(info.std_datas, field.name),
+                    @typeInfo(field_type).optional.child.CellType,
+                    @typeInfo(field_type).optional.child.DataType,
+                    @field(info.std_datas, field_name),
                 )) {
                     .unchanged => {},
                     .cleared => {
-                        sm_store.setSurfaceMeshStdData(sm, @unionInit(SurfaceMeshStdData, field.name, null));
-                        smsd.app_ctx.requestRedraw();
+                        sm_store.setSurfaceMeshStdData(sm, @unionInit(SurfaceMeshStdData, field_name, null));
+                        smsd.app_ctx.view.requestRedraw();
                     },
                     .changed => |data| {
-                        sm_store.setSurfaceMeshStdData(sm, @unionInit(SurfaceMeshStdData, field.name, data));
-                        smsd.app_ctx.requestRedraw();
+                        sm_store.setSurfaceMeshStdData(sm, @unionInit(SurfaceMeshStdData, field_name, data));
+                        smsd.app_ctx.view.requestRedraw();
                     },
                 }
             }
-            const data_tag = @field(SurfaceMeshStdDataTag, field.name);
+            const data_tag = @field(SurfaceMeshStdDataTag, field_name);
             inline for (std_data_computations) |comp| {
                 if (comp.computes == data_tag) {
                     c.ImGui_SameLine();
@@ -128,7 +140,7 @@ pub fn leftPanel(m: *Module) void {
                         if (computable) {
                             comp.compute(smsd.app_ctx, sm);
                         } else {
-                            zgp_log.err("No computation found for {s} data", .{field.name});
+                            zgp_log.err("No computation found for {s} data", .{field_name});
                         }
                     }
                     c.ImGui_PopStyleColorEx(3);
@@ -149,27 +161,8 @@ pub fn leftPanel(m: *Module) void {
 
     c.ImGui_Separator();
 
-    if (c.ImGui_ButtonEx(c.ICON_FA_DATABASE ++ " Create missing std datas", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-        inline for (@typeInfo(SurfaceMeshStdData).@"union".fields) |*field| {
-            if (@field(info.std_datas, field.name) == null) {
-                const maybe_data = sm.addData(@typeInfo(field.type).optional.child.CellType, @typeInfo(field.type).optional.child.DataType, field.name);
-                if (maybe_data) |data| {
-                    sm_store.setSurfaceMeshStdData(sm, @unionInit(SurfaceMeshStdData, field.name, data));
-                    smsd.app_ctx.requestRedraw();
-                } else |err| {
-                    zgp_log.err("Error adding {s} ({s}: {s}) data: {}", .{ field.name, @tagName(@typeInfo(field.type).optional.child.CellType), @typeName(@typeInfo(field.type).optional.child.DataType), err });
-                }
-            }
-        }
-    }
-
     if (c.ImGui_ButtonEx(c.ICON_FA_GEAR ++ " Update outdated std datas", c.ImVec2{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0.0 })) {
-        inline for (std_data_computations) |comp| {
-            const computable, const upToDate = dataComputableAndUpToDate(sm_store, sm, comp.computes);
-            if (computable and !upToDate) {
-                comp.compute(smsd.app_ctx, sm);
-            }
-        }
+        updateComputableStdDatas(smsd, sm);
     }
 }
 
@@ -198,7 +191,7 @@ const StdDataComputation = struct {
         inline for (self.reads, 0..self.reads.len) |read_tag, i| {
             params[i + 2] = @typeInfo(@FieldType(SurfaceMeshStore.SurfaceMeshStdDatas, @tagName(read_tag))).optional.child;
         }
-        params[nbparams - 1] = @typeInfo(@FieldType(SurfaceMeshStore.SurfaceMeshStdDatas, @tagName(self.computes))).optional.child;
+        params[nbparams - 1] = *@typeInfo(@FieldType(SurfaceMeshStore.SurfaceMeshStdDatas, @tagName(self.computes))).optional.child;
         return @Fn(&params, &@splat(.{}), anyerror!void, .{ .@"callconv" = .auto });
     }
 
@@ -213,7 +206,7 @@ const StdDataComputation = struct {
         inline for (self.reads, 0..) |reads_tag, i| {
             args[i + 2] = @field(info.std_datas, @tagName(reads_tag)).?;
         }
-        args[self.reads.len + 2] = @field(info.std_datas, @tagName(self.computes)).?;
+        args[self.reads.len + 2] = &@field(info.std_datas, @tagName(self.computes)).?;
         @call(.auto, func, args) catch |err| {
             std.debug.print("Error computing {s}: {}\n", .{ @tagName(self.computes), err });
         };
@@ -224,7 +217,7 @@ const StdDataComputation = struct {
 /// The order of declaration matters: some computations depend on the result of previous ones
 /// (e.g. vertex normal depends on face normal) and the "Update outdated std datas" button of the SurfaceMeshStore
 /// computes them in the order of declaration.
-pub const std_data_computations: []const StdDataComputation = &.{
+const std_data_computations: []const StdDataComputation = &.{
     .{
         .reads = &.{.vertex_position},
         .computes = .corner_angle,
@@ -272,7 +265,7 @@ pub const std_data_computations: []const StdDataComputation = &.{
     },
 };
 
-pub fn dataComputableAndUpToDate(
+fn dataComputableAndUpToDate(
     sms: *SurfaceMeshStore,
     sm: *SurfaceMesh,
     comptime tag: SurfaceMeshStdDataTag,
@@ -311,101 +304,101 @@ pub fn dataComputableAndUpToDate(
 fn computeCornerAngles(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    corner_angle: SurfaceMesh.CellData(.corner, f32),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    corner_angle: *SurfaceMesh.CornerData(f32),
 ) !void {
-    try angle.computeCornerAngles(app_ctx, sm, vertex_position, corner_angle);
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .corner, f32, corner_angle);
+    try angle.computeCornerAngles(app_ctx.io, sm, vertex_position, corner_angle);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .corner, f32, corner_angle.*);
 }
 
 fn computeHalfedgeCotanWeights(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    halfedge_cotan_weight: SurfaceMesh.CellData(.halfedge, f32),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    halfedge_cotan_weight: *SurfaceMesh.HalfedgeData(f32),
 ) !void {
-    try laplacian.computeHalfedgeCotanWeights(app_ctx, sm, vertex_position, halfedge_cotan_weight);
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .halfedge, f32, halfedge_cotan_weight);
+    try laplacian.computeHalfedgeCotanWeights(app_ctx.io, sm, vertex_position, halfedge_cotan_weight);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .halfedge, f32, halfedge_cotan_weight.*);
 }
 
 fn computeEdgeLengths(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    edge_length: SurfaceMesh.CellData(.edge, f32),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    edge_length: *SurfaceMesh.EdgeData(f32),
 ) !void {
-    try length.computeEdgeLengths(app_ctx, sm, vertex_position, edge_length);
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .edge, f32, edge_length);
+    try length.computeEdgeLengths(sm, vertex_position, edge_length);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .edge, f32, edge_length.*);
 }
 
 fn computeEdgeDihedralAngles(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    face_normal: SurfaceMesh.CellData(.face, Vec3f),
-    edge_dihedral_angle: SurfaceMesh.CellData(.edge, f32),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    face_normal: SurfaceMesh.FaceData(Vec3f),
+    edge_dihedral_angle: *SurfaceMesh.EdgeData(f32),
 ) !void {
     const t = std.Io.Timestamp.now(app_ctx.io, .real);
-    try angle.computeEdgeDihedralAngles(app_ctx, sm, vertex_position, face_normal, edge_dihedral_angle);
+    try angle.computeEdgeDihedralAngles(app_ctx.io, sm, vertex_position, face_normal, edge_dihedral_angle);
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, app_ctx.io, .real).nanoseconds);
     zgp_log.info("Edge dihedral angles computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .edge, f32, edge_dihedral_angle);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .edge, f32, edge_dihedral_angle.*);
 }
 
 fn computeFaceAreas(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    face_area: SurfaceMesh.CellData(.face, f32),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    face_area: *SurfaceMesh.FaceData(f32),
 ) !void {
-    try area.computeFaceAreas(app_ctx, sm, vertex_position, face_area);
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, f32, face_area);
+    try area.computeFaceAreas(app_ctx.io, sm, vertex_position, face_area);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, f32, face_area.*);
 }
 
 fn computeFaceNormals(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    face_normal: SurfaceMesh.CellData(.face, Vec3f),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    face_normal: *SurfaceMesh.FaceData(Vec3f),
 ) !void {
     const t = std.Io.Timestamp.now(app_ctx.io, .real);
-    try normal.computeFaceNormals(app_ctx, sm, vertex_position, face_normal);
+    try normal.computeFaceNormals(app_ctx.io, sm, vertex_position, face_normal);
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, app_ctx.io, .real).nanoseconds);
     zgp_log.info("Face normals computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, Vec3f, face_normal);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .face, Vec3f, face_normal.*);
 }
 
 fn computeVertexAreas(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    face_area: SurfaceMesh.CellData(.face, f32),
-    vertex_area: SurfaceMesh.CellData(.vertex, f32),
+    face_area: SurfaceMesh.FaceData(f32),
+    vertex_area: *SurfaceMesh.VertexData(f32),
 ) !void {
-    try area.computeVertexAreas(app_ctx, sm, face_area, vertex_area);
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, vertex_area);
+    try area.computeVertexAreas(sm, face_area, vertex_area);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, f32, vertex_area.*);
 }
 
 fn computeVertexNormals(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    corner_angle: SurfaceMesh.CellData(.corner, f32),
-    face_normal: SurfaceMesh.CellData(.face, Vec3f),
-    vertex_normal: SurfaceMesh.CellData(.vertex, Vec3f),
+    corner_angle: SurfaceMesh.CornerData(f32),
+    face_normal: SurfaceMesh.FaceData(Vec3f),
+    vertex_normal: *SurfaceMesh.VertexData(Vec3f),
 ) !void {
     const t = std.Io.Timestamp.now(app_ctx.io, .real);
-    try normal.computeVertexNormals(app_ctx, sm, corner_angle, face_normal, vertex_normal);
+    try normal.computeVertexNormals(app_ctx.io, sm, corner_angle, face_normal, vertex_normal);
     const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, app_ctx.io, .real).nanoseconds);
     zgp_log.info("Vertex normals computed in : {d:.3}ms", .{elapsed / std.time.ns_per_ms});
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_normal);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, Vec3f, vertex_normal.*);
 }
 
 fn computeVertexTangentBases(
     app_ctx: *AppContext,
     sm: *SurfaceMesh,
-    vertex_position: SurfaceMesh.CellData(.vertex, Vec3f),
-    vertex_normal: SurfaceMesh.CellData(.vertex, Vec3f),
-    vertex_tangent_basis: SurfaceMesh.CellData(.vertex, [2]Vec3f),
+    vertex_position: SurfaceMesh.VertexData(Vec3f),
+    vertex_normal: SurfaceMesh.VertexData(Vec3f),
+    vertex_tangent_basis: *SurfaceMesh.VertexData([2]Vec3f),
 ) !void {
-    try tangentBasis.computeVertexTangentBases(app_ctx, sm, vertex_position, vertex_normal, vertex_tangent_basis);
-    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, [2]Vec3f, vertex_tangent_basis);
+    try tangent_basis.computeVertexTangentBases(app_ctx.io, sm, vertex_position, vertex_normal, vertex_tangent_basis);
+    app_ctx.surface_mesh_store.surfaceMeshDataUpdated(sm, .vertex, [2]Vec3f, vertex_tangent_basis.*);
 }
