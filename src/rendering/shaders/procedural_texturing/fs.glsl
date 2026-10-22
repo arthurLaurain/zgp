@@ -53,38 +53,38 @@ uniform samplerBuffer u_normal_samples;
 
 float DistributionGGX(vec3 N, vec3 H, float a)
 {
-    float a2     = a*a;
-    float NdotH  = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH*NdotH;
-	
-    float nom    = a2;
-    float denom  = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom        = PI * denom * denom;
-	
-    return nom / denom;
+  float a2 = a * a;
+  float NdotH = max(dot(N, H), 0.0);
+  float NdotH2 = NdotH * NdotH;
+
+  float nom = a2;
+  float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+  denom = PI * denom * denom;
+
+  return nom / denom;
 }
 
 float GeometrySchlickGGX(float NdotV, float k)
 {
-    float nom   = NdotV;
-    float denom = NdotV * (1.0 - k) + k;
-	
-    return nom / denom;
+  float nom = NdotV;
+  float denom = NdotV * (1.0 - k) + k;
+
+  return nom / denom;
 }
-  
+
 float GeometrySmith(vec3 N, vec3 V, vec3 L, float k)
 {
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx1 = GeometrySchlickGGX(NdotV, k);
-    float ggx2 = GeometrySchlickGGX(NdotL, k);
-	
-    return ggx1 * ggx2;
+  float NdotV = max(dot(N, V), 0.0);
+  float NdotL = max(dot(N, L), 0.0);
+  float ggx1 = GeometrySchlickGGX(NdotV, k);
+  float ggx2 = GeometrySchlickGGX(NdotL, k);
+
+  return ggx1 * ggx2;
 }
 
 vec3 fresnelSchlick(float cosTheta, vec3 F0)
 {
-    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+  return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
 ////////////////////////////////////// Mix Max /////////////////////////////////////////////
@@ -333,83 +333,78 @@ void main() {
 
   TriangleUVs triangleUVs = loadTriangleUVs(id_triangle);
 
-    vec2 uv_sample[3];
-    if (u_compensate_distorsions)
-    {
-      for (int i = 0; i < 3; i++)
-      {
-        uv_sample[i] = loadDistordedUV(triangleUVs, i, id_vertices, bary);
-      }
-    }
-    else
-    {
-      for (int i = 0; i < 3; i++)
-      {
-        uv_sample[i] = bary.x * triangleUVs.uvs[i * 3 + 0] + bary.y * triangleUVs.uvs[i * 3 + 1] + bary.z * triangleUVs.uvs[i * 3 + 2];
-      }
-    }
-
-    float distance_sample[3];
-    distance_sample[0] = bary.x * triangleUVs.distance_to_boundary[0] + bary.y * triangleUVs.distance_to_boundary[1] + bary.z * triangleUVs.distance_to_boundary[2];
-    distance_sample[1] = bary.x * triangleUVs.distance_to_boundary[3] + bary.y * triangleUVs.distance_to_boundary[4] + bary.z * triangleUVs.distance_to_boundary[5];
-    distance_sample[2] = bary.x * triangleUVs.distance_to_boundary[6] + bary.y * triangleUVs.distance_to_boundary[7] + bary.z * triangleUVs.distance_to_boundary[8];
-
-    float sum_distance = distance_sample[0] + distance_sample[1] + distance_sample[2];
-    w[0] = distance_sample[0] / sum_distance;
-    w[1] = distance_sample[1] / sum_distance;
-    w[2] = distance_sample[2] / sum_distance;
-
-    float scaling_per_sample[3];
-    scaling_per_sample[0] = texelFetch(u_scaling_tile, int(triangleUVs.samples[0])).r;
-    scaling_per_sample[1] = texelFetch(u_scaling_tile, int(triangleUVs.samples[1])).r;
-    scaling_per_sample[2] = texelFetch(u_scaling_tile, int(triangleUVs.samples[2])).r;
-    float fragment_scaling_value = u_scale_tex_coords + w[0] * scaling_per_sample[0] + w[1] * scaling_per_sample[1] + w[2] * scaling_per_sample[2];
-
-    vec3 edge_ref_tile[3];
-    edge_ref_tile[0] = texelFetch(u_dir_ref_tile, int(triangleUVs.samples[0])).rgb;
-    edge_ref_tile[1] = texelFetch(u_dir_ref_tile, int(triangleUVs.samples[1])).rgb;
-    edge_ref_tile[2] = texelFetch(u_dir_ref_tile, int(triangleUVs.samples[2])).rgb;
-
-    vec3 rotation_per_sample[3];
-    rotation_per_sample[0] = texelFetch(u_rotation_tile, int(triangleUVs.samples[0])).rgb;
-    rotation_per_sample[1] = texelFetch(u_rotation_tile, int(triangleUVs.samples[1])).rgb;
-    rotation_per_sample[2] = texelFetch(u_rotation_tile, int(triangleUVs.samples[2])).rgb;
-
-    vec3 normal_per_sample[3];
-    normal_per_sample[0] = texelFetch(u_normal_samples, int(triangleUVs.samples[0])).rgb;
-    normal_per_sample[1] = texelFetch(u_normal_samples, int(triangleUVs.samples[1])).rgb;
-    normal_per_sample[2] = texelFetch(u_normal_samples, int(triangleUVs.samples[2])).rgb;
-
-    float angle_per_sample[3];
-    angle_per_sample[0] = 0;
-    angle_per_sample[1] = 0;
-    angle_per_sample[2] = 0;
-
-    vec3 interpolated_rotation = w[0] * rotation_per_sample[0]+ w[1] * rotation_per_sample[1]+ w[2] * rotation_per_sample[2];
-    
+  vec2 uv_sample[3];
+  if (u_compensate_distorsions)
+  {
     for (int i = 0; i < 3; i++)
     {
-      if (length(interpolated_rotation) > 0.)
-      {
-        vec3 normal = normalize(normal_per_sample[i]);
-        vec3 reference = normalize(edge_ref_tile[i] - dot(edge_ref_tile[i], normal) * normal);
-        vec3 target = normalize(interpolated_rotation - dot(interpolated_rotation, normal) * normal);
-        angle_per_sample[i] = atan(dot(normal, cross(reference, target)),dot(reference, target));
-        
-      }
+      uv_sample[i] = loadDistordedUV(triangleUVs, i, id_vertices, bary);
     }
-
+  }
+  else
+  {
     for (int i = 0; i < 3; i++)
     {
-        mat2 rotation_transform = inverse(rotate(angle_per_sample[i]));
-        u[i] = rotation_transform * (uv_sample[i] * fragment_scaling_value);
+      uv_sample[i] = bary.x * triangleUVs.uvs[i * 3 + 0] + bary.y * triangleUVs.uvs[i * 3 + 1] + bary.z * triangleUVs.uvs[i * 3 + 2];
     }
+  }
 
-    r[0] = hash12(int(triangleUVs.samples[0]));
-    r[1] = hash12(int(triangleUVs.samples[1]));
-    r[2] = hash12(int(triangleUVs.samples[2]));
-  
+  float distance_sample[3];
+  distance_sample[0] = bary.x * triangleUVs.distance_to_boundary[0] + bary.y * triangleUVs.distance_to_boundary[1] + bary.z * triangleUVs.distance_to_boundary[2];
+  distance_sample[1] = bary.x * triangleUVs.distance_to_boundary[3] + bary.y * triangleUVs.distance_to_boundary[4] + bary.z * triangleUVs.distance_to_boundary[5];
+  distance_sample[2] = bary.x * triangleUVs.distance_to_boundary[6] + bary.y * triangleUVs.distance_to_boundary[7] + bary.z * triangleUVs.distance_to_boundary[8];
 
+  float sum_distance = distance_sample[0] + distance_sample[1] + distance_sample[2];
+  w[0] = distance_sample[0] / sum_distance;
+  w[1] = distance_sample[1] / sum_distance;
+  w[2] = distance_sample[2] / sum_distance;
+
+  float scaling_per_sample[3];
+  scaling_per_sample[0] = texelFetch(u_scaling_tile, int(triangleUVs.samples[0])).r;
+  scaling_per_sample[1] = texelFetch(u_scaling_tile, int(triangleUVs.samples[1])).r;
+  scaling_per_sample[2] = texelFetch(u_scaling_tile, int(triangleUVs.samples[2])).r;
+  float fragment_scaling_value = u_scale_tex_coords + w[0] * scaling_per_sample[0] + w[1] * scaling_per_sample[1] + w[2] * scaling_per_sample[2];
+
+  vec3 edge_ref_tile[3];
+  edge_ref_tile[0] = texelFetch(u_dir_ref_tile, int(triangleUVs.samples[0])).rgb;
+  edge_ref_tile[1] = texelFetch(u_dir_ref_tile, int(triangleUVs.samples[1])).rgb;
+  edge_ref_tile[2] = texelFetch(u_dir_ref_tile, int(triangleUVs.samples[2])).rgb;
+
+  vec3 rotation_per_sample[3];
+  rotation_per_sample[0] = texelFetch(u_rotation_tile, int(triangleUVs.samples[0])).rgb;
+  rotation_per_sample[1] = texelFetch(u_rotation_tile, int(triangleUVs.samples[1])).rgb;
+  rotation_per_sample[2] = texelFetch(u_rotation_tile, int(triangleUVs.samples[2])).rgb;
+
+  vec3 normal_per_sample[3];
+  normal_per_sample[0] = texelFetch(u_normal_samples, int(triangleUVs.samples[0])).rgb;
+  normal_per_sample[1] = texelFetch(u_normal_samples, int(triangleUVs.samples[1])).rgb;
+  normal_per_sample[2] = texelFetch(u_normal_samples, int(triangleUVs.samples[2])).rgb;
+
+  float angle_per_sample[3];
+  angle_per_sample[0] = 0;
+  angle_per_sample[1] = 0;
+  angle_per_sample[2] = 0;
+
+  vec3 interpolated_rotation = w[0] * rotation_per_sample[0] + w[1] * rotation_per_sample[1] + w[2] * rotation_per_sample[2];
+
+  for (int i = 0; i < 3; i++)
+  {
+    if (length(interpolated_rotation) > 0.)
+    {
+      vec3 normal = normalize(normal_per_sample[i]);
+      angle_per_sample[i] = atan(dot(normal, cross(edge_ref_tile[i], interpolated_rotation)), dot(edge_ref_tile[i], interpolated_rotation));
+    }
+  }
+
+  for (int i = 0; i < 3; i++)
+  {
+    mat2 rotation_transform = inverse(rotate(angle_per_sample[i]));
+    u[i] = rotation_transform * (uv_sample[i] * fragment_scaling_value);
+  }
+
+  r[0] = hash12(int(triangleUVs.samples[0]));
+  r[1] = hash12(int(triangleUVs.samples[1]));
+  r[2] = hash12(int(triangleUVs.samples[2]));
 
   vec2 uv[3];
   uv[0] = u[0] + r[0];
@@ -438,7 +433,7 @@ void main() {
 
     // Normal mapping
     vec3 normal = normalize(M.normal * 2. - 1.);
-    vec3 view_edge_ref = (u_view_matrix * vec4(edge_ref,0.)).rgb;
+    vec3 view_edge_ref = (u_view_matrix * vec4(edge_ref, 0.)).rgb;
     mat3 TBN = compute_TBN(N, view_edge_ref);
     vec3 mixmax_albedo = M.color;
     vec3 mixmax_normal = normalize(TBN * normal);
@@ -454,7 +449,7 @@ void main() {
     float NdotL = max(dot(mixmax_normal, L), 0.0);
 
     // Micro-facets distribution
-    float a = max(roughness,0.045);
+    float a = max(roughness, 0.045);
     a = a * a;
     float D = DistributionGGX(mixmax_normal, H, a);
 
@@ -467,7 +462,7 @@ void main() {
 
     // Specular reflection Cook-Torrance
     vec3 numerator = D * G * F;
-    float denominator = max(4.0 * NdotV * NdotL,0.001);
+    float denominator = max(4.0 * NdotV * NdotL, 0.001);
     vec3 specular = numerator / denominator;
 
     vec3 kS = F;
@@ -479,7 +474,9 @@ void main() {
     // TODO replace by cube map
     vec3 ambiant = u_ambiant_color.rgb;
 
-    result = vec4(ambiant + Lo,1.);
+    result = vec4(ambiant + Lo, 1.);
+    // vec3 normalWS = normalize(TBN * normal);
+    // result = vec4(M.color * dot(normalWS, L), 1);
   }
   else
   {
@@ -529,6 +526,5 @@ void main() {
     case 9:
     f_color = vec4(interpolated_rotation, 1);
     break;
-
   }
 }

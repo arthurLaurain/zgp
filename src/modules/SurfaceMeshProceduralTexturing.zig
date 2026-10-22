@@ -343,8 +343,8 @@ pub fn rightPanel(m: *Module) void {
             const p = &[_]Texture2D.Parameter{
                 .{ .name = gl.TEXTURE_WRAP_S, .value = gl.REPEAT },
                 .{ .name = gl.TEXTURE_WRAP_T, .value = gl.REPEAT },
-                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.NEAREST },
-                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR },
+                .{ .name = gl.TEXTURE_MIN_FILTER, .value = gl.LINEAR_MIPMAP_LINEAR },
+                .{ .name = gl.TEXTURE_MAG_FILTER, .value = gl.LINEAR_MIPMAP_LINEAR },
             };
 
             var path = std.fmt.bufPrintSentinel(&path_buffer, "src/utils/textures/{s}.png", .{path_str}, 0) catch unreachable;
