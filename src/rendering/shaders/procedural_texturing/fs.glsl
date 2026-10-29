@@ -310,7 +310,8 @@ vec2 loadDistordedUV(TriangleUVs triangleUVs, int p, ivec3 id_vertices, vec3 bar
 
 //////////////////////////////////////////////// MAIN //////////////////////////////////////////////////////////////
 void main() {
-  vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
+  // vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
+  vec3 N = vertex_normal;
   vec3 L = normalize(u_light_position - v_frag_position);
   float lambert_term = dot(N, L);
 

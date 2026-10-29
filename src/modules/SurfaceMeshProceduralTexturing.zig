@@ -322,10 +322,10 @@ pub fn rightPanel(m: *Module) void {
         if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compensate_distorsions)) {
             if (tnb_data.procedural_texturing_parameters.compensate_distorsions) {
                 var ibo = info.triangles_ibo;
-                const distorsion_celldata = textureDistorsions.computeTextureDistorsions(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, info.std_datas.vertex_position.?, &ibo, tnb_data.parameterization_data.triangle_uvs);
-                tnb_data.procedural_texturing_parameters.distorsions_vbo = smpt.app_ctx.surface_mesh_store.dataVBO(.vertex, [8]vec.Vec4f, distorsion_celldata);
-                smpt.app_ctx.view.requestRedraw();
+                const distorsion_array = textureDistorsions.computeTextureDistorsions(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, info.std_datas.vertex_position.?, &ibo, tnb_data.parameterization_data.triangle_uvs);
+                tnb_data.procedural_texturing_parameters.distorsions_vbo = smpt.app_ctx.surface_mesh_store.dataVBORefreshData(.vertex, [8]vec.Vec4f, distorsion_array);
             }
+            smpt.app_ctx.view.requestRedraw();
         }
         c.ImGui_PopID();
 

@@ -400,6 +400,23 @@ pub fn dataVBO(
     return vbo.value_ptr.*;
 }
 
+pub fn dataVBORefreshData(
+    sms: *SurfaceMeshStore,
+    comptime cell_type: SurfaceMesh.CellType,
+    comptime T: type,
+    data: SurfaceMesh.CellData(cell_type, T),
+) VBO {
+    const vbo = sms.data_vbo.getOrPut(sms.allocator, data.gen()) catch |err| {
+        zgp_log.err("Failed to get or add VBO in the registry: {}", .{err});
+        return VBO.init(); // return a dummy VBO
+    };
+    if (!vbo.found_existing) {
+        vbo.value_ptr.* = VBO.init();
+    }
+    vbo.value_ptr.fillFrom(T, data.data.storage.items); // on VBO creation, fill it with the data
+    return vbo.value_ptr.*;
+}
+
 pub fn cellSetIBO(
     sms: *SurfaceMeshStore,
     comptime cell_type: SurfaceMesh.CellType,
