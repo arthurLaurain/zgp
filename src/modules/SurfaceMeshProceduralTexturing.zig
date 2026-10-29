@@ -447,6 +447,13 @@ pub fn rightPanel(m: *Module) void {
             }
             c.ImGui_PopID();
 
+            c.ImGui_Text("Interpolate normales");
+            c.ImGui_PushID("normales interpolated");
+            if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.normal_interpolated)) {
+                smpt.app_ctx.view.requestRedraw();
+            }
+            c.ImGui_PopID();
+
             var current_label: [16]u8 = @splat(0);
             const current_label_slice = std.fmt.bufPrint(&current_label, "{}", .{tnb_data.current_focus_sample}) catch unreachable;
 

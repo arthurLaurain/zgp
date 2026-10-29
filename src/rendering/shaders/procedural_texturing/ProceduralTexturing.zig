@@ -63,6 +63,7 @@ tbo_normal_samples_uniform: c_int = undefined,
 visu_option_uniform: c_int = undefined,
 visu_sample_uniform: c_int = undefined,
 draw_albedo_focused_patch_uniform: c_int = undefined,
+normal_interpolated_uniform: c_int = undefined,
 
 position_attrib: VAO.VertexAttribInfo = undefined,
 edge_ref_attrib: VAO.VertexAttribInfo = undefined,
@@ -117,6 +118,7 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.visu_sample_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_sample");
     pt.draw_albedo_focused_patch_uniform = gl.GetUniformLocation(pt.program.index, "u_visu_albedo_one_patch");
     pt.tbo_normal_samples_uniform = gl.GetUniformLocation(pt.program.index, "u_normal_samples");
+    pt.normal_interpolated_uniform = gl.GetUniformLocation(pt.program.index, "u_normal_interpolated");
     pt.position_attrib = .{
         .index = @intCast(gl.GetAttribLocation(pt.program.index, "a_position")),
         .size = 3,
@@ -168,6 +170,7 @@ pub const Parameters = struct {
     visu_option: u32 = 0,
     visu_sample: u32 = 0,
     draw_albedo_for_focused_patch: bool = false,
+    normal_interpolated: bool = true,
 
     pub fn init() Parameters {
         return .{
@@ -307,10 +310,11 @@ pub const Parameters = struct {
         gl.Uniform1f(p.shader.scale_tex_coords_uniform, p.scale_tex_coords);
         gl.Uniform1i(p.shader.compensate_distorsions_uniform, @intFromBool(p.compensate_distorsions));
         gl.Uniform1f(p.shader.micro_priority_uniform, p.mixmax_micro_priority);
-        gl.Uniform1i(p.shader.blending_mode_uniform, @intFromEnum(p.blending_mode));
+        gl.Uniform1i(p.shader.blending_mode_uniform, @backingInt(p.blending_mode));
         gl.Uniform1ui(p.shader.visu_option_uniform, p.visu_option);
         gl.Uniform1ui(p.shader.visu_sample_uniform, p.visu_sample);
         gl.Uniform1i(p.shader.draw_albedo_focused_patch_uniform, @intFromBool(p.draw_albedo_for_focused_patch));
+        gl.Uniform1i(p.shader.normal_interpolated_uniform, @intFromBool(p.normal_interpolated));
 
         gl.BindVertexArray(p.vao.index);
         defer gl.BindVertexArray(0);

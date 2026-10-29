@@ -130,6 +130,18 @@ pub fn build(b: *std.Build) void {
     // exe.lto = lto;
     exe.root_module.addIncludePath(b.path("src"));
 
+    // NSIGHT
+
+    // Nsight Graphics rejects the ELF layout of the self-hosted linker output ("invalid elf") and never injects its capture library.
+    // Running it through the system strip rewrites a standard layout that Nsight accepts.
+    const nsight_strip = b.addSystemCommand(&.{ "strip", "--strip-debug" });
+    nsight_strip.addArtifactArg(exe);
+    nsight_strip.addArg("-o");
+    const nsight_exe = nsight_strip.addOutputFileArg("zgp-nsight");
+
+    const nsight_step = b.step("nsight", "Build zgp-nsight, a copy of the app that Nsight Graphics can inject into");
+    nsight_step.dependOn(&b.addInstallBinFile(nsight_exe, "zgp-nsight").step);
+
     // TINYEXR
     const tinyexr_dep = b.dependency("tinyexr", .{
         .target = target,

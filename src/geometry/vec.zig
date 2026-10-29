@@ -32,6 +32,14 @@ pub fn ScalarTypeOf(comptime V: type) type {
     return vec_info.array.child;
 }
 
+pub fn vec2dToVec2f(v: Vec2d) Vec2f {
+    return .{ @floatCast(v[0]), @floatCast(v[1]) };
+}
+
+pub fn vec2fToVec2d(v: Vec2f) Vec2d {
+    return .{ @floatCast(v[0]), @floatCast(v[1]) };
+}
+
 pub fn vec3dToVec3f(v: Vec3d) Vec3f {
     return .{ @floatCast(v[0]), @floatCast(v[1]), @floatCast(v[2]) };
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const math = std.math;
 const assert = std.debug.assert;
+const eigen = @import("eigen.zig");
 
 const vec = @import("vec.zig");
 
@@ -42,6 +43,20 @@ pub fn VectorTypeOf(comptime M: type) type {
         @compileError("VectorTypeOf only supports array of array types");
     }
     return mat_info.array.child;
+}
+
+pub fn mat2dToMat2f(m: Mat2d) Mat2f {
+    return .{
+        vec.vec2dToVec2f(m[0]),
+        vec.vec2dToVec2f(m[1]),
+    };
+}
+
+pub fn mat2fToMat2d(m: Mat2f) Mat2d {
+    return .{
+        vec.vec2fToVec2d(m[0]),
+        vec.vec2fToVec2d(m[1]),
+    };
 }
 
 pub fn mat3dToMat3f(m: Mat3d) Mat3f {
@@ -314,4 +329,16 @@ pub fn rotMat3FromAxisAndAngle(
         vec.normalized(axis),
         angle,
     );
+}
+
+pub fn inverse2DMatrix(m: Mat2f) Mat2f {
+    const mat_double = mat2fToMat2d(m);
+    const inv_mat_double = eigen.computeInverse2d(mat_double).?;
+    return mat2dToMat2f(inv_mat_double);
+}
+
+pub fn inverse3DMatrix(m: Mat3f) Mat3f {
+    const mat_double = mat3fToMat3d(m);
+    const inv_mat_double = eigen.computeInverse3d(mat_double).?;
+    return mat3dToMat3f(inv_mat_double);
 }

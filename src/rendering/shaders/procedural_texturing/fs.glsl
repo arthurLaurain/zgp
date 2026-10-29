@@ -20,6 +20,7 @@ uniform bool u_override_param;
 uniform uint u_visu_option;
 uniform uint u_visu_sample;
 uniform bool u_visu_albedo_one_patch;
+uniform bool u_normal_interpolated;
 
 // Texture exemple
 uniform sampler2D u_exemplar_texture;
@@ -310,10 +311,14 @@ vec2 loadDistordedUV(TriangleUVs triangleUVs, int p, ivec3 id_vertices, vec3 bar
 
 //////////////////////////////////////////////// MAIN //////////////////////////////////////////////////////////////
 void main() {
-  // vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
-  vec3 N = vertex_normal;
-  vec3 L = normalize(u_light_position - v_frag_position);
-  float lambert_term = dot(N, L);
+
+  vec3 N = normalize(cross(dFdx(v_frag_position), dFdy(v_frag_position)));
+  if(u_normal_interpolated)
+  {
+    N = normalize((u_view_matrix * vec4(vertex_normal, 0.)).xyz);
+  }
+  vec3 L = normalize(-v_frag_position);
+  float lambert_term = max(dot(N, L), 0.0);
 
   int id_triangle = gl_PrimitiveID;
   ivec3 id_vertices = ivec3(texelFetch(u_info_triangles, id_triangle * 3).x, texelFetch(u_info_triangles, id_triangle * 3 + 1).x, texelFetch(u_info_triangles, id_triangle * 3 + 2).x);
@@ -443,7 +448,6 @@ void main() {
     // We work in camera space
     vec3 lightColor = vec3(1.);
     vec3 P = v_frag_position;
-    L = normalize(-P);
     vec3 V = normalize(-P);
     vec3 H = normalize(V + L);
     float NdotV = max(dot(mixmax_normal, V), 0.0);

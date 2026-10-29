@@ -45,6 +45,13 @@ pub fn computeInverse3d(m: Mat3d) ?Mat3d {
     return if (invertible) inv else null;
 }
 
+pub fn computeInverse2d(m: Mat2d) ?Mat2d {
+    var inv: Mat2d = undefined;
+    var invertible = false;
+    c.computeInverseWithCheck2d(@ptrCast(@constCast(&m)), @ptrCast(&inv), &invertible);
+    return if (invertible) inv else null;
+}
+
 pub fn computeEigenValuesAndEigenVectors2d(m: *const Mat2d, eigenvectors: *Mat2d, eigenvalues: *Mat2d) void {
     c.computeEigenValuesAndEigenVectors2d(@ptrCast(m), @ptrCast(eigenvectors), @ptrCast(eigenvalues));
 }
