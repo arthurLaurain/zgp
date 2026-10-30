@@ -97,7 +97,7 @@ pub fn computeFaceDistorsions(
     ibo: [*]u32,
     vbo_position: []Vec3f,
     triangle_uv: SurfaceMesh.FaceData(TriangleUVs),
-    arrayAccumulationParamVertex: []structAccumulationParamVertex,
+    tab_face_distorsion: [][3]Mat2f,
 ) void {
     const id_face = f.index;
     const id_vertices_triangle: [3]u32 = .{
@@ -117,44 +117,61 @@ pub fn computeFaceDistorsions(
         S[u][1][0] = @floatCast(S_d[u][1][0]);
         S[u][1][1] = @floatCast(S_d[u][1][1]);
     }
+    tab_face_distorsion[id_face] = S;
+}
 
-    const triangleuvs = triangle_uv.value(.{ .index = @intCast(id_face) });
+pub fn assignFaceDistorsionsToVertices(
+    triangle_uv: SurfaceMesh.FaceData(TriangleUVs),
+    arrayAccumulationParamVertex: []structAccumulationParamVertex,
+    ibo: [*]u32,
+    tab_face_distorsion: [][3]Mat2f,
+) void {
+    var id_face: usize = 0;
+    const num_face = triangle_uv.data.storage.items.len;
+    while (id_face < num_face) : (id_face += 1) {
+        const id_vertices_triangle: [3]u32 = .{
+            ibo[id_face * 3 + 0],
+            ibo[id_face * 3 + 1],
+            ibo[id_face * 3 + 2],
+        };
+        const triangleuvs = triangle_uv.value(.{ .index = @intCast(id_face) });
+        const S = tab_face_distorsion[id_face];
+        // We don't want to blend UV between two differents patch so we create for each vertices slots to keep track of patch ID
+        for (0..3) |vertex| {
+            const id_current_vertex = id_vertices_triangle[vertex];
+            const param_current_vertex = &arrayAccumulationParamVertex[id_current_vertex];
 
-    // We don't want to blend UV between two differents patch so we create for each vertices slots to keep track of patch ID
-    for (0..3) |vertex| {
-        const id_current_vertex = id_vertices_triangle[vertex];
-        const param_current_vertex = &arrayAccumulationParamVertex[id_current_vertex];
-
-        for (0..3) |patch| {
-            const id_current_patch = triangleuvs.samples[patch];
-            if (id_current_patch == std.math.maxInt(u32)) {
-                continue;
-            }
-
-            var slot: u32 = max_distorsion_slots_per_vertex;
-            var free_slot: u32 = max_distorsion_slots_per_vertex;
-            for (0..max_distorsion_slots_per_vertex) |s| {
-                if (param_current_vertex.id_sample[s] == std.math.maxInt(u32) and free_slot == max_distorsion_slots_per_vertex) { // slot free
-                    free_slot = @intCast(s);
-                } else if (param_current_vertex.id_sample[s] == id_current_patch) { // patch already in one slot
-                    slot = @intCast(s);
-                    break;
+            for (0..3) |patch| {
+                const id_current_patch = triangleuvs.samples[patch];
+                if (id_current_patch == std.math.maxInt(u32)) {
+                    continue;
                 }
-            }
-            if (slot == max_distorsion_slots_per_vertex) { // if patch is not already in slot array
-                slot = free_slot;
-                if (free_slot == max_distorsion_slots_per_vertex) {
-                    break;
-                } else {
-                    param_current_vertex.id_sample[slot] = id_current_patch;
-                }
-            }
 
-            param_current_vertex.nb_contrib[slot] = param_current_vertex.nb_contrib[slot] + 1;
-            const param_uncompensated = triangleuvs.uvs[patch][vertex];
-            const param_compensated = mat.mulVec(S[patch], param_uncompensated);
-            // UV accumulation in vertices
-            param_current_vertex.sumAccumulationParam[slot] = vec.add(param_current_vertex.sumAccumulationParam[slot], param_compensated);
+                var slot: u32 = max_distorsion_slots_per_vertex;
+                var free_slot: u32 = max_distorsion_slots_per_vertex;
+                for (0..max_distorsion_slots_per_vertex) |s| {
+                    if (param_current_vertex.id_sample[s] == std.math.maxInt(u32) and free_slot == max_distorsion_slots_per_vertex) { // slot free
+                        free_slot = @intCast(s);
+                    } else if (param_current_vertex.id_sample[s] == id_current_patch) { // patch already in one slot
+                        slot = @intCast(s);
+                        break;
+                    }
+                }
+                if (slot == max_distorsion_slots_per_vertex) { // if patch is not already in slot array
+                    slot = free_slot;
+                    if (free_slot == max_distorsion_slots_per_vertex) {
+                        break;
+                    } else {
+                        param_current_vertex.id_sample[slot] = id_current_patch;
+                    }
+                }
+
+                param_current_vertex.nb_contrib[slot] = param_current_vertex.nb_contrib[slot] + 1;
+                const param_uncompensated = triangleuvs.uvs[patch][vertex];
+                const param_compensated = mat.mulVec(S[patch], param_uncompensated);
+                // UV accumulation in vertices
+                param_current_vertex.sumAccumulationParam[slot] = vec.add(param_current_vertex.sumAccumulationParam[slot], param_compensated);
+            }
         }
     }
 }
@@ -221,13 +238,17 @@ pub fn computeTextureDistorsions(
     });
     defer allocator.free(arrayAccumulationVertex);
 
+    const nb_face = celldata_triangleuvs.data.storage.items.len;
+    const tab_face_distorsion: [][3]Mat2f = allocator.alloc([3]Mat2f, nb_face) catch unreachable;
+    defer allocator.free(tab_face_distorsion);
+
     const t = std.Io.Timestamp.now(io, .real);
 
     const ComputeFaceDistorsionTask = struct {
         ibo: [*]u32,
         vbo_position: []Vec3f,
         triangle_uv: SurfaceMesh.FaceData(TriangleUVs),
-        arrayAccumulationParamVertex: []structAccumulationParamVertex,
+        tab_face_distorsion: [][3]Mat2f,
 
         pub fn run(cfdt: *@This(), f: SurfaceMesh.Face) void {
             computeFaceDistorsions(
@@ -235,7 +256,7 @@ pub fn computeTextureDistorsions(
                 cfdt.ibo,
                 cfdt.vbo_position,
                 cfdt.triangle_uv,
-                cfdt.arrayAccumulationParamVertex,
+                cfdt.tab_face_distorsion,
             );
         }
     };
@@ -247,8 +268,10 @@ pub fn computeTextureDistorsions(
         .ibo = array_ibo,
         .vbo_position = array_vbo_position,
         .triangle_uv = celldata_triangleuvs,
-        .arrayAccumulationParamVertex = arrayAccumulationVertex,
+        .tab_face_distorsion = tab_face_distorsion,
     }) catch unreachable;
+
+    assignFaceDistorsionsToVertices(celldata_triangleuvs, arrayAccumulationVertex, array_ibo, tab_face_distorsion);
 
     // We compute new corrected uv and store them in TBO
     const ComputeVertexDistorsionTask = struct {
