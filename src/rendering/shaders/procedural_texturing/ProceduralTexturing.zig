@@ -3,8 +3,6 @@ const ProceduralTexturing = @This();
 const zstbi = @import("zstbi");
 const std = @import("std");
 const gl = @import("gl");
-const eigen = @import("../../../geometry/eigen.zig");
-
 const Shader = @import("../../Shader.zig");
 const VAO = @import("../../VAO.zig");
 const VBO = @import("../../VBO.zig");
@@ -55,7 +53,7 @@ tbo_info_triangles_uniform: c_int = undefined,
 tbo_info_vertices_uniform: c_int = undefined,
 tbo_vertices_normal_uniform: c_int = undefined,
 tbo_uvs_triangles_uniform: c_int = undefined,
-tbo_distorsions_uniform: c_int = undefined,
+tbo_corrected_uvs_uniform: c_int = undefined,
 tbo_scaling_uniform: c_int = undefined,
 tbo_rotation_uniform: c_int = undefined,
 tbo_dir_ref_tile_uniform: c_int = undefined,
@@ -110,7 +108,7 @@ pub fn linkAttributes(pt: *ProceduralTexturing) !void {
     pt.tbo_info_vertices_uniform = gl.GetUniformLocation(pt.program.index, "u_info_vertices");
     pt.tbo_vertices_normal_uniform = gl.GetUniformLocation(pt.program.index, "u_vertices_normal");
     pt.tbo_uvs_triangles_uniform = gl.GetUniformLocation(pt.program.index, "u_triangle_uvs");
-    pt.tbo_distorsions_uniform = gl.GetUniformLocation(pt.program.index, "u_distorsions");
+    pt.tbo_corrected_uvs_uniform = gl.GetUniformLocation(pt.program.index, "u_corrected_uvs");
     pt.tbo_scaling_uniform = gl.GetUniformLocation(pt.program.index, "u_scaling_tile");
     pt.tbo_rotation_uniform = gl.GetUniformLocation(pt.program.index, "u_rotation_tile");
     pt.tbo_dir_ref_tile_uniform = gl.GetUniformLocation(pt.program.index, "u_dir_ref_tile");
@@ -151,7 +149,7 @@ pub const Parameters = struct {
     tbo_normal_vertices: TextureBuffer,
     tbo_neigh_selected_vertices: TextureBuffer,
     tbo_triangle_uvs: TextureBuffer,
-    tbo_distorsions: TextureBuffer,
+    tbo_corrected_uvs: TextureBuffer,
     tbo_scaling_tile: TextureBuffer,
     tbo_rotation_tile: TextureBuffer,
     tbo_dir_ref_tile: TextureBuffer,
@@ -159,7 +157,7 @@ pub const Parameters = struct {
     vertices_normal_vbo: ?VBO = undefined,
     vertices_position_vbo: ?VBO = undefined,
     face_triangle_uvs: ?VBO = undefined,
-    distorsions_vbo: ?VBO = undefined,
+    corrected_uvs_vbo: ?VBO = undefined,
     edge_ref_vbo: VBO = undefined,
     dir_ref_tile_vbo: VBO = undefined,
     normal_samples_vbo: VBO = undefined,
@@ -181,7 +179,7 @@ pub const Parameters = struct {
             .tbo_normal_vertices = .init(),
             .tbo_neigh_selected_vertices = .init(),
             .tbo_triangle_uvs = .init(),
-            .tbo_distorsions = .init(),
+            .tbo_corrected_uvs = .init(),
             .tbo_scaling_tile = .init(),
             .tbo_rotation_tile = .init(),
             .tbo_dir_ref_tile = .init(),
@@ -200,7 +198,7 @@ pub const Parameters = struct {
         p.tbo_triangle_uvs.deinit();
         p.tbo_dir_ref_tile.deinit();
         p.textureData.exemplar_texture.deinit();
-        p.tbo_distorsions.deinit();
+        p.tbo_corrected_uvs.deinit();
         if (p.textureData.exemplar_texture_normal) |*t| {
             t.deinit();
         }
@@ -284,9 +282,10 @@ pub const Parameters = struct {
         p.tbo_triangle_uvs.bindBufferToShader(7, p.face_triangle_uvs.?.index, gl.R32UI);
         gl.Uniform1i(p.shader.tbo_uvs_triangles_uniform, 7);
 
-        if (p.distorsions_vbo) |distorsions_vbo| {
-            p.tbo_distorsions.bindBufferToShader(8, distorsions_vbo.index, gl.RGBA32F);
-            gl.Uniform1i(p.shader.tbo_distorsions_uniform, 8);
+        if (p.corrected_uvs_vbo) |corrected_uvs_vbo| {
+            // The VBO stores one RG texel per corrected UV corner.
+            p.tbo_corrected_uvs.bindBufferToShader(8, corrected_uvs_vbo.index, gl.RG32F);
+            gl.Uniform1i(p.shader.tbo_corrected_uvs_uniform, 8);
         }
 
         gl.ActiveTexture(gl.TEXTURE0 + 9);

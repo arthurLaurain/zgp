@@ -44,7 +44,7 @@ uniform usamplerBuffer u_info_triangles;
 uniform samplerBuffer u_info_vertices;
 uniform samplerBuffer u_vertices_normal;
 uniform usamplerBuffer u_triangle_uvs;
-uniform samplerBuffer u_distorsions;
+uniform samplerBuffer u_corrected_uvs;
 uniform samplerBuffer u_scaling_tile;
 uniform samplerBuffer u_rotation_tile;
 uniform samplerBuffer u_dir_ref_tile;
@@ -246,8 +246,6 @@ vec3 idColor(uint id)
 }
 
 ///////////////////////////////////////// Data parsing ////////////////////////////////////////
-const int MAX_DISTORSION_SLOTS_PER_VERTEX = 8;
-
 struct TriangleUVs
 {
   uint samples[3];
@@ -288,24 +286,14 @@ TriangleUVs loadTriangleUVs(int id_triangle)
   return t;
 }
 
-// Texture distorsions
-vec2 findUV(int id_vertex, uint sample_id)
+// Continuous UVs computed from the local face distortions.
+vec2 loadCorrectedUV(int id_triangle, int p, vec3 bary)
 {
-  for (int i = 0; i < MAX_DISTORSION_SLOTS_PER_VERTEX; ++i)
-  {
-    vec4 slot = texelFetch(u_distorsions, id_vertex * MAX_DISTORSION_SLOTS_PER_VERTEX + i);
-    if (uint(slot.z) == sample_id)
-      return slot.xy;
-  }
-  return vec2(0.0);
-}
-
-vec2 loadDistordedUV(TriangleUVs triangleUVs, int p, ivec3 id_vertices, vec3 bary)
-{
-  uint sample_id = triangleUVs.samples[p];
-  vec2 uv0 = findUV(id_vertices.x, sample_id);
-  vec2 uv1 = findUV(id_vertices.y, sample_id);
-  vec2 uv2 = findUV(id_vertices.z, sample_id);
+  // Each face stores 3 patches x 3 corners; interpolate the selected patch's corner UVs at this fragment.
+  int base = id_triangle * 9 + p * 3;
+  vec2 uv0 = texelFetch(u_corrected_uvs, base + 0).xy;
+  vec2 uv1 = texelFetch(u_corrected_uvs, base + 1).xy;
+  vec2 uv2 = texelFetch(u_corrected_uvs, base + 2).xy;
   return bary.x * uv0 + bary.y * uv1 + bary.z * uv2;
 }
 
@@ -337,6 +325,7 @@ void main() {
   float w[3];
   vec2 r[3];
 
+  // We don't need uv buffer if we correct texture distorsions
   TriangleUVs triangleUVs = loadTriangleUVs(id_triangle);
 
   vec2 uv_sample[3];
@@ -344,7 +333,7 @@ void main() {
   {
     for (int i = 0; i < 3; i++)
     {
-      uv_sample[i] = loadDistordedUV(triangleUVs, i, id_vertices, bary);
+      uv_sample[i] = loadCorrectedUV(id_triangle, i, bary);
     }
   }
   else

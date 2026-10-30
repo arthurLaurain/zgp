@@ -26,7 +26,6 @@ const Vec2f = vec.Vec2f;
 const Vec3f = vec.Vec3f;
 const Vec3d = vec.Vec3d;
 const mat = @import("../geometry/mat.zig");
-const Mat2f = mat.Mat2f;
 const Mat3f = mat.Mat3f;
 const Mat4f = mat.Mat4f;
 const VBO = @import("../rendering/VBO.zig");
@@ -321,9 +320,10 @@ pub fn rightPanel(m: *Module) void {
         c.ImGui_PushID("Compensate texture distorsions");
         if (c.ImGui_Checkbox("", &tnb_data.procedural_texturing_parameters.compensate_distorsions)) {
             if (tnb_data.procedural_texturing_parameters.compensate_distorsions) {
+                // Solve for continuous per-patch UVs once when enabling compensation, then upload them for rendering.
                 var ibo = info.triangles_ibo;
-                const distorsion_array = textureDistorsions.computeTextureDistorsions(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, info.std_datas.vertex_position.?, &ibo, tnb_data.parameterization_data.triangle_uvs);
-                tnb_data.procedural_texturing_parameters.distorsions_vbo = smpt.app_ctx.surface_mesh_store.dataVBORefreshData(.vertex, [8]vec.Vec4f, distorsion_array);
+                const corrected_uvs = textureDistorsions.computeCorrectedTextureUVs(smpt.app_ctx.allocator, smpt.app_ctx.io, sm, info.std_datas.vertex_position.?, &ibo, tnb_data.parameterization_data.triangle_uvs);
+                tnb_data.procedural_texturing_parameters.corrected_uvs_vbo = smpt.app_ctx.surface_mesh_store.dataVBORefreshData(.face, [3][3]Vec2f, corrected_uvs);
             }
             smpt.app_ctx.view.requestRedraw();
         }
