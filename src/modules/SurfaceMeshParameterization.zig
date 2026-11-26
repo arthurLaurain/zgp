@@ -21,12 +21,22 @@ const Vec3f = vec.Vec3f;
 const Vec2f = vec.Vec2f;
 const bvh = @import("../geometry/bvh.zig");
 const geometry_utils = @import("../geometry/utils.zig");
+const SurfaceMeshStdData = @import("../models/SurfaceMeshStore.zig").SurfaceMeshStdData;
 
 const sampling = @import("../models/surface/sampling.zig");
 const distance = @import("../models/surface/distance.zig");
 const intrinsic_triangulation = @import("../models/surface/intrinsic_triangulation.zig");
 const selection = @import("../models/surface/selection.zig");
 const IBO = @import("../rendering/IBO.zig");
+const mat = @import("../geometry/mat.zig");
+const PointSphere = @import("../rendering/shaders/point_sphere/PointSphere.zig");
+const color = @import("../utils/color.zig");
+const gl = @import("gl");
+
+const SelectionAction = enum {
+    add,
+    remove,
+};
 
 pub const ParameterizationData = struct {
     app_ctx: *AppContext,
@@ -74,10 +84,6 @@ pub const ParameterizationData = struct {
     ref_direction_per_sample: SurfaceMesh.VertexData(Vec3f) = undefined,
     // for each sample, the normal of the underlying SurfaceMesh vertex to which it is snapped
     normal_per_sample: SurfaceMesh.VertexData(Vec3f) = undefined,
-
-    hovered_cell: ?SurfaceMesh.Vertex = null,
-    selecting: bool = false,
-    selection_radius: f32 = 0.05,
 
     pub const TriangleUVs = struct {
         samples: [3]u32, // the index of the 3 samples (i.e. patches) that contain the triangle
@@ -876,18 +882,30 @@ module: Module = .{
         .surfaceMeshCreated = surfaceMeshCreated,
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshConnectivityUpdated = surfaceMeshConnectivityUpdated,
+        .surfaceMeshStdDataChanged = surfaceMeshStdDataChanged,
         .pointCloudDestroyed = pointCloudDestroyed,
+        .draw = draw,
         .sdlEvent = sdlEvent,
         .rightPanel = rightPanel,
     },
 },
 surface_meshes_data: std.AutoHashMapUnmanaged(*SurfaceMesh, ParameterizationData) = .empty,
+hovered_cell: ?SurfaceMesh.Vertex = null,
+hovered_cell_ibo: IBO = undefined,
+selecting: bool = false,
+selection_radius: f32 = 0.005,
+point_sphere_shader_parameters: PointSphere.Parameters = undefined,
 
 /// Modules are default-constructed in AppContext init function, and then initialized in AppContext wireUp function.
 pub fn init(smp: *SurfaceMeshParameterization, app_ctx: *AppContext) !void {
     smp.app_ctx = app_ctx;
+    smp.hovered_cell_ibo = .init();
     try app_ctx.point_cloud_store.addListener(&smp.module);
     try app_ctx.surface_mesh_store.addListener(&smp.module);
+    var p = PointSphere.Parameters.init();
+    p.sphere_radius = smp.selection_radius;
+    p.sphere_color = .{ 1.0, 0.0, 0.0, 1.0 };
+    smp.point_sphere_shader_parameters = p;
 }
 
 pub fn deinit(smp: *SurfaceMeshParameterization) void {
@@ -904,6 +922,7 @@ pub fn deinit(smp: *SurfaceMeshParameterization) void {
         }
         pd.vertex_sample.deinit(smp.app_ctx.allocator);
     }
+    smp.hovered_cell_ibo.deinit();
     smp.surface_meshes_data.deinit(smp.app_ctx.allocator);
     smp.app_ctx.point_cloud_store.removeListener(&smp.module);
     smp.app_ctx.surface_mesh_store.removeListener(&smp.module);
@@ -963,6 +982,62 @@ pub fn surfaceMeshConnectivityUpdated(m: *Module, surface_mesh: *SurfaceMesh) vo
         pd.it_ctx = null;
     }
 }
+
+/// Part of the Module interface.
+/// Update FieldGeneratorData when standard data of SurfaceMesh changes.
+pub fn surfaceMeshStdDataChanged(
+    m: *Module,
+    _: *SurfaceMesh,
+    std_data: SurfaceMeshStdData,
+) void {
+    const smp: *SurfaceMeshParameterization = @alignCast(@fieldParentPtr("module", m));
+    switch (std_data) {
+        .vertex_position => |maybe_vertex_position| {
+            if (maybe_vertex_position) |vertex_position| {
+                const position_vbo = smp.app_ctx.surface_mesh_store.dataVBO(.vertex, Vec3f, vertex_position);
+                smp.point_sphere_shader_parameters.setVertexAttribArray(.position, position_vbo, 0, 0);
+            } else {
+                smp.point_sphere_shader_parameters.unsetVertexAttribArray(.position);
+            }
+        },
+        else => return,
+    }
+}
+
+pub fn draw(m: *Module, view_matrix: mat.Mat4f, projection_matrix: mat.Mat4f) void {
+    const smp: *SurfaceMeshParameterization = @alignCast(@fieldParentPtr("module", m));
+    if (!smp.selecting) return;
+
+    // only draw selection for the currently selected SurfaceMesh & CellSet
+    if (smp.app_ctx.selected_model.modelType() != .surface_mesh) return;
+
+    // draw currently hovered cell
+    if (smp.hovered_cell) |_| {
+        const modState = c.SDL_GetModState();
+        const action: SelectionAction = if (modState & c.SDL_KMOD_SHIFT != 0) .remove else .add;
+
+        const sphere_radius_backup = smp.point_sphere_shader_parameters.sphere_radius;
+        const sphere_color_backup = smp.point_sphere_shader_parameters.sphere_color;
+        const sphere_color_basis = smp.point_sphere_shader_parameters.sphere_color;
+        const sphere_color: vec.Vec4f = switch (action) {
+            .add => .{ sphere_color_basis[0], sphere_color_basis[1], sphere_color_basis[2], 0.5 },
+            .remove => blk: {
+                const opposite_color = color.perceptualOppositeRGB(.{ sphere_color_basis[0], sphere_color_basis[1], sphere_color_basis[2] });
+                break :blk .{ opposite_color[0], opposite_color[1], opposite_color[2], 0.8 };
+            },
+        };
+        smp.point_sphere_shader_parameters.sphere_color = sphere_color;
+        smp.point_sphere_shader_parameters.model_view_matrix = @bitCast(view_matrix);
+        smp.point_sphere_shader_parameters.projection_matrix = @bitCast(projection_matrix);
+        gl.Enable(gl.BLEND);
+        gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        smp.point_sphere_shader_parameters.draw(smp.hovered_cell_ibo);
+        gl.Disable(gl.BLEND);
+        smp.point_sphere_shader_parameters.sphere_radius = sphere_radius_backup;
+        smp.point_sphere_shader_parameters.sphere_color = sphere_color_backup;
+    }
+}
+
 pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
     const smp: *SurfaceMeshParameterization = @alignCast(@fieldParentPtr("module", m));
     const sm_store = &smp.app_ctx.surface_mesh_store;
@@ -972,11 +1047,19 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
 
     return switch (event.type) {
         c.SDL_EVENT_MOUSE_MOTION => blk: {
-            if (!pd.selecting) break :blk false;
+            if (!smp.selecting) break :blk false;
             const info_motion = sm_store.surfaceMeshInfo(sm);
             if (info_motion.bvh.initialized) {
                 const ray = view.viewToWorldRay(event.motion.x, event.motion.y);
-                pd.hovered_cell = info_motion.bvh.intersectedVertex(ray); // within sphere selection is always centered on a vertex
+                smp.hovered_cell = info_motion.bvh.intersectedVertex(ray); // within sphere selection is always centered on a vertex
+                if (smp.hovered_cell) |cell_index| {
+                    smp.hovered_cell_ibo.fillFromSurfaceMeshCellSlice(sm, &[_]SurfaceMesh.Vertex{.{ .index = cell_index.index }}, smp.app_ctx.allocator) catch |err| {
+                        std.debug.print("Failed to fill selecting cell IBO: {}\n", .{err});
+                        break :blk false;
+                    };
+                } else {
+                    smp.hovered_cell_ibo.fillFromIndexSlice(&.{}, &.{});
+                }
                 smp.app_ctx.view.requestRedraw();
                 break :blk true;
             }
@@ -987,7 +1070,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
         c.SDL_EVENT_KEY_DOWN => blk: {
             switch (event.key.key) {
                 c.SDLK_D => {
-                    pd.selecting = true;
+                    smp.selecting = true;
                     smp.app_ctx.view.requestRedraw();
                     break :blk true;
                 },
@@ -998,7 +1081,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
         c.SDL_EVENT_KEY_UP => blk: {
             switch (event.key.key) {
                 c.SDLK_D => {
-                    pd.selecting = false;
+                    smp.selecting = false;
                     smp.app_ctx.view.requestRedraw();
                     break :blk true;
                 },
@@ -1009,9 +1092,9 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
 
         c.SDL_EVENT_MOUSE_BUTTON_DOWN => blk: {
             const info = sm_store.surfaceMeshInfo(sm);
-            if (!pd.selecting) break :blk false;
+            if (!smp.selecting) break :blk false;
             if (pd.samples) |samples| {
-                if (pd.hovered_cell) |hovered_cell| {
+                if (smp.hovered_cell) |hovered_cell| {
                     if (info.std_datas.vertex_position) |vertex_position| {
                         const p = samples.addPoint() catch |err| {
                             std.debug.print("Failed to add sample point: {}\n", .{err});
@@ -1019,7 +1102,7 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                         };
                         const sp: SurfacePoint = .{ .surface_mesh = sm, .type = .{ .vertex = sm.dart(hovered_cell) } };
                         pd.sample_surface_point.valuePtr(p).* = sp;
-                        pd.samplesID_per_vertex.valuePtr(pd.hovered_cell.?).* = -1;
+                        pd.samplesID_per_vertex.valuePtr(smp.hovered_cell.?).* = -1;
                         pd.snapSampleToVertex(p, vertex_position) catch |err| {
                             std.debug.print("Failed to snap sample point to vertex: {}\n", .{err});
                         };
@@ -1033,6 +1116,12 @@ pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
                     }
                 }
             }
+            break :blk true;
+        },
+        c.SDL_EVENT_MOUSE_WHEEL => blk: {
+            if (!smp.selecting) break :blk false;
+            smp.point_sphere_shader_parameters.sphere_radius += event.wheel.y * 0.001;
+            smp.app_ctx.view.requestRedraw();
             break :blk true;
         },
         else => {

@@ -159,14 +159,6 @@ pub fn surfaceMeshStdDataChanged(
     }
 }
 
-pub fn printArrayList(a: std.ArrayList(std.ArrayList(SurfaceMesh.Cell))) void {
-    for (0..a.items.len) |i| {
-        for (0..a.items[i].items.len) |j| {
-            std.log.debug("{d} {d} {d}\n", .{ i, j, a.items[i].items[j].vertex });
-        }
-    }
-}
-
 pub fn uniformMean(
     rings: std.ArrayList(std.ArrayList(SurfaceMesh.Cell)),
     field: SurfaceMesh.CellData(.vertex, f32),
