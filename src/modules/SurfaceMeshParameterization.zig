@@ -25,6 +25,8 @@ const geometry_utils = @import("../geometry/utils.zig");
 const sampling = @import("../models/surface/sampling.zig");
 const distance = @import("../models/surface/distance.zig");
 const intrinsic_triangulation = @import("../models/surface/intrinsic_triangulation.zig");
+const selection = @import("../models/surface/selection.zig");
+const IBO = @import("../rendering/IBO.zig");
 
 pub const ParameterizationData = struct {
     app_ctx: *AppContext,
@@ -43,6 +45,7 @@ pub const ParameterizationData = struct {
     sample_position: PointCloud.PointData(Vec3f) = undefined, // optional, only useful for inspection of the samples
     sample_color: PointCloud.PointData(Vec3f) = undefined, // optional, only useful for inspection of the samples
 
+    vertex_sample: std.AutoHashMapUnmanaged(u32, void) = .empty, // for each underlying SurfaceMesh vertex, whether it has a sample snapped to it
     // the samples SurfaceMesh is a triangulation of the samples
     // it is computed as the dual of the discrete geodesic Voronoi diagram of the samples, computed on the Delaunay intrinsic triangulation of the underlying SurfaceMesh
     // each vertex of the samples SurfaceMesh corresponds to a sample
@@ -71,6 +74,10 @@ pub const ParameterizationData = struct {
     ref_direction_per_sample: SurfaceMesh.VertexData(Vec3f) = undefined,
     // for each sample, the normal of the underlying SurfaceMesh vertex to which it is snapped
     normal_per_sample: SurfaceMesh.VertexData(Vec3f) = undefined,
+
+    hovered_cell: ?SurfaceMesh.Vertex = null,
+    selecting: bool = false,
+    selection_radius: f32 = 0.05,
 
     pub const TriangleUVs = struct {
         samples: [3]u32, // the index of the 3 samples (i.e. patches) that contain the triangle
@@ -124,6 +131,67 @@ pub const ParameterizationData = struct {
         }
     };
 
+    fn assignRandomColorsToSample(pd: *ParameterizationData, point: u32, random: std.Random) !void {
+        pd.sample_color.valuePtr(point).* = .{ 0.5 + 0.5 * random.float(f32), 0.5 + 0.5 * random.float(f32), 0.5 + 0.5 * random.float(f32) };
+    }
+
+    fn snapSampleToVertex(pd: *ParameterizationData, sample: u32, vertex_position: SurfaceMesh.VertexData(Vec3f)) !void {
+        var snapped_to: SurfaceMesh.Vertex = undefined;
+        const sp = pd.sample_surface_point.valuePtr(sample);
+        switch (sp.type) {
+            .vertex => |v| {
+                snapped_to = pd.surface_mesh.vertex(v);
+            },
+            .edge => |e| {
+                const d = e.dart;
+                // if (e.t < 0.1) {
+                //     snapped_to = v0;
+                // } else if (e.t > 0.9) {
+                //     snapped_to = v1;
+                // } else {
+                //     const pos = sp.readData(Vec3f, .vertex, vertex_position);
+                //     snapped_to = try pd.surface_mesh.cutEdge(e.cell);
+                //     vertex_position.valuePtr(snapped_to).* = pos;
+                //     connectivity_updated = true;
+                // }
+                snapped_to = if (e.t < 0.5) pd.surface_mesh.vertex(d) else pd.surface_mesh.vertex(pd.surface_mesh.phi1(d));
+            },
+            .face => |f| {
+                const d = f.dart;
+                // if (f.bcoords[0] > 0.9) {
+                //     snapped_to = v0;
+                // } else if (f.bcoords[1] > 0.9) {
+                //     snapped_to = v1;
+                // } else if (f.bcoords[2] > 0.9) {
+                //     snapped_to = v2;
+                // } else {
+                //     const pos = sp.readData(Vec3f, .vertex, vertex_position);
+                //     const d2 = pd.surface_mesh.phi2(d);
+                //     pd.surface_mesh.removeFace(f.cell);
+                //     snapped_to = try pd.surface_mesh.closeHoleWithUmbrella(d2);
+                //     vertex_position.valuePtr(snapped_to).* = pos;
+                //     connectivity_updated = true;
+                // }
+                if (f.bcoords[0] >= f.bcoords[1] and f.bcoords[0] >= f.bcoords[2]) {
+                    snapped_to = pd.surface_mesh.vertex(d);
+                } else if (f.bcoords[1] >= f.bcoords[0] and f.bcoords[1] >= f.bcoords[2]) {
+                    snapped_to = pd.surface_mesh.vertex(pd.surface_mesh.phi1(d));
+                } else {
+                    snapped_to = pd.surface_mesh.vertex(pd.surface_mesh.phi_1(d));
+                }
+            },
+        }
+        const snapped_to_index = snapped_to.index;
+        if (pd.vertex_sample.get(snapped_to_index)) |_| {
+            pd.samples.?.removePoint(sample); // remove this sample as it is snapped to a vertex that already has a sample
+        } else {
+            try pd.vertex_sample.put(pd.app_ctx.allocator, snapped_to_index, {});
+            sp.*.type = .{ .vertex = pd.surface_mesh.dart(snapped_to) };
+            pd.sample_position.valuePtr(sample).* = vertex_position.value(snapped_to);
+            pd.samplesID_per_vertex.valuePtr(.{ .index = snapped_to.index }).* = @intCast(sample);
+        }
+    }
+
     fn generateSamples(
         pd: *ParameterizationData,
         sm_bvh: *bvh.TrianglesBVH,
@@ -168,72 +236,22 @@ pub const ParameterizationData = struct {
 
         // snap samples to vertices
         // set of vertices that already have a sample snapped to them, to avoid snapping multiple samples to the same vertex
-        var vertex_sample: std.AutoHashMapUnmanaged(u32, void) = .empty;
-        defer vertex_sample.deinit(pd.app_ctx.allocator);
+        pd.vertex_sample = .empty;
         // var connectivity_updated = false;
         var point_it = pd.samples.?.pointIterator();
         while (point_it.next()) |sample| {
-            var snapped_to: SurfaceMesh.Vertex = undefined;
-            const sp = pd.sample_surface_point.valuePtr(sample);
-            switch (sp.type) {
-                .vertex => |v| {
-                    snapped_to = pd.surface_mesh.vertex(v);
-                },
-                .edge => |e| {
-                    const d = e.dart;
-                    // if (e.t < 0.1) {
-                    //     snapped_to = v0;
-                    // } else if (e.t > 0.9) {
-                    //     snapped_to = v1;
-                    // } else {
-                    //     const pos = sp.readData(Vec3f, .vertex, vertex_position);
-                    //     snapped_to = try pd.surface_mesh.cutEdge(e.cell);
-                    //     vertex_position.valuePtr(snapped_to).* = pos;
-                    //     connectivity_updated = true;
-                    // }
-                    snapped_to = if (e.t < 0.5) pd.surface_mesh.vertex(d) else pd.surface_mesh.vertex(pd.surface_mesh.phi1(d));
-                },
-                .face => |f| {
-                    const d = f.dart;
-                    // if (f.bcoords[0] > 0.9) {
-                    //     snapped_to = v0;
-                    // } else if (f.bcoords[1] > 0.9) {
-                    //     snapped_to = v1;
-                    // } else if (f.bcoords[2] > 0.9) {
-                    //     snapped_to = v2;
-                    // } else {
-                    //     const pos = sp.readData(Vec3f, .vertex, vertex_position);
-                    //     const d2 = pd.surface_mesh.phi2(d);
-                    //     pd.surface_mesh.removeFace(f.cell);
-                    //     snapped_to = try pd.surface_mesh.closeHoleWithUmbrella(d2);
-                    //     vertex_position.valuePtr(snapped_to).* = pos;
-                    //     connectivity_updated = true;
-                    // }
-                    if (f.bcoords[0] >= f.bcoords[1] and f.bcoords[0] >= f.bcoords[2]) {
-                        snapped_to = pd.surface_mesh.vertex(d);
-                    } else if (f.bcoords[1] >= f.bcoords[0] and f.bcoords[1] >= f.bcoords[2]) {
-                        snapped_to = pd.surface_mesh.vertex(pd.surface_mesh.phi1(d));
-                    } else {
-                        snapped_to = pd.surface_mesh.vertex(pd.surface_mesh.phi_1(d));
-                    }
-                },
-            }
-            const snapped_to_index = snapped_to.index;
-            if (vertex_sample.get(snapped_to_index)) |_| {
-                pd.samples.?.removePoint(sample); // remove this sample as it is snapped to a vertex that already has a sample
-            } else {
-                try vertex_sample.put(pd.app_ctx.allocator, snapped_to_index, {});
-                sp.*.type = .{ .vertex = pd.surface_mesh.dart(snapped_to) };
-                pd.sample_position.valuePtr(sample).* = vertex_position.value(snapped_to);
-                pd.samplesID_per_vertex.valuePtr(.{ .index = snapped_to.index }).* = @intCast(sample);
-            }
+            snapSampleToVertex(pd, sample, vertex_position) catch |err| {
+                zgp_log.err("Failed to snap sample to vertex: {}", .{err});
+                return err;
+            };
         }
 
-        // assign random colors to the samples
         point_it.reset();
-        var r = pd.app_ctx.rng.random();
         while (point_it.next()) |point| {
-            pd.sample_color.valuePtr(point).* = .{ 0.5 + 0.5 * r.float(f32), 0.5 + 0.5 * r.float(f32), 0.5 + 0.5 * r.float(f32) };
+            assignRandomColorsToSample(pd, point, pd.app_ctx.rng.random()) catch |err| {
+                zgp_log.err("Failed to assign random color to sample: {}", .{err});
+                return err;
+            };
         }
 
         const elapsed: f64 = @floatFromInt(std.Io.Timestamp.untilNow(t, pd.app_ctx.io, .real).nanoseconds);
@@ -859,6 +877,7 @@ module: Module = .{
         .surfaceMeshDestroyed = surfaceMeshDestroyed,
         .surfaceMeshConnectivityUpdated = surfaceMeshConnectivityUpdated,
         .pointCloudDestroyed = pointCloudDestroyed,
+        .sdlEvent = sdlEvent,
         .rightPanel = rightPanel,
     },
 },
@@ -883,6 +902,7 @@ pub fn deinit(smp: *SurfaceMeshParameterization) void {
         if (pd.it_ctx) |*it_ctx| {
             it_ctx.deinit();
         }
+        pd.vertex_sample.deinit(smp.app_ctx.allocator);
     }
     smp.surface_meshes_data.deinit(smp.app_ctx.allocator);
     smp.app_ctx.point_cloud_store.removeListener(&smp.module);
@@ -943,7 +963,83 @@ pub fn surfaceMeshConnectivityUpdated(m: *Module, surface_mesh: *SurfaceMesh) vo
         pd.it_ctx = null;
     }
 }
+pub fn sdlEvent(m: *Module, event: *const c.SDL_Event) bool {
+    const smp: *SurfaceMeshParameterization = @alignCast(@fieldParentPtr("module", m));
+    const sm_store = &smp.app_ctx.surface_mesh_store;
+    const sm = smp.app_ctx.selected_model.surface_mesh;
+    const view = &smp.app_ctx.view;
+    const pd: *ParameterizationData = smp.surface_meshes_data.getPtr(sm).?;
 
+    return switch (event.type) {
+        c.SDL_EVENT_MOUSE_MOTION => blk: {
+            if (!pd.selecting) break :blk false;
+            const info_motion = sm_store.surfaceMeshInfo(sm);
+            if (info_motion.bvh.initialized) {
+                const ray = view.viewToWorldRay(event.motion.x, event.motion.y);
+                pd.hovered_cell = info_motion.bvh.intersectedVertex(ray); // within sphere selection is always centered on a vertex
+                smp.app_ctx.view.requestRedraw();
+                break :blk true;
+            }
+
+            break :blk false;
+        },
+
+        c.SDL_EVENT_KEY_DOWN => blk: {
+            switch (event.key.key) {
+                c.SDLK_D => {
+                    pd.selecting = true;
+                    smp.app_ctx.view.requestRedraw();
+                    break :blk true;
+                },
+                else => {},
+            }
+            break :blk false;
+        },
+        c.SDL_EVENT_KEY_UP => blk: {
+            switch (event.key.key) {
+                c.SDLK_D => {
+                    pd.selecting = false;
+                    smp.app_ctx.view.requestRedraw();
+                    break :blk true;
+                },
+                else => {},
+            }
+            break :blk false;
+        },
+
+        c.SDL_EVENT_MOUSE_BUTTON_DOWN => blk: {
+            const info = sm_store.surfaceMeshInfo(sm);
+            if (!pd.selecting) break :blk false;
+            if (pd.samples) |samples| {
+                if (pd.hovered_cell) |hovered_cell| {
+                    if (info.std_datas.vertex_position) |vertex_position| {
+                        const p = samples.addPoint() catch |err| {
+                            std.debug.print("Failed to add sample point: {}\n", .{err});
+                            break :blk false;
+                        };
+                        const sp: SurfacePoint = .{ .surface_mesh = sm, .type = .{ .vertex = sm.dart(hovered_cell) } };
+                        pd.sample_surface_point.valuePtr(p).* = sp;
+                        pd.samplesID_per_vertex.valuePtr(pd.hovered_cell.?).* = -1;
+                        pd.snapSampleToVertex(p, vertex_position) catch |err| {
+                            std.debug.print("Failed to snap sample point to vertex: {}\n", .{err});
+                        };
+                        pd.assignRandomColorsToSample(p, smp.app_ctx.rng.random()) catch |err| {
+                            std.debug.print("Failed to assign random color to sample point: {}\n", .{err});
+                        };
+                        pd.app_ctx.point_cloud_store.pointCloudConnectivityUpdated(pd.samples.?);
+                        pd.app_ctx.point_cloud_store.pointCloudDataUpdated(pd.samples.?, Vec3f, pd.sample_position);
+                        pd.app_ctx.point_cloud_store.pointCloudDataUpdated(pd.samples.?, Vec3f, pd.sample_color);
+                        smp.app_ctx.view.requestRedraw();
+                    }
+                }
+            }
+            break :blk true;
+        },
+        else => {
+            return false;
+        },
+    };
+}
 /// Part of the Module interface.
 /// If the destroyed PointCloud is used as samples for a SurfaceMesh, inform the associated ParameterizationData.
 pub fn pointCloudDestroyed(m: *Module, point_cloud: *PointCloud) void {
