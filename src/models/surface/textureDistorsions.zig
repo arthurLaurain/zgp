@@ -16,11 +16,11 @@ const geometry_utils = @import("../../geometry/utils.zig");
 const IBO = @import("../../rendering/IBO.zig");
 
 fn computeF(uv01: Vec2f, uv02: Vec2f, x0: Vec3f, x1: Vec3f, x2: Vec3f) Mat3f {
-    // On exprime les deux arêtes du triangle dans les deux espaces :
-    //   U : arêtes dans le plan UV, avec une troisième direction artificielle (z = 1) ;
-    //   X : arêtes 3D, complétées par la normale du triangle.
-    // Avec des vecteurs colonnes, F = X * inverse(U) transforme un déplacement UV
-    // en déplacement dans le repère tangent 3D de cette face.
+    // We express the two triangle edges in both spaces:
+    //   U: edges in the UV plane, with an artificial third direction (z = 1);
+    //   X: 3D edges, completed with the triangle normal.
+    // Using column vectors, F = X * inverse(U) transforms a UV displacement
+    // into a displacement in the face's 3D tangent frame.
     const uv01_extended: Vec3f = .{ uv01[0], uv01[1], 0 };
     const uv02_extended: Vec3f = .{ uv02[0], uv02[1], 0 };
 
@@ -37,30 +37,31 @@ fn computeF(uv01: Vec2f, uv02: Vec2f, x0: Vec3f, x1: Vec3f, x2: Vec3f) Mat3f {
     return mat.mat3dToMat3f(XUU_1);
 }
 
-fn computeFFonPatch(uvs: [3]Vec2f, positions: [3]Vec3f, order: [3]usize) Mat3f {
-    // L'ordre des coins dépend du patch : le premier coin sert d'origine UV,
-    // les deux autres définissent les arêtes utilisées par computeF.
+fn computeFonPatch(uvs: [3]Vec2f, positions: [3]Vec3f, order: [3]usize) Mat3f {
+    // Corners order depends of the patch, the first corner is the UV origin while the others defines edges used by computeF
     return computeF(vec.sub(uvs[order[1]], uvs[order[0]]), vec.sub(uvs[order[2]], uvs[order[0]]), positions[order[0]], positions[order[1]], positions[order[2]]);
 }
 
-fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_position: [*]Vec3f, celldata_triangleuvs: SurfaceMesh.CellData(.face, TriangleUVs)) [3]Mat3d {
+fn computeDistorsion(
+    id_triangle: u32,
+    id_vertices_triangle: [3]u32,
+    vbo_position: [*]Vec3f,
+    celldata_triangleuvs: SurfaceMesh.FaceData(TriangleUVs),
+    celldata_area_distorsion: *SurfaceMesh.FaceData(Vec3f),
+    celldata_angle_distorsion: *SurfaceMesh.FaceData(Vec3f),
+) [3]Mat3d {
     const positions: [3]Vec3f = .{
         vbo_position[id_vertices_triangle[0]],
         vbo_position[id_vertices_triangle[1]],
         vbo_position[id_vertices_triangle[2]],
     };
-    const uv = celldata_triangleuvs.value(.{ .index = id_triangle }).uvs;
-    // Une face appartient à trois patches. On mesure donc F séparément pour chaque
-    // paramétrisation UV ; l'ordre des coins est tourné pour que chaque patch ait
-    // son propre sommet d'origine.
-    const F0 = computeFFonPatch(uv[0], positions, .{ 0, 1, 2 });
-    const F1 = computeFFonPatch(uv[1], positions, .{ 1, 2, 0 });
-    const F2 = computeFFonPatch(uv[2], positions, .{ 2, 0, 1 });
 
-    // Décomposition polaire issue de la SVD : F = U * Sigma * V^T.
-    // V * Sigma * V^T conserve l'étirement dans le domaine UV en retirant
-    // la rotation portée par U. Le code utilise ensuite directement ce tenseur
-    // comme transformation cible des arêtes ; il ne calcule pas son inverse.
+    const face_cell: SurfaceMesh.Face = .{ .index = id_triangle };
+    const uv = celldata_triangleuvs.value(face_cell).uvs;
+    const F0 = computeFonPatch(uv[0], positions, .{ 0, 1, 2 });
+    const F1 = computeFonPatch(uv[1], positions, .{ 1, 2, 0 });
+    const F2 = computeFonPatch(uv[2], positions, .{ 2, 0, 1 });
+
     const F0d = mat.mat3fToMat3d(F0);
     var res = eigen.computeJacobiSVD3D(F0d);
     var U: Mat3d = res[0];
@@ -68,6 +69,8 @@ fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_positio
     var V: Mat3d = res[2];
     const Vt0 = mat.transpose(V);
     const S0 = mat.mul(V, mat.mul(S, Vt0));
+    const uv_area_distorsion0: f32 = @floatCast(S[0][0] * S[2][2]);
+    const uv_angle_distorsion0: f32 = @floatCast(S[0][0] / S[2][2]);
 
     const F1d = mat.mat3fToMat3d(F1);
     res = eigen.computeJacobiSVD3D(F1d);
@@ -76,6 +79,8 @@ fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_positio
     V = res[2];
     const Vt1 = mat.transpose(V);
     const S1 = mat.mul(V, mat.mul(S, Vt1));
+    const uv_area_distorsion1: f32 = @floatCast(S[0][0] * S[2][2]);
+    const uv_angle_distorsion1: f32 = @floatCast(S[0][0] / S[2][2]);
 
     const F2d = mat.mat3fToMat3d(F2);
     res = eigen.computeJacobiSVD3D(F2d);
@@ -84,34 +89,40 @@ fn computeDistorsion(id_triangle: u32, id_vertices_triangle: [3]u32, vbo_positio
     V = res[2];
     const Vt2 = mat.transpose(V);
     const S2 = mat.mul(V, mat.mul(S, Vt2));
+    const uv_area_distorsion2: f32 = @floatCast(S[0][0] * S[2][2]);
+    const uv_angle_distorsion2: f32 = @floatCast(S[0][0] / S[2][2]);
 
     var result: [3]Mat3d = undefined;
     result[0] = S0;
     result[1] = S1;
     result[2] = S2;
 
+    celldata_area_distorsion.valuePtr(face_cell).* = .{ uv_area_distorsion0, uv_area_distorsion1, uv_area_distorsion2 };
+    celldata_angle_distorsion.valuePtr(face_cell).* = .{ uv_angle_distorsion0, uv_angle_distorsion1, uv_angle_distorsion2 };
+
+    std.debug.print("Area: {d} {d} {d}\n", .{ uv_area_distorsion0, uv_area_distorsion1, uv_area_distorsion2 });
+    std.debug.print("Angle: {d} {d} {d}\n", .{ uv_angle_distorsion0, uv_angle_distorsion1, uv_angle_distorsion2 });
+
     return result;
 }
 
-// Retourne, pour chaque patch de la face, le bloc 2x2 de son tenseur d'étirement.
 pub fn computeFaceDistorsions(
     f: SurfaceMesh.Face,
     ibo: [*]u32,
     vbo_position: []Vec3f,
     triangle_uv: SurfaceMesh.FaceData(TriangleUVs),
+    area_distorsion_celldata: *SurfaceMesh.FaceData(Vec3f),
+    angle_distorsion_celldata: *SurfaceMesh.FaceData(Vec3f),
 ) [3]Mat2f {
     const id_face = f.index;
-    // L'IBO est construit avec exactement trois indices consécutifs par face.
     const id_vertices_triangle: [3]u32 = .{
         ibo[id_face * 3 + 0],
         ibo[id_face * 3 + 1],
         ibo[id_face * 3 + 2],
     };
 
-    const S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, vbo_position.ptr, triangle_uv);
+    const S_d = computeDistorsion(@intCast(id_face), id_vertices_triangle, vbo_position.ptr, triangle_uv, area_distorsion_celldata, angle_distorsion_celldata);
 
-    // Le calcul Eigen/SVD se fait en f64 ; le solveur UV et les buffers de rendu
-    // utilisent des f32. On ne garde que les deux premières dimensions UV.
     var S: [3]Mat2f = undefined;
     for (0..3) |u| {
         S[u][0][0] = @floatCast(S_d[u][0][0]);
@@ -174,9 +185,23 @@ pub fn computeCorrectedTextureUVs(
     const array_ibo: [*]u32 = @ptrCast(@alignCast(ptr_ibo));
 
     const corrected_uv_data = sm.getOrAddData(.face, [3][3]Vec2f, "corrected_texture_uvs") catch |err| {
-        std.debug.panic("Failed to create corrected texture UV celldata: {}\n", .{err});
+        std.debug.panic("Failed to create corrected texture UV data: {}\n", .{err});
     };
     var corrected_uv_celldata = corrected_uv_data.@"0";
+
+    // We want to express area distorsion per face, one distorsion per patch so we use Vec3f instead of f32
+    const area_distorsion_data = sm.getOrAddData(.face, Vec3f, "uv_area_distorsion") catch |err|
+        {
+            std.debug.panic("Failed to create uv area distorsion data {}\n", .{err});
+        };
+    var area_distorsion_celldata = area_distorsion_data.@"0";
+
+    // We want to express angle distorsion per face, one distorsion per patch so we use Vec3f instead of f32
+    const angle_distorsion_data = sm.getOrAddData(.face, Vec3f, "uv_angle_distorsion") catch |err|
+        {
+            std.debug.panic("Failed to create uv angle distorsion data {}\n", .{err});
+        };
+    var angle_distorsion_celldata = angle_distorsion_data.@"0";
 
     const face_distorsions = allocator.alloc([3]Mat2f, celldata_triangleuvs.data.storage.items.len) catch unreachable;
     defer allocator.free(face_distorsions);
@@ -190,6 +215,8 @@ pub fn computeCorrectedTextureUVs(
         triangle_uv: SurfaceMesh.FaceData(TriangleUVs),
         face_distorsions: [][3]Mat2f,
         face_areas: []f32,
+        area_distorsion_celldata: *SurfaceMesh.FaceData(Vec3f),
+        angle_distorsion_celldata: *SurfaceMesh.FaceData(Vec3f),
 
         pub fn run(task: *@This(), face: SurfaceMesh.Face) void {
             task.face_distorsions[face.index] = computeFaceDistorsions(
@@ -197,6 +224,8 @@ pub fn computeCorrectedTextureUVs(
                 task.ibo,
                 task.vbo_position,
                 task.triangle_uv,
+                task.area_distorsion_celldata,
+                task.angle_distorsion_celldata,
             );
             const positions: [3]Vec3f = .{
                 task.vbo_position[task.ibo[face.index * 3]],
@@ -215,6 +244,8 @@ pub fn computeCorrectedTextureUVs(
         .triangle_uv = celldata_triangleuvs,
         .face_distorsions = face_distorsions,
         .face_areas = face_areas,
+        .area_distorsion_celldata = &area_distorsion_celldata,
+        .angle_distorsion_celldata = &angle_distorsion_celldata,
     }) catch unreachable;
 
     var variable_indices: std.AutoHashMapUnmanaged(u64, u32) = .empty;

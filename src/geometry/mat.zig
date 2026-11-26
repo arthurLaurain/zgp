@@ -102,6 +102,18 @@ pub fn cast(comptime S: type, m: anytype) Mat(dim(@TypeOf(m)), S) {
     return result;
 }
 
+pub fn print(matrix: anytype) void {
+    const M = @TypeOf(matrix);
+    const d = dim(M);
+
+    for (0..d) |row| {
+        for (0..d) |col| {
+            std.debug.print("{any}\t", .{matrix[col][row]});
+        }
+        std.debug.print("\n", .{});
+    }
+}
+
 // Return an identity matrix of the given type
 pub fn identity(comptime M: type) M {
     const V = VectorTypeOf(M);
