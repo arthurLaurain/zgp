@@ -42,6 +42,23 @@ fn computeFonPatch(uvs: [3]Vec2f, positions: [3]Vec3f, order: [3]usize) Mat3f {
     return computeF(vec.sub(uvs[order[1]], uvs[order[0]]), vec.sub(uvs[order[2]], uvs[order[0]]), positions[order[0]], positions[order[1]], positions[order[2]]);
 }
 
+fn computePlanarDistorsion(F: Mat3d) struct { area: f64, angle: f64 } {
+    const tangent_u = F[0];
+    const tangent_v = F[1];
+    const metric_uu = vec.dot(tangent_u, tangent_u);
+    const metric_uv = vec.dot(tangent_u, tangent_v);
+    const metric_vv = vec.dot(tangent_v, tangent_v);
+    const discriminant = @sqrt((metric_uu - metric_vv) * (metric_uu - metric_vv) + 4 * metric_uv * metric_uv);
+    const sigma_max = @sqrt(@max(0.0, (metric_uu + metric_vv + discriminant) / 2));
+    const area = vec.norm(vec.cross(tangent_u, tangent_v));
+    const sigma_min = if (sigma_max > 0) area / sigma_max else 0;
+
+    return .{
+        .area = area,
+        .angle = if (sigma_min > 0) sigma_max / sigma_min else std.math.inf(f64),
+    };
+}
+
 fn computeDistorsion(
     id_triangle: u32,
     id_vertices_triangle: [3]u32,
@@ -64,33 +81,33 @@ fn computeDistorsion(
 
     const F0d = mat.mat3fToMat3d(F0);
     var res = eigen.computeJacobiSVD3D(F0d);
-    var U: Mat3d = res[0];
     var S: Mat3d = res[1];
     var V: Mat3d = res[2];
     const Vt0 = mat.transpose(V);
     const S0 = mat.mul(V, mat.mul(S, Vt0));
-    const uv_area_distorsion0: f32 = @floatCast(S[0][0] * S[2][2]);
-    const uv_angle_distorsion0: f32 = @floatCast(S[0][0] / S[2][2]);
+    const distorsion0 = computePlanarDistorsion(F0d);
+    const uv_area_distorsion0: f32 = @floatCast(distorsion0.area);
+    const uv_angle_distorsion0: f32 = @floatCast(distorsion0.angle);
 
     const F1d = mat.mat3fToMat3d(F1);
     res = eigen.computeJacobiSVD3D(F1d);
-    U = res[0];
     S = res[1];
     V = res[2];
     const Vt1 = mat.transpose(V);
     const S1 = mat.mul(V, mat.mul(S, Vt1));
-    const uv_area_distorsion1: f32 = @floatCast(S[0][0] * S[2][2]);
-    const uv_angle_distorsion1: f32 = @floatCast(S[0][0] / S[2][2]);
+    const distorsion1 = computePlanarDistorsion(F1d);
+    const uv_area_distorsion1: f32 = @floatCast(distorsion1.area);
+    const uv_angle_distorsion1: f32 = @floatCast(distorsion1.angle);
 
     const F2d = mat.mat3fToMat3d(F2);
     res = eigen.computeJacobiSVD3D(F2d);
-    U = res[0];
     S = res[1];
     V = res[2];
     const Vt2 = mat.transpose(V);
     const S2 = mat.mul(V, mat.mul(S, Vt2));
-    const uv_area_distorsion2: f32 = @floatCast(S[0][0] * S[2][2]);
-    const uv_angle_distorsion2: f32 = @floatCast(S[0][0] / S[2][2]);
+    const distorsion2 = computePlanarDistorsion(F2d);
+    const uv_area_distorsion2: f32 = @floatCast(distorsion2.area);
+    const uv_angle_distorsion2: f32 = @floatCast(distorsion2.angle);
 
     var result: [3]Mat3d = undefined;
     result[0] = S0;
@@ -99,9 +116,6 @@ fn computeDistorsion(
 
     celldata_area_distorsion.valuePtr(face_cell).* = .{ uv_area_distorsion0, uv_area_distorsion1, uv_area_distorsion2 };
     celldata_angle_distorsion.valuePtr(face_cell).* = .{ uv_angle_distorsion0, uv_angle_distorsion1, uv_angle_distorsion2 };
-
-    std.debug.print("Area: {d} {d} {d}\n", .{ uv_area_distorsion0, uv_area_distorsion1, uv_area_distorsion2 });
-    std.debug.print("Angle: {d} {d} {d}\n", .{ uv_angle_distorsion0, uv_angle_distorsion1, uv_angle_distorsion2 });
 
     return result;
 }
